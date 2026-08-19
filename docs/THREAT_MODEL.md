@@ -176,7 +176,9 @@ V1 issues no reward token, points, rebates, maker emissions, or volume incentive
 
 ### TS-M03 — Quote flooding and cancellation churn
 
-Signed offchain intents are cheap to spam. Add maker nonces, rate limits, minimum quantity, cancellation sequence numbers, per-key quotas, and solver admission/bonding. Keep matching complexity bounded per request.
+**Status:** Bounded admission, nonce/cancellation sequencing, quotas, minimum size, and solver capacity limits implemented; persistent distributed counters remain a deployment gate
+
+`assessRfqAdmission` requires an authenticated request identity, a nonce above its cancellation sequence, minimum quantity, short expiry, per-key active-request limit, rolling request quota, and cancellation quota. `buildReceivedQuoteBook` rejects an envelope set above the hard maximum before signature verification and retains only one best offer per solver. Firm offers additionally require an admitted solver, fresh capacity epoch, uncommitted capacity, active-offer limit, and reliability floor. Bonds remain deliberately disabled until objective failure adjudication exists. Production must store counters and nonce/cancellation state atomically in a shared persistence layer and test distributed races; one-process memory is not sufficient.
 
 ### TS-M04 — Hidden routing and stale capacity
 
