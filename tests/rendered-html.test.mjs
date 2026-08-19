@@ -31,35 +31,53 @@ test("server-renders the TreeSwap prototype", async () => {
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
 
   const html = await response.text();
-  assert.match(html, /<title>TreeSwap — Lightning ↔ BIT intents<\/title>/i);
-  assert.match(html, /Swap across the/);
+  assert.match(html, /<title>TreeSwap \| Pay Lightning Invoices with BIT<\/title>/i);
+  assert.match(html, /Swap through an invoice/);
+  assert.match(html, /Review invoice payment/);
+  assert.match(html, /Best received of .*signed quotes/);
   assert.match(html, /1 BIT = 100 sats/);
   assert.match(html, /No wallets connected · No real funds/);
-  assert.match(html, /Price–time intent book/i);
-  assert.match(html, /Four launch gates before real funds/i);
+  assert.match(html, /Invoice in\. Quote out/i);
+  assert.match(html, /There is no shared public liquidity pool/i);
+  assert.match(html, /Reverse escrow pending/i);
+  assert.match(html, />Safety</i);
+  assert.doesNotMatch(html, /Four checks block launch|security-section/i);
+  assert.match(html, /application\/ld\+json/i);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton|Your site is taking shape/i);
 });
 
 test("keeps the financial prototype explicitly non-production", async () => {
-  const [page, layout, readme, protocol, threatModel, license] = await Promise.all([
+  const [page, layout, readme, protocol, threatModel, vault, license] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
     readFile(new URL("../README.md", import.meta.url), "utf8"),
     readFile(new URL("../docs/PROTOCOL.md", import.meta.url), "utf8"),
     readFile(new URL("../docs/THREAT_MODEL.md", import.meta.url), "utf8"),
+    readFile(new URL("../contracts/src/TreeSwapBitVault.sol", import.meta.url), "utf8"),
     readFile(new URL("../LICENSE", import.meta.url), "utf8"),
   ]);
 
   assert.match(page, /No real funds/);
   assert.match(page, /Simulation only/);
-  assert.match(page, /net output after every disclosed cost/i);
-  assert.match(layout, /local prototype/i);
+  assert.match(page, /Amountless invoices are not supported/);
+  assert.match(page, /checksum, signature, expiry/);
+  assert.match(page, /short-lived, all-in prices/i);
+  assert.match(page, /No shared LP pool/i);
+  assert.match(layout, /metadataBase/);
+  assert.match(layout, /canonical/);
+  assert.match(layout, /og\.png/);
   assert.match(readme, /does not connect wallets/i);
   assert.match(protocol, /not audited and not ready for real funds/i);
   assert.match(protocol, /1 BIT = 100 sats/);
-  assert.match(protocol, /DeepState's price-first, time-second/i);
+  assert.match(protocol, /There is no central limit order book/i);
+  assert.match(protocol, /Amountless invoices remain unsupported/i);
   assert.match(threatModel, /TS-C01 — Fixed-par inventory drain/);
-  assert.match(threatModel, /TS-C04 — Coordinator can misstate the best quote/);
+  assert.match(threatModel, /TS-C04 — Relay can suppress or reorder quotes/);
+  assert.match(vault, /SELECTED_QUOTE_TYPEHASH/);
+  assert.match(vault, /maxPriceDeviationBps/);
+  assert.match(vault, /lastSafeClaimAt/);
+  assert.match(vault, /ClaimWindowClosed/);
+  assert.doesNotMatch(page, /security-section|Four checks block launch/i);
   assert.match(license, /MIT License/);
   await assert.rejects(access(new URL("../app/_sites-preview", import.meta.url)));
   await access(new URL("docs/PROTOCOL.md", projectRoot));

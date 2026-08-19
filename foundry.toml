@@ -1,0 +1,12 @@
+[profile.default]
+src = "contracts/src"
+test = "contracts/test"
+out = "contracts/out"
+cache_path = "contracts/cache"
+solc_version = "0.8.24"
+optimizer = true
+optimizer_runs = 20_000
+fuzz.runs = 1_000
+invariant.runs = 256
+invariant.depth = 64
+

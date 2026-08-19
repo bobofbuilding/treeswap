@@ -1,25 +1,27 @@
 # TreeSwap
 
-TreeSwap is a local product and protocol prototype for intent-based swaps between Bitcoin Lightning and Bittrees BIT.
+TreeSwap is a product, protocol, and contract prototype for intent-based swaps between Bitcoin Lightning and Bittrees BIT.
 
 The prototype assumes a business par value of **1 BIT = 100 sats**. This value is not enforced by the BIT token contract, so a production TreeSwap deployment must make its pricing rule explicit and protect every intent with a user-signed limit.
 
 ## What is included
 
-- Interactive Lightning → BIT and BIT → Lightning quote builder
-- Competing counter-intent and independent-solver offers
-- Price-time order book ranked by net executable output
+- Invoice-first preview for paying Lightning invoices with BIT or receiving BIT through a solver invoice
+- Competing, short-lived independent-solver quotes
+- User-selected signed-quote model with no global best-price promise
 - Directional fees, with the BIT → Lightning path priced higher
 - Hash-locked settlement walkthrough
-- Either-side liquidity funding simulator
+- Two-sided solver inventory planner for Lightning and BIT
+- Immutable, segregated BIT vault prototype with user-signed quotes, beneficiary binding, price and exposure caps, ordered deadlines, and Foundry invariants
 - Product and protocol specification in [`docs/PROTOCOL.md`](docs/PROTOCOL.md)
+- Liquidity operations plan in [`docs/LIQUIDITY_FUNDING.md`](docs/LIQUIDITY_FUNDING.md)
 - Adversarial design review and launch gates in [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md)
 
-The interface is a simulation. It does not connect wallets, create Lightning invoices, transfer BIT, or publish orders.
+The interface remains a simulation. It does not connect wallets, create payable Lightning invoices, transfer BIT, or publish quotes. The Solidity vault is local and undeployed.
 
 ## Security status
 
-This repository is not audited and is not ready for real funds. The review identified four release-blocking design areas: fixed-par inventory drain, beneficiary/preimage binding, cross-network timeout safety, and verifiable quote ordering. See the threat model before implementing the settlement contracts.
+This repository is not audited and is not ready for real funds. The design removes the shared public pool, public order book, and rewards from v1. The current vault limits stale-reference exposure but does not prove a fair market price. Cross-network timeout derivation, BIT proxy behavior, the reverse-direction escrow, and Lightning operations remain release-blocking.
 
 ## Local preview
 
@@ -29,15 +31,21 @@ npm run dev
 
 Then open the local URL printed by the development server.
 
-## Production work intentionally deferred
+Run the BIT vault campaign separately:
 
-- Ethereum escrow contracts and audits
+```bash
+forge test
+```
+
+## Production work still required
+
+- Mainnet-fork testing of BIT upgrades, pauses, and balance behavior
+- Complementary user-funded BIT → Lightning escrow with direction-separated signatures
 - Lightning hold-invoice coordinator
 - Solver daemon and quote transport
 - Wallet integrations
-- Persistent order book and indexer
-- Mainnet liquidity, governance, and rewards
-- GitHub and hosting publication
+- Reconciliation, proxy monitoring, incident controls, and external review
+- Testnet deployment before any mainnet liquidity
 
 ## Reference asset
 

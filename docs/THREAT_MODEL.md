@@ -5,16 +5,16 @@ Status: design review for the prototype. This is not a smart-contract audit, Lig
 Reviewed surfaces:
 
 - signed intents and solver quotes;
-- net-price/time ordering and maker rewards;
+- short-lived RFQs and selected signed solver quotes;
 - BIT escrow and Ethereum finality;
 - BOLT 11 and Lightning hold-invoice settlement;
 - fee and decimal accounting;
-- one-sided liquidity funding;
+- segregated solver-owned BIT and Lightning inventory;
 - coordinators, governance, keys, and operational recovery.
 
 ## Executive conclusion
 
-The mechanism can be made atomic for full-size swaps by using one payment hash across Lightning and an Ethereum BIT escrow. It is not safe merely because both sides use a hash. The beneficiary, amount, hash, timeouts, fee caps, and replay domain all have to be bound before a Lightning payment becomes irreversible.
+The v1 mechanism is a bilateral RFQ followed by one full-fill hash-locked settlement. It deliberately excludes a public order book, public LP deposits, rewards, and partial fills. It is not safe merely because both sides use a hash: the beneficiary, amount, hash, timeouts, fee caps, and replay domain all have to be bound before a Lightning payment becomes irreversible.
 
 The prototype is appropriate for product exploration. Real funds should remain disabled until every critical and high item below is implemented, tested in adversarial regtest/fork environments, and independently reviewed.
 
@@ -23,7 +23,7 @@ The prototype is appropriate for product exploration. Real funds should remain d
 ### TS-C01 — Fixed-par inventory drain
 
 **Severity:** Critical  
-**Status:** Open; mitigations specified
+**Status:** Partially implemented in the Lightning → BIT vault; external market and BIT-proxy controls remain open
 
 The 100-sat par value is not enforced by the BIT token contract. If BIT's executable market value or BNote redemption value moves below 100 sats, an attacker can acquire discounted BIT and repeatedly drain the Lightning side at TreeSwap's stale par. If BIT moves above par, the BIT side can be drained instead.
 
@@ -37,10 +37,12 @@ Safeguards:
 - display that par is a project rule, not an onchain guarantee;
 - start with solver-owned inventory so no public LP absorbs an undefined peg risk.
 
+Implemented now: the vault enforces an immutable reference-price band, maximum BIT per swap, maximum BIT per solver epoch, and maximum fee. These are damage limits, not proof of fair value. Executable external-price checks, dynamic inventory controls, and BIT proxy monitoring remain launch requirements.
+
 ### TS-C02 — Unbound preimage claim
 
 **Severity:** Critical  
-**Status:** Design fix required in escrow
+**Status:** Implemented in the Lightning → BIT vault prototype
 
 The preimage becomes public in a claim transaction and is known to a Lightning invoice creator. An escrow that pays `msg.sender` or allows the recipient to be chosen when the preimage is revealed can be stolen or front-run.
 
@@ -52,10 +54,12 @@ Safeguards:
 - make beneficiary changes impossible after payment authorization;
 - mark every payment hash consumed globally so it cannot be reused.
 
+The current vault binds the beneficiary in the user-signed quote before inventory is reserved. Anyone may relay the preimage, but the transfer target cannot change. The complementary BIT → Lightning escrow must implement the same property independently.
+
 ### TS-C03 — Timeout and finality race
 
 **Severity:** Critical  
-**Status:** Requires formal parameterization and race tests
+**Status:** Onchain ordering implemented; Lightning derivation and cross-chain race tests remain open
 
 Lightning HTLCs expire in Bitcoin block-height terms while BOLT 11 invoices and Ethereum reservations use wall-clock or Ethereum timestamps. A refund that opens too early can race a valid Lightning settlement; a claim window that is too short can let one party receive one leg while the other leg refunds.
 
@@ -68,20 +72,25 @@ Safeguards:
 - test reorgs, delayed blocks, mempool congestion, force-close, and boundary timestamps;
 - reject invoices whose expiry or final CLTV cannot satisfy the safety policy.
 
-### TS-C04 — Coordinator can misstate the best quote
+The current vault enforces `quoteExpiresAt < lastSafeClaimAt`, a minimum settlement window, a minimum claim-to-refund buffer, a maximum lock duration, and a deterministic boundary where claims close exactly when refunds open. The future Lightning adapter must derive and validate `lastSafeClaimAt`; a user or solver cannot be trusted to choose it safely.
 
-**Severity:** Critical for rewards; High for swaps  
-**Status:** Open
+### TS-C04 — Relay can suppress or reorder quotes
 
-An offchain coordinator can hide a better quote, reorder equal quotes, fabricate arrival times, or award top-of-book rewards to a favored solver. The escrow can enforce a user's accepted minimum output, but it cannot prove that an accepted quote was globally best without an authoritative book commitment.
+**Severity:** High for swaps
+**Status:** Exact selected quote implemented; global quote availability remains unverifiable
+
+An offchain relay can hide a better quote, delay one solver, or fabricate receipt order. The escrow can enforce the exact selected quote but cannot prove that it was globally best.
 
 Safeguards:
 
 - have users sign the exact selected quote and enforce its output and fee caps onchain;
-- publish an append-only sequence of signed intents and quotes with deterministic ordering;
-- commit periodic book roots onchain or use a challengeable reward epoch before distributing maker rewards;
-- allow multiple relayers to reproduce the same ordering from signed messages;
-- keep rewards disabled in the MVP unless the winner can be independently verified.
+- have the client request quotes from multiple independent solvers or relays;
+- show “best received quote,” never “global best price”;
+- let the user choose the signed quote rather than letting the relay select it;
+- bind the selected quote's exact output, fee, recipient, hash, and expiry; and
+- keep public order-book rewards outside v1.
+
+The current vault verifies the user's EIP-712 acceptance of the beneficiary, solver, BIT amount, Lightning amount, fee, invoice digest, payment hash, nonce, and deadlines. Its domain binds the chain and vault, and nonces are consumed once. This proves the selected terms, not that a relay delivered every available quote.
 
 ## High-severity findings
 
@@ -89,11 +98,13 @@ Safeguards:
 
 EIP-712 itself does not supply a nonce policy. A signature can be replayed unless the domain and message bind `chainId`, verifying escrow contract, protocol version, maker nonce, direction, amounts, recipient, payment hash, and expiry. The contract must cancel or consume each nonce exactly once.
 
+The Lightning → BIT vault implements chain, verifying-contract, version, solver, amount, recipient, hash, invoice digest, nonce, and deadline binding with single-use user nonces. It currently supports EOAs only. The complementary direction needs a distinct type/domain and EIP-1271 must be added before contract wallets are supported.
+
 ### TS-H02 — Reservation griefing and solver last-look
 
-An attacker can reserve good orders and never pay. A solver can advertise attractive liquidity, wait for market movement, and abandon only losing fills.
+An attacker can request many quotes, while a solver can advertise attractive liquidity, wait for market movement, and abandon only losing fills.
 
-Mitigations include short reservations, per-identity concurrency limits, a solver bond, penalties for accepted-but-unfilled quotes, minimum success-rate requirements, and no reward accrual during an unfulfilled reservation.
+V1 has no public order reservation. Mitigations include short quote expiries, direct solver-created reservations from the solver's own BIT balance, per-identity concurrency limits, vetted solvers, and measurable fill reliability. Bonds and penalties can be considered only after operational data exists.
 
 ### TS-H03 — BIT proxy upgrade or pause
 
@@ -113,9 +124,9 @@ Taking a protocol fee “from output” is ambiguous because one output exists o
 
 ### TS-H06 — Liquidity-pool insolvency and adverse selection
 
-A Lightning pool is not an ERC-20 vault: channel balances, in-flight HTLCs, force closes, reserves, and node-key compromise affect solvency. Public one-sided LPs can also be selected against when par is stale.
+A Lightning pool is not an ERC-20 vault: channel balances, in-flight HTLCs, force closes, reserves, and node-key compromise affect solvency. Public LPs can also be selected against when par is stale.
 
-Do not accept public Lightning LP funds in v1. Use solver-owned balances, segregate BIT vault accounting, queue withdrawals, reserve accepted liabilities, publish reconciliations, cap exposure, and define who bears channel and counterparty losses before enabling LP deposits.
+TreeSwap v1 does not accept public LP funds. It uses solver-owned Lightning balances and solver-segregated BIT vault accounts, reserves accepted liabilities, reconciles balances, and caps exposure. A separate custody, insolvency, and legal review is required before any third-party deposit product.
 
 ### TS-H07 — Lightning adapter or macaroon compromise
 
@@ -133,13 +144,13 @@ Paying Lightning before the BIT escrow is sufficiently final can leave the payer
 
 ## Medium-severity findings
 
-### TS-M01 — One-tick reward sniping
+### TS-M01 — One-tick reward sniping (not applicable to v1)
 
-Attackers can improve the best price by the smallest unit just before a reward snapshot. Require a minimum meaningful tick, minimum top duration, time-weighted accrual, executable quantity, and delayed challengeable settlement.
+V1 has no order book or maker reward. If rewards are ever proposed, require a minimum meaningful tick, minimum top duration, time-weighted accrual, executable quantity, and delayed challengeable settlement.
 
-### TS-M02 — Wash fills and sybil rewards
+### TS-M02 — Wash fills and sybil rewards (not applicable to v1)
 
-The same economic actor can cross its own bid and ask to mine rewards. Do not emit rewards greater than fees paid, exclude linked maker/taker identities where possible, cap epochs, analyze funding clusters, and defer a token incentive until organic flow exists.
+V1 issues no rewards. Any later incentive system needs a separate economic and sybil review and must not emit rewards greater than fees paid.
 
 ### TS-M03 — Quote flooding and cancellation churn
 
@@ -186,15 +197,15 @@ A production escrow test suite should prove at least:
 11. A BIT transfer must produce the exact expected escrow balance delta.
 12. An implementation-slot change in BIT prevents new reservations until reviewed.
 
-## Matching-engine properties
+## RFQ and quote-selection properties
 
-1. Sorting the same signed message set always returns the same price-time order.
+1. The client compares only valid signed quotes for the same exact request.
 2. Net output includes every mandatory fee in the same order and unit.
-3. Equal net output is ordered by an authenticated sequence, never server receipt time alone.
-4. Cancelling a nonce removes all later attempts to fill it.
+3. A relay cannot change a signed amount, beneficiary, hash, or expiry.
+4. Cancelling or consuming a nonce prevents every later attempt to use it.
 5. A quote cannot be accepted after expiry or beyond its executable quantity.
-6. Reward weight is zero while collateral or Lightning availability is stale.
-7. Self-crosses, failed reservations, and reverted settlements earn no reward.
+6. A quote is unavailable while BIT collateral or Lightning capacity is stale.
+7. Selecting a fallback quote after a failure requires fresh user authorization when output changes.
 
 ## Required adversarial tests
 
@@ -207,7 +218,7 @@ A production escrow test suite should prove at least:
 - BIT pause and implementation upgrade while escrows are open.
 - Fee rounding across dust, maximum values, and thousands of small fills.
 - Solver quote spam, cancellation, capacity exhaustion, and deliberate last-look failure.
-- Wash trading and one-tick reward sniping across an epoch boundary.
+- Relay suppression, quote substitution, and stale fallback selection.
 - LP withdrawal while liabilities are reserved or in flight.
 
 ## Launch gates
@@ -220,11 +231,11 @@ A production escrow test suite should prove at least:
 
 ### Testnet
 
-- Escrow implementation plus stateful fuzz suite.
+- Mainnet-fork escrow campaign, including BIT proxy changes and pauses.
 - Regtest hold-invoice adapter and forced-timeout tests.
-- Deterministic matching library and replay tests.
+- Complementary BIT → Lightning escrow and direction-replay tests.
 - Monitoring for BIT proxy upgrades and pauses.
-- No public LP deposits.
+- No public LP deposits, order book, or rewards.
 
 ### Capped mainnet beta
 
@@ -247,4 +258,3 @@ A production escrow test suite should prove at least:
 - [EIP-712 typed structured data](https://eips.ethereum.org/EIPS/eip-712)
 - [ERC-1967 proxy storage](https://eips.ethereum.org/EIPS/eip-1967)
 - [BIT verified proxy and implementation](https://etherscan.io/token/0x57A447E4d5e18A9423408C365963A73F08B9d18C#code)
-

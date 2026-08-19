@@ -1,13 +1,24 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
+import {
+  calculateLiquidityPlan,
+  calculateRequiredInput,
+  hasMainnetBolt11Shape,
+  normalizeBolt11,
+  parseAmount,
+  parseBolt11AmountSats,
+  roundUpAmount,
+  sanitizeAmount,
+} from "@/lib/product.mjs";
 
 type Direction = "lightning-to-bit" | "bit-to-lightning";
-type View = "swap" | "pool";
+type View = "pay-invoice" | "get-bit" | "pool";
 
 type Offer = {
   name: string;
-  kind: "Counter-intent" | "Solver";
+  kind: "Solver";
   feeBps: number;
   routeFee: number;
   speed: string;
@@ -15,75 +26,26 @@ type Offer = {
 };
 
 const BIT_CONTRACT = "0x57A447E4d5e18A9423408C365963A73F08B9d18C";
-const PAR_SATS = 100;
-
+const DEMO_INVOICE = "lnbc2500u1qpzry9x8gf2tvdw0s3jn54khce6mua7l";
+const DEMO_ADDRESS = "0x1111111111111111111111111111111111111111";
 const offerBook: Record<Direction, Offer[]> = {
   "lightning-to-bit": [
-    {
-      name: "Open intent #842",
-      kind: "Counter-intent",
-      feeBps: 18,
-      routeFee: 0,
-      speed: "direct match",
-      color: "mint",
-    },
-    {
-      name: "Rootline",
-      kind: "Solver",
-      feeBps: 28,
-      routeFee: 0,
-      speed: "~12 sec",
-      color: "orange",
-    },
-    {
-      name: "Arbor Nine",
-      kind: "Solver",
-      feeBps: 34,
-      routeFee: 0,
-      speed: "~18 sec",
-      color: "violet",
-    },
+    { name: "Rootline", kind: "Solver", feeBps: 18, routeFee: 0, speed: "~12 sec", color: "mint" },
+    { name: "Arbor Nine", kind: "Solver", feeBps: 28, routeFee: 0, speed: "~18 sec", color: "orange" },
+    { name: "Canopy Labs", kind: "Solver", feeBps: 34, routeFee: 0, speed: "~21 sec", color: "violet" },
   ],
   "bit-to-lightning": [
-    {
-      name: "Open intent #839",
-      kind: "Counter-intent",
-      feeBps: 72,
-      routeFee: 6,
-      speed: "direct match",
-      color: "mint",
-    },
-    {
-      name: "Rootline",
-      kind: "Solver",
-      feeBps: 85,
-      routeFee: 12,
-      speed: "~9 sec",
-      color: "orange",
-    },
-    {
-      name: "Canopy Labs",
-      kind: "Solver",
-      feeBps: 97,
-      routeFee: 8,
-      speed: "~15 sec",
-      color: "blue",
-    },
+    { name: "Rootline", kind: "Solver", feeBps: 72, routeFee: 6, speed: "~9 sec", color: "mint" },
+    { name: "Canopy Labs", kind: "Solver", feeBps: 85, routeFee: 12, speed: "~15 sec", color: "orange" },
+    { name: "Arbor Nine", kind: "Solver", feeBps: 97, routeFee: 8, speed: "~19 sec", color: "blue" },
   ],
 };
 
-const activity = [
-  { pair: "BIT → LN", amount: "84,200 sats", solver: "Rootline", age: "4s" },
-  { pair: "LN → BIT", amount: "1,248 BIT", solver: "Intent #842", age: "19s" },
-  { pair: "LN → BIT", amount: "412 BIT", solver: "Arbor Nine", age: "37s" },
-  { pair: "BIT → LN", amount: "220,800 sats", solver: "Canopy", age: "1m" },
-];
-
 const intentSteps = [
-  { title: "Intent signed", note: "Terms and expiry are fixed" },
-  { title: "Best offer reserved", note: "Counter-intent #842 wins" },
-  { title: "Payment hash matched", note: "Both legs share one secret" },
-  { title: "Assets released", note: "Preimage settles the swap" },
+  { title: "Invoice checked", note: "Amount, network, expiry, and payment hash are fixed" },
+  { title: "Solver quote locked", note: "One signed, exact-output quote is selected" },
+  { title: "Payment hash matched", note: "The Lightning and BIT legs share one secret" },
+  { title: "Invoice settled", note: "The preimage releases the destination asset" },
 ];
 
 function numberFormat(value: number, maximumFractionDigits = 0) {
@@ -97,532 +59,477 @@ function shortAddress(value: string) {
 }
 
 export default function Home() {
-  const [view, setView] = useState<View>("swap");
-  const [direction, setDirection] = useState<Direction>("lightning-to-bit");
-  const [amount, setAmount] = useState("250000");
+  const [view, setView] = useState<View>("pay-invoice");
+  const [invoice, setInvoice] = useState("");
+  const [receiveBitAmount, setReceiveBitAmount] = useState("2500");
+  const [receiveAddress, setReceiveAddress] = useState("");
   const [selectedOffer, setSelectedOffer] = useState(0);
   const [intentOpen, setIntentOpen] = useState(false);
   const [intentPhase, setIntentPhase] = useState(0);
-  const [poolAsset, setPoolAsset] = useState<"Lightning" | "BIT">("Lightning");
-  const [poolAmount, setPoolAmount] = useState("500000");
+  const [paymentStarted, setPaymentStarted] = useState(false);
+  const [lightningLiquidity, setLightningLiquidity] = useState("5000000");
+  const [bitLiquidity, setBitLiquidity] = useState("50000");
   const [poolReceipt, setPoolReceipt] = useState(false);
 
+  const direction: Direction = view === "get-bit" ? "lightning-to-bit" : "bit-to-lightning";
+  const isPayInvoice = view === "pay-invoice";
   const offers = offerBook[direction];
-  const inputAmount = Number(amount.replaceAll(",", "")) || 0;
   const activeOffer = offers[selectedOffer] ?? offers[0];
+  const decodedInvoiceAmount = parseBolt11AmountSats(invoice);
+  const desiredOutput = isPayInvoice
+    ? decodedInvoiceAmount ?? 0
+    : parseAmount(receiveBitAmount);
+  const requiredInput = calculateRequiredInput(
+    direction,
+    desiredOutput,
+    activeOffer.feeBps,
+    activeOffer.routeFee,
+  );
   const inputIsSats = direction === "lightning-to-bit";
-  const parOutput = inputIsSats ? inputAmount / PAR_SATS : inputAmount * PAR_SATS;
-  const intentFee = (parOutput * activeOffer.feeBps) / 10_000;
-  const outputAmount = Math.max(parOutput - intentFee - activeOffer.routeFee, 0);
+  const inputAsset = inputIsSats ? "sats" : "BIT";
+  const displayInput = roundUpAmount(requiredInput, inputIsSats ? 0 : 6);
   const feeLabel = `${(activeOffer.feeBps / 100).toFixed(2)}%`;
+  const inputDigits = inputIsSats ? 0 : 6;
+  const invoiceHasShape = hasMainnetBolt11Shape(invoice);
+  const receiveAddressHasShape = /^0x[0-9a-fA-F]{40}$/.test(receiveAddress);
+  const canReview = isPayInvoice
+    ? invoiceHasShape && desiredOutput > 0
+    : receiveAddressHasShape && desiredOutput > 0;
+  const generatedInvoice = `lnbc${Math.max(Math.ceil(displayInput * 10), 1)}n1qpzry9x8gf2tvdw0s3jn54khce6mua7l`;
 
-  const quoteExpiry = "00:24";
+  const {
+    lightningReserve,
+    bitReserve,
+    usableLightning,
+    usableBit,
+    balancedCapacity,
+    fillCap,
+  } = calculateLiquidityPlan(parseAmount(lightningLiquidity), parseAmount(bitLiquidity));
 
   useEffect(() => {
-    if (!intentOpen || intentPhase >= intentSteps.length) return;
+    if (!intentOpen || !paymentStarted || intentPhase >= intentSteps.length) return;
     const timer = window.setTimeout(() => {
       setIntentPhase((phase) => Math.min(phase + 1, intentSteps.length));
     }, 1050);
     return () => window.clearTimeout(timer);
-  }, [intentOpen, intentPhase]);
+  }, [intentOpen, intentPhase, paymentStarted]);
 
-  function flipDirection() {
-    const next =
-      direction === "lightning-to-bit"
-        ? "bit-to-lightning"
-        : "lightning-to-bit";
-    const converted =
-      direction === "lightning-to-bit"
-        ? inputAmount / PAR_SATS
-        : inputAmount * PAR_SATS;
-    setDirection(next);
-    setAmount(String(Math.max(Math.round(converted * 100) / 100, 0)));
+  function selectView(next: View) {
+    setView(next);
     setSelectedOffer(0);
+    setPoolReceipt(false);
+  }
+
+  function loadDemoInvoice() {
+    setInvoice(DEMO_INVOICE);
   }
 
   function beginIntent() {
     setIntentPhase(0);
+    setPaymentStarted(false);
     setIntentOpen(true);
   }
 
   return (
     <main>
       <div className="prototype-strip">
-        <span>Local prototype</span>
+        <span>Prototype</span>
         <span>No wallets connected · No real funds</span>
       </div>
 
       <nav className="nav-shell" aria-label="Main navigation">
-        <a href="#top" className="brand" aria-label="TreeSwap home">
-          <span className="brand-mark" aria-hidden="true">
-            <i />
-            <b>ϟ</b>
-          </span>
+        <Link href="/" className="brand" aria-label="TreeSwap home">
+          <span className="brand-mark" aria-hidden="true"><i /><b>ϟ</b></span>
           <span>treeswap</span>
-        </a>
+        </Link>
         <div className="nav-links">
-          <button
-            className={view === "swap" ? "active" : ""}
-            onClick={() => setView("swap")}
-          >
-            Swap
-          </button>
-          <button
-            className={view === "pool" ? "active" : ""}
-            onClick={() => setView("pool")}
-          >
-            Fund the pool
-          </button>
+          <a className="active" href="#trade">Trade</a>
           <a href="#mechanism">How it works</a>
+          <a href="https://github.com/bobofbuilding/treeswap/blob/agent/simplify-marketing-seo/docs/THREAT_MODEL.md" target="_blank" rel="noreferrer">Safety</a>
+          <a href="https://github.com/bobofbuilding/treeswap" target="_blank" rel="noreferrer">GitHub</a>
         </div>
-        <button className="network-pill" type="button">
-          <span /> Ethereum + Lightning
-        </button>
+        <a className="network-pill" href="https://github.com/bobofbuilding/treeswap/blob/agent/simplify-marketing-seo/docs/THREAT_MODEL.md" target="_blank" rel="noreferrer"><span /> Risk limits</a>
       </nav>
 
-      <section className="hero" id="top">
-        <div className="hero-copy">
-          <p className="eyebrow">THE INTENT MARKET FOR BIT</p>
-          <h1>
-            Swap across the
-            <br />
-            <em>canopy.</em>
-          </h1>
-          <p className="hero-deck">
-            Trade Lightning sats and Bittrees BIT at a transparent par value.
-            Opposite intents match first; independent solvers compete for the rest.
-          </p>
-          <div className="hero-stats" aria-label="Market summary">
-            <div>
-              <span>Par value</span>
-              <strong>1 BIT = 100 sats</strong>
-            </div>
-            <div>
-              <span>Settlement</span>
-              <strong>Hash-locked</strong>
-            </div>
-            <div>
-              <span>Best quote</span>
-              <strong>Wins automatically</strong>
-            </div>
+      <section className="trade-stage" id="trade">
+        <header className="trade-intro">
+          <p className="eyebrow">BITCOIN LIGHTNING ↔ BIT</p>
+          <h1>Swap through an invoice.</h1>
+          <p>Paste an invoice to pay with BIT, or create one to receive BIT.</p>
+        </header>
+
+        <section
+          className="exchange-card"
+          aria-label={
+            view === "pool"
+              ? "Solver liquidity planner"
+              : isPayInvoice
+                ? "Pay a Lightning invoice with BIT"
+                : "Create a Lightning invoice to receive BIT"
+          }
+        >
+          <div className="card-tabs" role="group" aria-label="TreeSwap tools">
+            <button
+              type="button"
+              aria-pressed={view === "pay-invoice"}
+              className={view === "pay-invoice" ? "active" : ""}
+              onClick={() => selectView("pay-invoice")}
+            >
+              Pay invoice
+            </button>
+            <button
+              type="button"
+              aria-pressed={view === "get-bit"}
+              className={view === "get-bit" ? "active" : ""}
+              onClick={() => selectView("get-bit")}
+            >
+              Get BIT
+            </button>
+            <button
+              type="button"
+              aria-pressed={view === "pool"}
+              className={view === "pool" ? "active" : ""}
+              onClick={() => selectView("pool")}
+            >
+              Liquidity
+            </button>
           </div>
-        </div>
 
-        <div className="product-stage">
-          <div className="stage-orbit orbit-one" />
-          <div className="stage-orbit orbit-two" />
-
-          {view === "swap" ? (
-            <section className="swap-card" aria-label="TreeSwap quote builder">
-              <div className="card-heading">
-                <div>
-                  <p>CREATE AN INTENT</p>
-                  <h2>Swap at par</h2>
-                </div>
-                <span className="live-badge"><i /> auction live</span>
-              </div>
-
-              <div className="amount-panel">
-                <label htmlFor="swap-amount">You send</label>
-                <div className="amount-row">
-                  <input
-                    id="swap-amount"
-                    inputMode="decimal"
-                    value={amount}
-                    onChange={(event) => setAmount(event.target.value.replace(/[^0-9.]/g, ""))}
-                    aria-label={`Amount in ${inputIsSats ? "sats" : "BIT"}`}
-                  />
-                  <span className={`asset-chip ${inputIsSats ? "btc" : "bit"}`}>
-                    <i>{inputIsSats ? "₿" : "B"}</i>
-                    {inputIsSats ? "sats" : "BIT"}
-                  </span>
-                </div>
-                <span className="balance-line">Available · prototype balance</span>
-              </div>
-
-              <button
-                className="direction-button"
-                onClick={flipDirection}
-                aria-label="Reverse swap direction"
-              >
-                ⇅
-              </button>
-
-              <div className="amount-panel receive-panel">
-                <span>You receive</span>
-                <div className="amount-row">
-                  <strong>
-                    {numberFormat(outputAmount, inputIsSats ? 2 : 0)}
-                  </strong>
-                  <span className={`asset-chip ${inputIsSats ? "bit" : "btc"}`}>
-                    <i>{inputIsSats ? "B" : "₿"}</i>
-                    {inputIsSats ? "BIT" : "sats"}
-                  </span>
-                </div>
-                <span className="balance-line">Best of {offers.length} executable offers</span>
-              </div>
-
-              <div className="auction-head">
-                <span>Competing offers</span>
-                <span>Quote expires {quoteExpiry}</span>
-              </div>
-              <div className="offer-list">
-                {offers.map((offer, index) => {
-                  const offerBase = inputIsSats
-                    ? inputAmount / PAR_SATS
-                    : inputAmount * PAR_SATS;
-                  const offerOutput = Math.max(
-                    offerBase - (offerBase * offer.feeBps) / 10_000 - offer.routeFee,
-                    0,
-                  );
-                  return (
-                    <button
-                      className={`offer-row ${selectedOffer === index ? "selected" : ""}`}
-                      key={offer.name}
-                      onClick={() => setSelectedOffer(index)}
-                    >
-                      <span className={`solver-dot ${offer.color}`} />
-                      <span className="offer-name">
-                        <strong>{offer.name}</strong>
-                        <small>{offer.kind} · {offer.speed}</small>
+          {view !== "pool" ? (
+            <div className="swap-view">
+              {isPayInvoice ? (
+                <>
+                  <div className="invoice-panel">
+                    <div className="invoice-label">
+                      <label htmlFor="lightning-invoice">Lightning invoice</label>
+                      <button type="button" onClick={loadDemoInvoice}>Use demo</button>
+                    </div>
+                    <textarea
+                      id="lightning-invoice"
+                      value={invoice}
+                      onChange={(event) => setInvoice(event.target.value.slice(0, 4096))}
+                      placeholder="Paste a mainnet BOLT 11 invoice (lnbc…)"
+                      rows={3}
+                      spellCheck={false}
+                    />
+                    <div className={`invoice-status ${invoice && (!invoiceHasShape || !decodedInvoiceAmount) ? "error" : ""}`}>
+                      <i />
+                      <span>
+                        {!invoice
+                          ? "Paste an invoice. Nothing is sent yet."
+                          : !invoiceHasShape
+                            ? "This does not look like a mainnet BOLT 11 invoice."
+                            : !decodedInvoiceAmount
+                              ? "Amountless invoices are not supported. The amount must be encoded."
+                              : "Basic invoice shape recognized. Full verification is required before payment."}
                       </span>
-                      <span className="offer-price">
-                        <strong>{numberFormat(offerOutput, inputIsSats ? 2 : 0)}</strong>
-                        <small>{(offer.feeBps / 100).toFixed(2)}% fee</small>
+                    </div>
+                  </div>
+
+                  <div className="amount-panel invoice-amount-panel">
+                    <div className="panel-label">
+                      <span>Invoice receives</span>
+                      <span>Read from invoice</span>
+                    </div>
+                    <div className="amount-row">
+                      <strong>{decodedInvoiceAmount ? numberFormat(decodedInvoiceAmount) : "Amount required"}</strong>
+                      <span className="asset-chip btc"><i>₿</i>sats</span>
+                    </div>
+                  </div>
+
+                  <div className="invoice-flow-arrow" aria-hidden="true">↓</div>
+
+                  <div className="amount-panel receive-panel">
+                    <div className="panel-label"><span>You lock</span><span>Exact solver quote</span></div>
+                    <div className="amount-row">
+                      <strong>{numberFormat(displayInput, inputDigits)}</strong>
+                      <span className="asset-chip bit"><i>B</i>BIT</span>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="amount-panel">
+                    <div className="panel-label"><label htmlFor="bit-receive-amount">You receive</label><span>Exact amount</span></div>
+                    <div className="amount-row">
+                      <input
+                        id="bit-receive-amount"
+                        inputMode="decimal"
+                        value={receiveBitAmount}
+                        onChange={(event) => setReceiveBitAmount(sanitizeAmount(event.target.value))}
+                        aria-label="BIT to receive"
+                      />
+                      <span className="asset-chip bit"><i>B</i>BIT</span>
+                    </div>
+                  </div>
+
+                  <div className="address-panel">
+                    <div className="invoice-label">
+                      <label htmlFor="bit-receive-address">BIT receive address</label>
+                      <button type="button" onClick={() => setReceiveAddress(DEMO_ADDRESS)}>Use demo</button>
+                    </div>
+                    <input
+                      id="bit-receive-address"
+                      value={receiveAddress}
+                      onChange={(event) => setReceiveAddress(event.target.value.trim().slice(0, 42))}
+                      placeholder="0x…"
+                      spellCheck={false}
+                    />
+                    <div className={`invoice-status ${receiveAddress && !receiveAddressHasShape ? "error" : ""}`}>
+                      <i />
+                      <span>
+                        {!receiveAddress
+                          ? "This address is bound before the invoice can be paid."
+                          : receiveAddressHasShape
+                            ? "Recipient fixed for this quote preview."
+                            : "Enter a 42-character Ethereum address."}
                       </span>
-                      {index === 0 && <span className="best-tag">BEST</span>}
-                    </button>
-                  );
-                })}
-              </div>
+                    </div>
+                  </div>
 
-              <div className="quote-details">
-                <div><span>Par conversion</span><strong>{numberFormat(parOutput, inputIsSats ? 2 : 0)} {inputIsSats ? "BIT" : "sats"}</strong></div>
-                <div><span>Intent + solver fee</span><strong>{feeLabel}</strong></div>
-                {!inputIsSats && <div><span>Estimated routing</span><strong>{activeOffer.routeFee} sats</strong></div>}
-                <div><span>Price protection</span><strong>100 sats / BIT</strong></div>
-              </div>
+                  <div className="invoice-flow-arrow" aria-hidden="true">↓</div>
 
-              <button
-                className="primary-action"
-                onClick={beginIntent}
-                disabled={inputAmount <= 0}
-              >
-                Preview this intent <span>→</span>
+                  <div className="amount-panel receive-panel">
+                    <div className="panel-label"><span>Lightning invoice</span><span>Created after review</span></div>
+                    <div className="amount-row">
+                      <strong>{numberFormat(displayInput)}</strong>
+                      <span className="asset-chip btc"><i>₿</i>sats</span>
+                    </div>
+                  </div>
+                </>
+              )}
+
+              <details className="quote-drawer">
+                <summary>
+                  <span className={`solver-dot ${activeOffer.color}`} />
+                  <span className="summary-copy">
+                    <strong>{activeOffer.name}</strong>
+                    <small>{selectedOffer === 0 ? `Best received of ${offers.length}` : `Selected from ${offers.length}`} signed quotes</small>
+                  </span>
+                  <span className="summary-price"><strong>{feeLabel}</strong><small>expires 00:24</small></span>
+                  <span className="chevron">⌄</span>
+                </summary>
+                <div className="offer-list">
+                  {offers.map((offer, index) => {
+                    const offerInput = calculateRequiredInput(direction, desiredOutput, offer.feeBps, offer.routeFee);
+                    const displayOfferInput = roundUpAmount(offerInput, inputIsSats ? 0 : 6);
+                    return (
+                      <button
+                        type="button"
+                        className={`offer-row ${selectedOffer === index ? "selected" : ""}`}
+                        key={offer.name}
+                        onClick={() => setSelectedOffer(index)}
+                      >
+                        <span className={`solver-dot ${offer.color}`} />
+                        <span className="offer-name"><strong>{offer.name}</strong><small>{offer.kind} · {offer.speed}</small></span>
+                        <span className="offer-price"><strong>{numberFormat(displayOfferInput, inputDigits)} {inputAsset}</strong><small>{(offer.feeBps / 100).toFixed(2)}% fee</small></span>
+                        {index === 0 && <span className="best-tag">BEST</span>}
+                      </button>
+                    );
+                  })}
+                </div>
+              </details>
+
+              <details className="swap-details">
+                <summary><span>Invoice details</span><strong>1 BIT = 100 sats <i>⌄</i></strong></summary>
+                <div className="detail-rows">
+                  <div><span>{isPayInvoice ? "Invoice receives" : "Invoice amount"}</span><strong>{numberFormat(isPayInvoice ? desiredOutput : displayInput, 0)} sats</strong></div>
+                  <div><span>{isPayInvoice ? "BIT locked" : "BIT recipient"}</span><strong>{isPayInvoice ? `${numberFormat(displayInput, 6)} BIT` : receiveAddressHasShape ? shortAddress(receiveAddress) : "Required"}</strong></div>
+                  <div><span>Solver fee</span><strong>{feeLabel}</strong></div>
+                  {isPayInvoice && <div><span>Estimated Lightning routing</span><strong>{activeOffer.routeFee} sats</strong></div>}
+                  <div>
+                    <span>Settlement protection</span>
+                    <strong>{isPayInvoice ? "Reverse escrow pending" : "Signed · capped · time-bound"}</strong>
+                  </div>
+                  <div><span>Invoice verification</span><strong>Required before live use</strong></div>
+                </div>
+              </details>
+
+              <button type="button" className="primary-action" onClick={beginIntent} disabled={!canReview}>
+                {isPayInvoice ? "Review invoice payment" : "Create Lightning invoice"} <span>→</span>
               </button>
-              <p className="microcopy">Simulation only. No wallet signature or payment will be requested.</p>
-            </section>
+              <p className="microcopy">Simulation only. No BIT will be locked and no invoice will be paid.</p>
+            </div>
           ) : (
-            <section className="swap-card pool-card" aria-label="Liquidity pool simulator">
-              <div className="card-heading">
-                <div>
-                  <p>PROVIDE LIQUIDITY</p>
-                  <h2>Fund either side</h2>
-                </div>
-                <span className="live-badge"><i /> fee earning</span>
-              </div>
-
-              <div className="pool-balance">
-                <div>
-                  <span>Lightning reserve</span>
-                  <strong>18.4M sats</strong>
-                  <small>49.0% of par value</small>
-                </div>
-                <div>
-                  <span>BIT reserve</span>
-                  <strong>191,800 BIT</strong>
-                  <small>51.0% of par value</small>
-                </div>
-                <span className="pool-balance-bar"><i /></span>
-              </div>
-
-              <div className="asset-selector" aria-label="Select liquidity asset">
-                <button
-                  className={poolAsset === "Lightning" ? "selected" : ""}
-                  onClick={() => { setPoolAsset("Lightning"); setPoolAmount("500000"); setPoolReceipt(false); }}
-                >
-                  <span className="asset-icon btc">₿</span>
-                  <span><strong>Lightning BTC</strong><small>Fund outgoing sats</small></span>
-                </button>
-                <button
-                  className={poolAsset === "BIT" ? "selected" : ""}
-                  onClick={() => { setPoolAsset("BIT"); setPoolAmount("5000"); setPoolReceipt(false); }}
-                >
-                  <span className="asset-icon bit">B</span>
-                  <span><strong>Bittrees BIT</strong><small>Fund outgoing BIT</small></span>
-                </button>
+            <div className="pool-view">
+              <div className="pool-heading">
+                <div><span>Solver inventory</span><h2>Fund both sides.</h2></div>
+                <span className="status-pill"><i /> Self-custodied</span>
               </div>
 
               <div className="amount-panel pool-input">
-                <label htmlFor="pool-amount">Deposit amount</label>
+                <div className="panel-label"><label htmlFor="lightning-liquidity">Lightning budget</label><span>Stays on your node</span></div>
                 <div className="amount-row">
                   <input
-                    id="pool-amount"
-                    inputMode="decimal"
-                    value={poolAmount}
-                    onChange={(event) => setPoolAmount(event.target.value.replace(/[^0-9.]/g, ""))}
+                    id="lightning-liquidity"
+                    inputMode="numeric"
+                    value={lightningLiquidity}
+                    onChange={(event) => { setLightningLiquidity(sanitizeAmount(event.target.value, false)); setPoolReceipt(false); }}
                   />
-                  <span className={`asset-chip ${poolAsset === "Lightning" ? "btc" : "bit"}`}>
-                    <i>{poolAsset === "Lightning" ? "₿" : "B"}</i>
-                    {poolAsset === "Lightning" ? "sats" : "BIT"}
-                  </span>
+                  <span className="asset-chip btc"><i>₿</i>sats</span>
                 </div>
               </div>
 
-              <div className="yield-card">
-                <span>Illustrative share</span>
-                <strong>{poolAsset === "Lightning" ? "2.64%" : "2.54%"}</strong>
-                <small>Earns fees only when your side fills an intent. Not an APY promise.</small>
+              <div className="amount-panel pool-input">
+                <div className="panel-label"><label htmlFor="bit-liquidity">BIT inventory</label><span>Segregated vault</span></div>
+                <div className="amount-row">
+                  <input
+                    id="bit-liquidity"
+                    inputMode="decimal"
+                    value={bitLiquidity}
+                    onChange={(event) => { setBitLiquidity(sanitizeAmount(event.target.value)); setPoolReceipt(false); }}
+                  />
+                  <span className="asset-chip bit"><i>B</i>BIT</span>
+                </div>
               </div>
 
-              <div className="quote-details">
-                <div><span>Withdrawal window</span><strong>24 hours</strong></div>
-                <div><span>Maximum fee share</span><strong>80%</strong></div>
-                <div><span>Pool accounting</span><strong>Separate per side</strong></div>
+              <div className="capacity-card">
+                <span>Balanced swap capacity</span>
+                <strong>{numberFormat(balancedCapacity)} sats</strong>
+                <small>After keeping 25% of each side unquoted</small>
               </div>
+
+              <details className="swap-details">
+                <summary><span>Funding details</span><strong>Separate custody <i>⌄</i></strong></summary>
+                <div className="detail-rows">
+                  <div><span>Usable Lightning</span><strong>{numberFormat(usableLightning)} sats</strong></div>
+                  <div><span>Usable BIT</span><strong>{numberFormat(usableBit, 2)} BIT</strong></div>
+                  <div><span>Suggested first-fill cap</span><strong>{numberFormat(fillCap)} sats</strong></div>
+                  <div><span>Pool structure</span><strong>No shared LP pool</strong></div>
+                </div>
+              </details>
 
               <button
+                type="button"
                 className="primary-action"
+                disabled={lightningReserve <= 0 || bitReserve <= 0}
                 onClick={() => setPoolReceipt(true)}
               >
-                Simulate deposit <span>→</span>
+                Review funding plan <span>→</span>
               </button>
               {poolReceipt && (
-                <p className="receipt" role="status">✓ Draft liquidity receipt created. Nothing was deposited.</p>
+                <div className="funding-receipt" role="status">
+                  <span><b>1</b> Verify node identity and Lightning limit</span>
+                  <span><b>2</b> Deposit BIT into your solver vault account</span>
+                  <span><b>3</b> Activate quotes after both balances reconcile</span>
+                  <small>Plan created. No wallet or node action occurred.</small>
+                </div>
               )}
-            </section>
+            </div>
           )}
-        </div>
-      </section>
+        </section>
 
-      <section className="market-tape" aria-label="Recent prototype settlements">
-        <div className="tape-label"><i /> PROTOTYPE MARKET</div>
-        {activity.map((item) => (
-          <div className="tape-item" key={`${item.pair}-${item.age}`}>
-            <strong>{item.pair}</strong>
-            <span>{item.amount}</span>
-            <small>via {item.solver} · {item.age}</small>
-          </div>
-        ))}
-      </section>
-
-      <section className="book-section" aria-labelledby="book-title">
-        <div className="book-intro">
-          <p className="eyebrow">PRICE–TIME INTENT BOOK</p>
-          <h2 id="book-title">The best executable edge leads.</h2>
-          <p>
-            Inspired by DeepState’s top-of-book mechanism, TreeSwap ranks each
-            side by net output after every disclosed cost. Arrival time breaks
-            ties. Only the leading executable bid and ask earn maker fee share.
-          </p>
-          <div className="book-rules">
-            <span><b>1</b> Net price first</span>
-            <span><b>2</b> Time breaks ties</span>
-            <span><b>3</b> Collateral must stay live</span>
-          </div>
-        </div>
-
-        <div className="order-book" aria-label="Prototype TreeSwap intent book">
-          <div className="book-topline">
-            <div><span>Best bid</span><strong>99.82</strong><small>sats / BIT</small></div>
-            <div><span>Best ask</span><strong>100.72</strong><small>sats / BIT</small></div>
-            <div><span>Net spread</span><strong>0.90%</strong><small>after quoted costs</small></div>
-          </div>
-          <div className="book-columns">
-            <div className="book-side bids">
-              <div className="book-side-title"><span>Lightning → BIT</span><small>BIDS · BUY BIT</small></div>
-              <div className="book-row head"><span>Net price</span><span>Quantity</span><span>Age</span></div>
-              <div className="book-row leader"><span>99.82</span><span>1,248 BIT</span><span>00:41</span><b>LEADS + EARNS</b></div>
-              <div className="book-row"><span>99.72</span><span>4,800 BIT</span><span>01:07</span></div>
-              <div className="book-row"><span>99.66</span><span>2,100 BIT</span><span>02:12</span></div>
-              <div className="book-row"><span>99.58</span><span>8,400 BIT</span><span>03:44</span></div>
-            </div>
-            <div className="book-side asks">
-              <div className="book-side-title"><span>BIT → Lightning</span><small>ASKS · SELL BIT</small></div>
-              <div className="book-row head"><span>Net price</span><span>Quantity</span><span>Age</span></div>
-              <div className="book-row leader"><span>100.72</span><span>842 BIT</span><span>00:18</span><b>LEADS + EARNS</b></div>
-              <div className="book-row"><span>100.85</span><span>2,208 BIT</span><span>00:56</span></div>
-              <div className="book-row"><span>100.97</span><span>930 BIT</span><span>01:49</span></div>
-              <div className="book-row"><span>101.12</span><span>5,000 BIT</span><span>04:21</span></div>
-            </div>
-          </div>
-          <div className="book-footer">
-            <span><i /> Executable collateral checked 3s ago</span>
-            <span>12 resting intents · 3 independent solvers</span>
-          </div>
+        <div className="trade-trust" aria-label="Swap guarantees">
+          <span><i>✓</i> Invoice-first</span>
+          <span><i>✓</i> Best received quote</span>
+          <span><i>✓</i> No real funds</span>
         </div>
       </section>
 
       <section className="mechanism" id="mechanism">
         <div className="section-heading">
-          <p className="eyebrow">THE CLEARING MECHANISM</p>
-          <h2>Two sides. One secret.</h2>
-          <p>
-            TreeSwap uses the same payment hash on Lightning and Ethereum. The
-            revealed preimage is the receipt that releases BIT—without asking
-            either participant to trust the other.
-          </p>
+          <p className="eyebrow">HOW IT WORKS</p>
+          <h2>Invoice in. Quote out.</h2>
+          <p>There is no shared public liquidity pool. Independent solvers compete to fill a signed request.</p>
         </div>
         <div className="mechanism-grid">
-          <article>
-            <span className="step-number">01</span>
-            <div className="mechanism-icon intent-icon"><i /><b /></div>
-            <h3>Publish the outcome</h3>
-            <p>A maker signs an intent: asset in, minimum asset out, recipient, expiry, and fee ceiling.</p>
-          </article>
-          <article>
-            <span className="step-number">02</span>
-            <div className="mechanism-icon auction-icon"><i /><b /><em /></div>
-            <h3>Compete to fill</h3>
-            <p>Opposite user intents and independent solvers submit executable offers. Best net output wins.</p>
-          </article>
-          <article>
-            <span className="step-number">03</span>
-            <div className="mechanism-icon settle-icon"><i /></div>
-            <h3>Settle atomically</h3>
-            <p>The Lightning preimage unlocks the reserved BIT escrow. If time expires, funds return.</p>
-          </article>
+          <article><span>01</span><h3>Paste or create</h3><p>Bring an invoice to pay with BIT, or create one to receive BIT.</p></article>
+          <article><span>02</span><h3>Pick a quote</h3><p>Compare short-lived, all-in prices for the exact invoice amount.</p></article>
+          <article><span>03</span><h3>Pay once</h3><p>One payment hash binds the invoice and BIT escrow—or timeout returns the funds.</p></article>
         </div>
       </section>
 
-      <section className="rules-section">
-        <div className="rules-card fee-card">
+      <section className="facts-section" aria-label="TreeSwap market details">
+        <article className="fee-card">
           <p className="eyebrow">DIRECTIONAL FEES</p>
-          <h2>Liquidity has a direction.</h2>
-          <p>
-            BIT → Lightning carries a higher fee because the fulfiller must source
-            outbound Lightning liquidity and absorb routing uncertainty.
-          </p>
+          <h2>Lightning out costs more.</h2>
+          <p>BIT → Lightning includes routing and outbound-capacity costs.</p>
           <div className="fee-comparison">
-            <div>
-              <span>Lightning → BIT</span>
-              <strong>from 0.18%</strong>
-              <small>Sender pays their own routing</small>
-            </div>
-            <div className="high-fee">
-              <span>BIT → Lightning</span>
-              <strong>from 0.72%</strong>
-              <small>Routing estimate included</small>
-            </div>
+            <div><span>Lightning → BIT</span><strong>from 0.18%</strong></div>
+            <div><span>BIT → Lightning</span><strong>from 0.72%</strong></div>
           </div>
-          <span className="rule-note">Fee caps are signed into every intent. Governance can adjust defaults, never an active quote.</span>
-          <span className="rule-note">V1 protocol fees settle on the BIT leg; Lightning routing and solver spread are locked into the net-sats quote.</span>
-        </div>
+        </article>
 
-        <div className="rules-card contract-card">
+        <article className="asset-card">
           <p className="eyebrow">SETTLEMENT ASSET</p>
-          <h2>BIT stays BIT.</h2>
-          <p>
-            TreeSwap does not mint or redeem BIT. It moves the existing ERC-20
-            through an isolated escrow and leaves BNote backing to the BIT protocol.
-          </p>
-          <a
-            href={`https://etherscan.io/token/${BIT_CONTRACT}#code`}
-            target="_blank"
-            rel="noreferrer"
-            className="contract-link"
-          >
-            <span><i /> Ethereum mainnet</span>
-            <strong>{shortAddress(BIT_CONTRACT)}</strong>
-            <b>↗</b>
+          <h2>BIT, not a wrapper.</h2>
+          <p>Existing BIT moves through isolated escrow. TreeSwap does not mint a substitute token.</p>
+          <a href={`https://etherscan.io/token/${BIT_CONTRACT}#code`} target="_blank" rel="noreferrer" className="contract-link">
+            <span><i /> Ethereum mainnet</span><strong>{shortAddress(BIT_CONTRACT)}</strong><b>↗</b>
           </a>
-          <div className="contract-facts">
-            <span>ERC-20</span><span>18 decimals</span><span>Upgradeable</span><span>Escrowed, not wrapped</span>
-          </div>
-        </div>
-      </section>
-
-      <section className="security-section" aria-labelledby="security-title">
-        <div className="security-heading">
-          <p className="eyebrow">ADVERSARIAL BY DESIGN</p>
-          <h2 id="security-title">Four launch gates before real funds.</h2>
-          <p>
-            Hash locks are only one piece. TreeSwap must also defend the par,
-            bind the recipient, order both clocks safely, and make quote priority verifiable.
-          </p>
-          <a href="https://github.com/lightning/bolts/blob/master/11-payment-encoding.md" target="_blank" rel="noreferrer">
-            Review basis: BOLT 11 + EIP-712 <span>↗</span>
-          </a>
-        </div>
-        <div className="security-grid">
-          <article>
-            <span>01 · ECONOMIC</span>
-            <h3>Par circuit breaker</h3>
-            <p>Caps and inventory-aware fees stop a stale 100-sat reference from draining one side.</p>
-            <b>REQUIRED</b>
-          </article>
-          <article>
-            <span>02 · ATOMICITY</span>
-            <h3>Bound beneficiary</h3>
-            <p>The Ethereum recipient is fixed before payment, making a copied preimage harmless.</p>
-            <b>REQUIRED</b>
-          </article>
-          <article>
-            <span>03 · TIME</span>
-            <h3>Ordered deadlines</h3>
-            <p>Lightning&apos;s last safe settle precedes the Ethereum refund by a tested safety buffer.</p>
-            <b>REQUIRED</b>
-          </article>
-          <article>
-            <span>04 · MARKET</span>
-            <h3>Verifiable priority</h3>
-            <p>Signed, sequenced quotes let anyone reproduce price-time order before rewards activate.</p>
-            <b>REQUIRED</b>
-          </article>
-        </div>
+        </article>
       </section>
 
       <footer>
-        <a href="#top" className="brand footer-brand">
-          <span className="brand-mark" aria-hidden="true"><i /><b>ϟ</b></span>
-          <span>treeswap</span>
-        </a>
-        <p>Intent-based swaps between Bitcoin Lightning and Bittrees BIT.</p>
-        <span>Prototype specification · August 2026</span>
+        <Link href="/" className="brand footer-brand"><span className="brand-mark" aria-hidden="true"><i /><b>ϟ</b></span><span>treeswap</span></Link>
+        <p>Competitive swaps between Bitcoin Lightning and Bittrees BIT.</p>
+        <span><a href="https://github.com/bobofbuilding/treeswap" target="_blank" rel="noreferrer">Open-source prototype</a> · MIT</span>
       </footer>
 
       {intentOpen && (
         <div className="modal-backdrop" role="presentation" onMouseDown={() => setIntentOpen(false)}>
-          <section
-            className="intent-modal"
-            role="dialog"
-            aria-modal="true"
-            aria-labelledby="intent-title"
-            onMouseDown={(event) => event.stopPropagation()}
-          >
-            <button className="modal-close" onClick={() => setIntentOpen(false)} aria-label="Close simulation">×</button>
-            <span className="modal-kicker">SANDBOX SETTLEMENT</span>
+          <section className="intent-modal" role="dialog" aria-modal="true" aria-labelledby="intent-title" onMouseDown={(event) => event.stopPropagation()}>
+            <button type="button" className="modal-close" onClick={() => setIntentOpen(false)} aria-label="Close simulation">×</button>
+            <span className="modal-kicker">INVOICE CHECKOUT · PROTOTYPE</span>
             <h2 id="intent-title">
-              {intentPhase >= intentSteps.length ? "Intent settled." : "Following the secret…"}
+              {!paymentStarted
+                ? isPayInvoice
+                  ? "Pay this invoice with BIT."
+                  : "Pay this invoice to receive BIT."
+                : intentPhase >= intentSteps.length
+                  ? "Invoice settled."
+                  : "Following the payment hash…"}
             </h2>
             <p>
-              {inputIsSats
-                ? `${numberFormat(inputAmount)} sats → ${numberFormat(outputAmount, 2)} BIT`
-                : `${numberFormat(inputAmount, 2)} BIT → ${numberFormat(outputAmount)} sats`}
+              {isPayInvoice
+                ? `${numberFormat(displayInput, 6)} BIT pays a ${numberFormat(desiredOutput)} sat invoice.`
+                : `${numberFormat(displayInput)} sats releases ${numberFormat(desiredOutput, 2)} BIT.`}
             </p>
 
-            <div className="intent-path" aria-label="Intent settlement progress">
-              {intentSteps.map((step, index) => {
-                const complete = intentPhase > index;
-                const active = intentPhase === index;
-                return (
-                  <div className={`${complete ? "complete" : ""} ${active ? "current" : ""}`} key={step.title}>
-                    <span>{complete ? "✓" : index + 1}</span>
-                    <div><strong>{step.title}</strong><small>{step.note}</small></div>
-                  </div>
-                );
-              })}
-            </div>
-
-            <div className="hash-card">
-              <span>Shared payment hash</span>
-              <code>7ea4…c91b</code>
-            </div>
-
-            {intentPhase >= intentSteps.length ? (
-              <button className="primary-action" onClick={() => setIntentOpen(false)}>Done <span>✓</span></button>
+            {!paymentStarted ? (
+              <>
+                <div className="invoice-code-card">
+                  <span>{isPayInvoice ? "Invoice to be paid" : "Prototype invoice to pay"}</span>
+                  <code>{isPayInvoice ? normalizeBolt11(invoice) : generatedInvoice}</code>
+                </div>
+                <div className="checkout-rows">
+                  <div><span>Selected solver</span><strong>{activeOffer.name}</strong></div>
+                  <div><span>Invoice amount</span><strong>{numberFormat(isPayInvoice ? desiredOutput : displayInput)} sats</strong></div>
+                  <div><span>BIT amount</span><strong>{numberFormat(isPayInvoice ? displayInput : desiredOutput, 6)} BIT</strong></div>
+                  <div><span>Solver fee</span><strong>{feeLabel}</strong></div>
+                </div>
+                <div className="checkout-warning">
+                  Prototype preview only. A live flow must verify the invoice checksum, signature, expiry, network, amount, and payment hash before locking funds.
+                </div>
+                <button
+                  type="button"
+                  className="primary-action"
+                  onClick={() => { setIntentPhase(0); setPaymentStarted(true); }}
+                >
+                  Simulate invoice payment <span>→</span>
+                </button>
+              </>
             ) : (
-              <div className="settling-line"><i /> Simulating settlement</div>
+              <>
+                <div className="intent-path" aria-label="Invoice settlement progress">
+                  {intentSteps.map((step, index) => {
+                    const complete = intentPhase > index;
+                    const active = intentPhase === index;
+                    return (
+                      <div className={`${complete ? "complete" : ""} ${active ? "current" : ""}`} key={step.title}>
+                        <span>{complete ? "✓" : index + 1}</span>
+                        <div><strong>{step.title}</strong><small>{step.note}</small></div>
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="hash-card"><span>Shared payment hash</span><code>7ea4…c91b</code></div>
+                {intentPhase >= intentSteps.length ? (
+                  <button type="button" className="primary-action" onClick={() => setIntentOpen(false)}>Done <span>✓</span></button>
+                ) : (
+                  <div className="settling-line"><i /> Simulating invoice settlement</div>
+                )}
+              </>
             )}
           </section>
         </div>
