@@ -20,6 +20,7 @@ function input() {
     ],
     configurationHashes: {
       "infra/regtest/compose.yml": `sha256:${"4".repeat(64)}`,
+      "infra/coordinator/Dockerfile": `sha256:${"5".repeat(64)}`,
     },
     campaigns: [{ name: "lightning:invoice-faults", status: "passed" }],
   };
@@ -49,4 +50,8 @@ test("rejects failed campaigns, mutable images, and secret-bearing fields", () =
   }), /immutable image digests/);
   assert.throws(() => assertQualificationEvidenceIsSecretFree({ privateKey: "not-recorded" }), /forbidden field/);
   assert.throws(() => assertQualificationEvidenceIsSecretFree({ note: "lnbcrt1thisisasecretinvoicepayload" }), /secret material/);
+  assert.throws(() => buildQualificationEvidence({
+    ...input(),
+    configurationHashes: { "../outside config": `sha256:${"4".repeat(64)}` },
+  }), /configuration hash entry is invalid/);
 });
