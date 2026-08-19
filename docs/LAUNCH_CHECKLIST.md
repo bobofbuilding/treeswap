@@ -15,6 +15,8 @@ No repository checkbox can substitute for deployed evidence. A gate becomes comp
 ## Funded testnet — blocked
 
 - [ ] Record the exact BIT proxy, implementation, proxy bytecode hash, implementation bytecode hash, pause state, decimals, and finalized block in a reviewed deployment manifest.
+  - [x] Credential-safe finalized-state observer and negative tests implemented.
+  - [ ] Capture matching observations from two independent authenticated RPC providers, verify source/bytecode, and promote them through review.
 - [ ] Run the full escrow suite against a controlled Ethereum mainnet fork: proxy implementation change, pause/unpause while locked, reorg before and after open/claim, nonstandard transfer behavior, and finality rollback.
 - [ ] Run an isolated Bitcoin/LND regtest adapter: standard and hold invoices, exact BOLT 11 decode, delayed/fast blocks, accepted-HTLC cutoff, timeout, LND restart, force close, credential rotation/revocation, and negative macaroon permissions.
 - [ ] Deploy the gate, registry, and both escrows from the reviewed source commit. Seal the registry to exactly those escrows and prove every constructor immutable and runtime code hash.
@@ -36,3 +38,5 @@ No repository checkbox can substitute for deployed evidence. A gate becomes comp
 ## Public liquidity — intentionally out of scope
 
 Public deposits, transferable shares, yield, rewards, and withdrawal queues require a new protocol and separate custody, accounting, insolvency, adverse-selection, economic, and legal review. They cannot be enabled by changing a v1 flag.
+
+The ordered work packages and evidence required to progress these gates are in [Production readiness](./PRODUCTION_READINESS.md).

@@ -24,6 +24,10 @@ The prototype assumes a business par value of **1 BIT = 100 sats**. This value i
 - Canonical integer units and BIT-only fee policy in [`docs/UNITS_AND_ROUNDING.md`](docs/UNITS_AND_ROUNDING.md) and [`docs/FEES.md`](docs/FEES.md)
 - Adversarial design review and launch gates in [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md)
 - Phase-by-phase evidence ledger in [`docs/LAUNCH_CHECKLIST.md`](docs/LAUNCH_CHECKLIST.md)
+- Ordered production gates in [`docs/PRODUCTION_READINESS.md`](docs/PRODUCTION_READINESS.md)
+- Permissionless solver target in [`docs/PERMISSIONLESS_AUTOMATION.md`](docs/PERMISSIONLESS_AUTOMATION.md)
+- Optional Lightning account linking in [`docs/LIGHTNING_ACCOUNTS.md`](docs/LIGHTNING_ACCOUNTS.md)
+- Immutable version transitions in [`docs/UPGRADES.md`](docs/UPGRADES.md)
 
 The bridge interface remains a swap simulation: it does not lock BIT, pay a swap invoice, create a payable solver invoice, or publish quotes. The separate **Send** tool can move real funds only after a second review and explicit confirmation in the user's wallet. BIT sends call the token's standard `transfer` function directly and never request an allowance. Lightning sends pass an exact, amount-bearing mainnet BOLT 11 invoice to an available WebLN provider, with a `lightning:` wallet link as the fallback. These direct payments bypass TreeSwap solvers, liquidity, fees, and swap protections.
 

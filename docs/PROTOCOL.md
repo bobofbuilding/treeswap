@@ -22,6 +22,8 @@ The user experience is invoice-first. BIT → Lightning starts with an exact, am
 
 There is no central limit order book, shared LP pool, market-making reward, partial fill, or permissionless solver admission in v1.
 
+The target production architecture opens quote creation and solver competition without opening public pooled custody. See [`PERMISSIONLESS_AUTOMATION.md`](PERMISSIONLESS_AUTOMATION.md). Optional EVM-to-Lightning identity linking is described in [`LIGHTNING_ACCOUNTS.md`](LIGHTNING_ACCOUNTS.md), and immutable version transitions are described in [`UPGRADES.md`](UPGRADES.md).
+
 The RFQ client follows [`RFQ_POLICY.md`](RFQ_POLICY.md): it validates complete solver-signed offers, bounds work and one retained offer per solver, orders the verified received set by executable input price and receipt time, and commits that set before the user selects one quote. It never claims that a relay supplied a globally complete market.
 
 ## 3. Selected-quote intent
@@ -181,3 +183,4 @@ Direct sends do not inherit solver quotes, reference-par pricing, bridge fee log
 
 See [`THREAT_MODEL.md`](THREAT_MODEL.md) for the adversarial review and launch gates.
 The evidence required for each phase is tracked in [`LAUNCH_CHECKLIST.md`](LAUNCH_CHECKLIST.md), and response sequencing is defined in [`INCIDENT_RUNBOOK.md`](INCIDENT_RUNBOOK.md).
+The ordered path from the current prototype to a capped mainnet beta is in [`PRODUCTION_READINESS.md`](PRODUCTION_READINESS.md).
