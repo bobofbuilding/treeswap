@@ -152,3 +152,18 @@ test("bounds work before signature verification", async () => {
     /bounded offer limit/,
   );
 });
+
+test("rejects stale capacity epochs and routing costs above the signed request cap", async () => {
+  const stale = await envelope(solvers[0], 1, 10_000, "relay-a");
+  stale.offer.capacityEpoch = request.capacityEpoch - 1;
+  stale.signature = await solvers[0].signTypedData(rfqDomain(request), RFQ_OFFER_TYPES, stale.offer);
+  const expensive = await envelope(solvers[1], 2, 10_000, "relay-b");
+  expensive.offer.maxRoutingFeeSats = request.maxRoutingFeeSats + 1n;
+  expensive.signature = await solvers[1].signTypedData(rfqDomain(request), RFQ_OFFER_TYPES, expensive.offer);
+  const valid = await envelope(solvers[2], 3, 10_100, "direct-c");
+
+  assert.throws(
+    () => buildReceivedQuoteBook({ request, envelopes: [stale, expensive, valid], now: NOW, policy }),
+    /not enough independent valid solver offers/,
+  );
+});

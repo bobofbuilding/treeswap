@@ -182,7 +182,9 @@ V1 issues no reward token, points, rebates, maker emissions, or volume incentive
 
 ### TS-M04 — Hidden routing and stale capacity
 
-Lightning route fees and capacity are uncertain. A quote must be firm up to a signed maximum routing cost and expire quickly. Penalize repeated failure, avoid presenting probes as guarantees, and fall back to the next quote only with fresh user authorization if output changes.
+**Status:** Signed routing cap, exact output, fresh capacity epoch, atomic commitment accounting, reliability suspension, and fresh-authorized fallback implemented; live node probing remains a deployment gate
+
+Every solver offer binds the exact Lightning output, `maxRoutingFeeSats`, short expiry, and signed capacity epoch. Offers above the user's routing cap or from a stale epoch are rejected. The admission policy subtracts active commitments from fresh capacity before releasing a firm signature, bounds active firm quotes, and suspends repeated solver-attributable failures. The UI calls the result a quote—not guaranteed channel capacity—and `fallbackAuthorization` rejects a different solver/offer until the user authorizes the new exact terms. A live adapter must still reconcile channels and in-flight HTLCs and measure routing failures on regtest/testnet before funding.
 
 ### TS-M05 — Mempool preimage disclosure
 
