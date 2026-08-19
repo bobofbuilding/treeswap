@@ -2,9 +2,13 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   authorizeLightningAction,
+  consumeLightningAuthorization,
   deriveSettlementSchedule,
+  issueLightningAuthorization,
+  validateLightningDispatch,
   validateHeldHtlc,
 } from "../lib/settlement-policy.mjs";
+import { id } from "ethers";
 
 const NOW = 2_000_000_000;
 const HEIGHT = 900_000;
@@ -25,6 +29,24 @@ const policy = {
   claimRelaySeconds: 600,
   ethereumCongestionSeconds: 1_800,
   maximumLockSeconds: 172_800,
+  maxAuthorizationAgeSeconds: 15,
+};
+
+const canonicalChain = {
+  latestBlock: 1_200,
+  finalizedBlock: 1_190,
+  escrowBlock: 1_180,
+  escrowBlockHash: "0xabc",
+  canonicalBlockHash: "0xabc",
+  escrowDigest: "0xintent",
+  expectedEscrowDigest: "0xintent",
+};
+
+const healthyService = {
+  riskGateEnabled: true,
+  balancesReconciled: true,
+  lightningNodeSynced: true,
+  adapterHealthy: true,
 };
 
 function derive(direction = "lightning-to-bit") {
@@ -106,21 +128,8 @@ test("authorizes Lightning only after a matching escrow is canonical and finaliz
   const result = authorizeLightningAction({
     schedule,
     nowSeconds: NOW + 1_000,
-    chain: {
-      latestBlock: 1_200,
-      finalizedBlock: 1_190,
-      escrowBlock: 1_180,
-      escrowBlockHash: "0xabc",
-      canonicalBlockHash: "0xabc",
-      escrowDigest: "0xintent",
-      expectedEscrowDigest: "0xintent",
-    },
-    service: {
-      riskGateEnabled: true,
-      balancesReconciled: true,
-      lightningNodeSynced: true,
-      adapterHealthy: true,
-    },
+    chain: canonicalChain,
+    service: healthyService,
     policy,
   });
   assert.deepEqual(result, { authorized: true, reasons: [] });
@@ -150,4 +159,83 @@ test("fails closed on reorg, insufficient finality, unhealthy service, or exact 
   });
   assert.equal(result.authorized, false);
   assert.match(result.reasons.join("; "), /cutoff|not finalized|canonical|do not match|risk gate|not reconciled|not synced|unhealthy/);
+});
+
+test("revalidates and consumes one short-lived Lightning authorization immediately before RPC", () => {
+  const schedule = derive("bit-to-lightning");
+  const authorization = issueLightningAuthorization({
+    actionId: id("one-shot-action"),
+    schedule,
+    chain: canonicalChain,
+    service: healthyService,
+    nowSeconds: NOW + 1_000,
+    policy,
+  });
+  assert.equal(authorization.expiresAt, NOW + 1_015);
+  const decision = validateLightningDispatch({
+    authorization,
+    chain: canonicalChain,
+    service: healthyService,
+    nowSeconds: NOW + 1_001,
+    policy,
+  });
+  assert.equal(decision.authorized, true);
+  const used = consumeLightningAuthorization([], authorization, decision);
+  assert.deepEqual(used, [authorization.actionId]);
+  assert.equal(validateLightningDispatch({
+    authorization,
+    chain: canonicalChain,
+    service: healthyService,
+    usedActionIds: used,
+    nowSeconds: NOW + 1_002,
+    policy,
+  }).authorized, false);
+});
+
+test("rejects a reorg, finality rollback, intent change, or service failure after authorization", () => {
+  const authorization = issueLightningAuthorization({
+    actionId: id("reorg-action"),
+    schedule: derive("bit-to-lightning"),
+    chain: canonicalChain,
+    service: healthyService,
+    nowSeconds: NOW + 1_000,
+    policy,
+  });
+  const cases = [
+    { chain: { ...canonicalChain, canonicalBlockHash: "0xreorg" }, service: healthyService, reason: /reorged/ },
+    { chain: { ...canonicalChain, finalizedBlock: 1_189 }, service: healthyService, reason: /regressed/ },
+    { chain: { ...canonicalChain, escrowDigest: "0xchanged" }, service: healthyService, reason: /intent changed/ },
+    { chain: canonicalChain, service: { ...healthyService, riskGateEnabled: false }, reason: /risk gate closed/ },
+  ];
+  for (const entry of cases) {
+    const decision = validateLightningDispatch({
+      authorization,
+      chain: entry.chain,
+      service: entry.service,
+      nowSeconds: NOW + 1_001,
+      policy,
+    });
+    assert.equal(decision.authorized, false);
+    assert.match(decision.reasons.join("; "), entry.reason);
+  }
+});
+
+test("rejects the authorization at its exact expiry boundary", () => {
+  const authorization = issueLightningAuthorization({
+    actionId: id("expired-action"),
+    schedule: derive("bit-to-lightning"),
+    chain: canonicalChain,
+    service: healthyService,
+    nowSeconds: NOW + 1_000,
+    policy,
+  });
+  const decision = validateLightningDispatch({
+    authorization,
+    chain: canonicalChain,
+    service: healthyService,
+    nowSeconds: authorization.expiresAt,
+    policy,
+  });
+  assert.equal(decision.authorized, false);
+  assert.match(decision.reasons.join("; "), /expired/);
 });

@@ -156,7 +156,9 @@ A Lightning invoice is not a divisible onchain order. TreeSwap v1 now rejects pa
 
 ### TS-H09 — Reorg and payment authorization
 
-Paying Lightning before the BIT escrow is sufficiently final can leave the payer with a preimage but no durable escrow. Define confirmation thresholds, detect Ethereum reorgs, stop authorization when the chain is unhealthy, and separate `escrow seen` from `escrow final enough to pay`.
+**Status:** Canonical/finalized escrow gate plus one-shot dispatch-time revalidation implemented; controlled fork reorg campaign remains a deployment gate
+
+Paying Lightning before the BIT escrow is sufficiently final can leave the payer with a preimage but no durable escrow. `authorizeLightningAction` distinguishes an observed escrow from a matching canonical and finalized escrow, requires confirmation/finality thresholds, healthy finality lag, the exact intent digest, open risk gate, reconciled balances, and healthy synced adapter. Authorization then becomes a short-lived one-shot action bound to the escrow block and hash. Immediately before the LND RPC, dispatch re-reads canonicality, finality, intent, and service state; a post-authorization reorg, finality regression, state change, replay, or exact expiry rejects. Controlled fork reorgs before and after open/claim remain required before testnet funding.
 
 ## Medium-severity findings
 

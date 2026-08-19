@@ -37,6 +37,8 @@ The Lightning adapter receives authorization only when all checks pass together:
 
 Any unknown or stale input rejects authorization. Observing a transaction is distinct from authorizing a Lightning payment.
 
+Authorization is not a reusable boolean. `issueLightningAuthorization` creates a one-shot action ID bound to the exact intent, escrow block/hash, finalized head, and a maximum 15-second lifetime. Immediately before the LND RPC, `validateLightningDispatch` re-reads canonical block hash, finalized head, intent digest, risk gate, balances, node sync, and adapter health. A reorg, finality rollback, state change, exact expiry, or reused action ID rejects dispatch. Successful dispatch consumes the action ID once.
+
 ## Required integration campaign
 
 The pure policy tests cover ordering, exact cutoffs, unsafe invoice expiry, insufficient final CLTV, held-HTLC boundaries, Ethereum finality, reorg detection, and fail-closed service state. The remaining campaign must run with Bitcoin regtest, LND hold invoices, an Ethereum fork or testnet, controlled reorgs, delayed and fast blocks, mempool congestion, LND restart, held-HTLC timeout, and force-close. Those external results are a testnet launch gate, not something unit tests can prove.
