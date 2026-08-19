@@ -1128,7 +1128,7 @@ smoke_stale_chain_header() {
   height_before=$(jq -er '.block_height | tonumber' <<<"$info")
 
   compose --profile adapter run --rm -d --name "$stale_container" \
-    -e MAX_CHAIN_HEADER_AGE_SECONDS=1 \
+    -e MAX_CHAIN_NO_PROGRESS_SECONDS=1 \
     -e ADAPTER_JOURNAL_PATH=/tmp/stale-actions.jsonl \
     payer-adapter >/dev/null
   for _ in $(seq 1 60); do
@@ -1181,7 +1181,7 @@ smoke_stale_chain_header() {
     echo "stale-header adapter dispatched a new payment" >&2
     return 1
   fi
-  if ! jq -e '.ambiguous == false and (.error | test("best chain header is stale"))' <<<"$result" >/dev/null; then
+  if ! jq -e '.ambiguous == false and (.error | test("chain made no observed progress"))' <<<"$result" >/dev/null; then
     echo "stale-header adapter failed for an unexpected reason" >&2
     jq -c '{error,errorCode,ambiguous}' <<<"$result" >&2
     return 1

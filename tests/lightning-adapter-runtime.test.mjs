@@ -27,6 +27,7 @@ const policy = {
   maxPendingChannels: 1,
   minimumActiveChannels: 1,
   maxChainHeaderAgeSeconds: 3_600,
+  maxChainNoProgressSeconds: 3_600,
   maxChainHeaderFutureSeconds: 300,
   healthTimeoutMs: 1_000,
   dispatchTimeoutMs: 2_000,
@@ -209,7 +210,7 @@ test("rejects locally observed header stagnation even when the reported timestam
     block_height: 900_000,
   };
   const { adapter } = await runtime("payer", lnd, () => observedAt, {
-    maxChainHeaderAgeSeconds: 1,
+    maxChainNoProgressSeconds: 1,
     maxChainHeaderFutureSeconds: 300,
   });
   await adapter.execute(authorization("/lnrpc.Lightning/DecodePayReq", {
@@ -221,7 +222,7 @@ test("rejects locally observed header stagnation even when the reported timestam
     timeoutSeconds: 10,
     feeLimitSats: "10",
   }, { requestId: id("stalled-header-payment").toLowerCase() });
-  await assert.rejects(() => adapter.execute(envelope), /best chain header is stale/);
+  await assert.rejects(() => adapter.execute(envelope), /chain made no observed progress/);
   assert.equal(lnd.calls.some(([name]) => name === "send"), false);
 });
 

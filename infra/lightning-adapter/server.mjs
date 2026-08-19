@@ -66,6 +66,7 @@ const policy = Object.freeze({
   maxPendingChannels: integer("MAX_PENDING_CHANNELS", 100),
   minimumActiveChannels: integer("MINIMUM_ACTIVE_CHANNELS", 100),
   maxChainHeaderAgeSeconds: integer("MAX_CHAIN_HEADER_AGE_SECONDS", 604_800),
+  maxChainNoProgressSeconds: integer("MAX_CHAIN_NO_PROGRESS_SECONDS", 604_800),
   maxChainHeaderFutureSeconds: integer("MAX_CHAIN_HEADER_FUTURE_SECONDS", 7_200),
   healthTimeoutMs: integer("HEALTH_TIMEOUT_MS", 60_000),
   dispatchTimeoutMs: integer("DISPATCH_TIMEOUT_MS", 120_000),
