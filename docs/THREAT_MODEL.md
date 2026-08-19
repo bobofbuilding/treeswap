@@ -170,7 +170,9 @@ Paying Lightning before the BIT escrow is sufficiently final can leave the payer
 
 ### TS-M02 — Wash fills and sybil rewards (not applicable to v1)
 
-V1 issues no rewards. Any later incentive system needs a separate economic and sybil review and must not emit rewards greater than fees paid.
+**Status:** Resolved by exclusion from the immutable v1 capability set
+
+V1 issues no reward token, points, rebates, maker emissions, or volume incentives, and `V1_CAPABILITIES.makerRewards` is test-locked to false. A wash fill therefore has no TreeSwap reward to extract and still bears fees and execution cost. Any later incentive system requires a new protocol version plus a separate economic/sybil review and must never emit claimable value greater than independently paid fees.
 
 ### TS-M03 — Quote flooding and cancellation churn
 
