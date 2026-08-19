@@ -8,7 +8,7 @@ The adapter runs beside a dedicated solver LND node on a private network. The br
 
 The pinned adapter image contains only Node.js and the adapter modules; it does not install the web application dependencies. It runs read-only, without Linux capabilities, with `no-new-privileges`, a small no-execute temporary filesystem, no host port, a dedicated journal volume, and exactly one role credential volume.
 
-Use distinct positive macaroon root-key IDs and exact URI permissions. The two value roles share only the read methods needed to fail closed on node and channel health:
+Use distinct positive macaroon root-key IDs, exact URI permissions, and bounded `time-before` caveats. The two value roles share only the read methods needed to fail closed on node and channel health:
 
 - invoice: `GetInfo`, `ListChannels`, `PendingChannels`, `AddHoldInvoice`, `SettleInvoice`, `CancelInvoice`, and `LookupInvoiceV2`;
 - payer: `GetInfo`, `ListChannels`, `PendingChannels`, `DecodePayReq`, `SendPaymentV2`, and `TrackPaymentV2`; and
@@ -38,6 +38,8 @@ The audit record contains hashes, integer amount, method, decision, and reason c
 
 `npm run regtest:adapter-smoke` proves a signed 10,000-sat hold invoice can be created on Bob, paid from Alice, observed as `ACCEPTED`, settled with the matching preimage, and completed as `SUCCEEDED`. It then restarts the payer adapter and proves the same signed request remains rejected by the durable journal. The invoice adapter also rejects a correctly signed payer action, and the underlying macaroons reject representative non-role RPCs.
 
+`npm run regtest:credential-smoke` proves each node/role credential has exactly its declared root-key ID, URI set, and one expiry caveat; every granted URI exists in the pinned LND registry; representative forbidden capability categories fail specifically for authorization; a two-second credential expires; and deleting a disposable credential's root-key ID revokes it without taking down the node.
+
 `npm run regtest:coordinator-smoke` pays a real 10,000-sat standard invoice, deliberately loses the successful response, reopens the coordinator database in `UNKNOWN`, and recovers success through read-only tracking without a second dispatch. See [Durable coordinator boundary](./COORDINATOR.md).
 
 ## Rotation and incident response
@@ -46,4 +48,4 @@ Bake each role from a dedicated root key, record issuance and expiry, rotate bef
 
 ## Deployment gate
 
-Before testnet funding, prove the complete permission matrix with `ListPermissions`/`CheckMacaroonPermissions`; add cancel, expiry, late-settle, fee-limit, amount-limit, exhausted-liquidity, delayed/fast-block, force-close, TLS-pin, rotation, and root-key revocation campaigns; add invoice-side ambiguous-response cases; and independently review the implementation and evidence.
+Before testnet funding, add cancel, invoice expiry, late-settle, fee-limit, amount-limit, exhausted-liquidity, delayed/fast-block, force-close, TLS-pin, overlap-rotation, and invoice-side ambiguous-response campaigns; export a secret-free evidence bundle; and independently review the implementation and evidence. Exact grant manifests, credential timeout, and root-key revocation now pass locally.

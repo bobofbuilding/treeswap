@@ -58,9 +58,9 @@ The command refuses to overwrite an existing file and never records the RPC URL.
 - [x] Pin and verify LND TLS, mount one exact role credential per process, recheck node sync/active directional liquidity, and expose no host port.
 - [x] Persist request IDs before dispatch and prove a completed payment remains replay-blocked after the payer process restarts.
 - [x] Prove a payer authorization is rejected by the invoice process and representative forbidden macaroon RPCs fail.
-- [ ] Prove the complete forbidden-RPC matrix and credential timeouts.
+- [x] Prove each credential's exact grant manifest against the pinned LND permission registry, require representative forbidden capability categories to fail specifically for authorization, and demonstrate live timeout enforcement.
 - [ ] Test standard invoices and hold invoices through create, accept, settle, cancel, expire, late-settle, and replay paths. Create/accept/settle and restart-safe replay now pass.
-- [ ] Inject delayed and fast Bitcoin blocks, LND restart, lost responses, idempotent retry, force close, unsynced state, TLS pin change, credential rotation, and credential revocation. A real lost-success-response payment now recovers through read-only tracking with dispatch count one.
+- [ ] Inject delayed and fast Bitcoin blocks, LND restart, lost responses, idempotent retry, force close, unsynced state, TLS pin change, credential rotation, and credential revocation. A real lost-success-response payment recovers through read-only tracking with dispatch count one, and disposable root-key revocation now fails closed without affecting the node.
 - [ ] Prove that the computed Lightning cutoff always precedes the EVM refund boundary by the published margin.
 - [ ] Produce a secret-free evidence bundle containing versions, configuration hashes, test results, and timestamps—never macaroons, invoices, or preimages.
 

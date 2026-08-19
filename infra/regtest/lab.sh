@@ -5,6 +5,7 @@ LAB_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 STATE_DIR="$LAB_DIR/.state"
 ENV_FILE="$STATE_DIR/runtime.env"
 COMPOSE_FILE="$LAB_DIR/compose.yml"
+ROLE_CREDENTIAL_LIFETIME_SECONDS=86400
 
 set_runtime_value() {
   local name=$1
@@ -177,12 +178,14 @@ bake_node_credentials() {
     /root/.lnd/treeswap/invoice.macaroon \
     /root/.lnd/treeswap/payer.macaroon
   compose exec -T "$node" lncli --network=regtest bakemacaroon \
+    --timeout="$ROLE_CREDENTIAL_LIFETIME_SECONDS" \
     --root_key_id=101 --save_to=/root/.lnd/treeswap/observer.macaroon \
     uri:/lnrpc.Lightning/GetInfo \
     uri:/lnrpc.Lightning/ListChannels \
     uri:/lnrpc.Lightning/PendingChannels \
     uri:/lnrpc.Lightning/ChannelBalance >/dev/null
   compose exec -T "$node" lncli --network=regtest bakemacaroon \
+    --timeout="$ROLE_CREDENTIAL_LIFETIME_SECONDS" \
     --root_key_id=102 --save_to=/root/.lnd/treeswap/invoice.macaroon \
     uri:/lnrpc.Lightning/GetInfo \
     uri:/lnrpc.Lightning/ListChannels \
@@ -192,6 +195,7 @@ bake_node_credentials() {
     uri:/invoicesrpc.Invoices/LookupInvoiceV2 \
     uri:/invoicesrpc.Invoices/SettleInvoice >/dev/null
   compose exec -T "$node" lncli --network=regtest bakemacaroon \
+    --timeout="$ROLE_CREDENTIAL_LIFETIME_SECONDS" \
     --root_key_id=103 --save_to=/root/.lnd/treeswap/payer.macaroon \
     uri:/lnrpc.Lightning/GetInfo \
     uri:/lnrpc.Lightning/ListChannels \
@@ -201,21 +205,203 @@ bake_node_credentials() {
     uri:/routerrpc.Router/TrackPaymentV2 >/dev/null
 }
 
+role_root_key_id() {
+  case "$1" in
+    observer) printf '%s\n' 101 ;;
+    invoice) printf '%s\n' 102 ;;
+    payer) printf '%s\n' 103 ;;
+    *) echo "unknown credential role" >&2; return 1 ;;
+  esac
+}
+
+role_permissions() {
+  case "$1" in
+    observer)
+      printf '%s\n' \
+        uri:/lnrpc.Lightning/ChannelBalance \
+        uri:/lnrpc.Lightning/GetInfo \
+        uri:/lnrpc.Lightning/ListChannels \
+        uri:/lnrpc.Lightning/PendingChannels
+      ;;
+    invoice)
+      printf '%s\n' \
+        uri:/invoicesrpc.Invoices/AddHoldInvoice \
+        uri:/invoicesrpc.Invoices/CancelInvoice \
+        uri:/invoicesrpc.Invoices/LookupInvoiceV2 \
+        uri:/invoicesrpc.Invoices/SettleInvoice \
+        uri:/lnrpc.Lightning/GetInfo \
+        uri:/lnrpc.Lightning/ListChannels \
+        uri:/lnrpc.Lightning/PendingChannels
+      ;;
+    payer)
+      printf '%s\n' \
+        uri:/lnrpc.Lightning/DecodePayReq \
+        uri:/lnrpc.Lightning/GetInfo \
+        uri:/lnrpc.Lightning/ListChannels \
+        uri:/lnrpc.Lightning/PendingChannels \
+        uri:/routerrpc.Router/SendPaymentV2 \
+        uri:/routerrpc.Router/TrackPaymentV2
+      ;;
+    *) echo "unknown credential role" >&2; return 1 ;;
+  esac
+}
+
+verify_role_manifest() {
+  local node=$1
+  local role=$2
+  local manifest expected actual root_key_id caveat caveat_time expires_at now
+  local available_permissions uri
+  manifest=$(compose exec -T "$node" lncli --network=regtest printmacaroon \
+    --macaroon_file="/root/.lnd/treeswap/${role}.macaroon")
+  root_key_id=$(role_root_key_id "$role")
+  if [[ $(jq -r '.root_key_id' <<<"$manifest") != "$root_key_id" ]]; then
+    echo "$node $role credential has the wrong root-key ID" >&2
+    return 1
+  fi
+  expected=$(role_permissions "$role" | LC_ALL=C sort)
+  actual=$(jq -r '.permissions[]' <<<"$manifest" | LC_ALL=C sort)
+  if [[ "$actual" != "$expected" ]]; then
+    echo "$node $role credential permissions differ from the exact manifest" >&2
+    return 1
+  fi
+  caveat=$(jq -er 'if (.caveats | length) == 1 then .caveats[0] else error("wrong caveat count") end' <<<"$manifest")
+  if [[ ! "$caveat" =~ ^time-before\ [0-9]{4}-[0-9]{2}-[0-9]{2}T ]]; then
+    echo "$node $role credential lacks one bounded time caveat" >&2
+    return 1
+  fi
+  caveat_time=${caveat#time-before }
+  caveat_time="${caveat_time%%.*}Z"
+  expires_at=$(jq -nr --arg value "$caveat_time" '$value | fromdateiso8601')
+  now=$(date +%s)
+  if (( expires_at <= now || expires_at > now + ROLE_CREDENTIAL_LIFETIME_SECONDS + 60 )); then
+    echo "$node $role credential expiry falls outside the configured lifetime" >&2
+    return 1
+  fi
+  available_permissions=$(compose exec -T "$node" lncli --network=regtest listpermissions)
+  while IFS= read -r uri; do
+    if ! jq -e --arg uri "${uri#uri:}" '.method_permissions[$uri] != null' <<<"$available_permissions" >/dev/null; then
+      echo "$node $role credential contains an RPC URI unknown to the pinned LND" >&2
+      return 1
+    fi
+  done < <(role_permissions "$role")
+}
+
+assert_role_command_denied() {
+  local node=$1
+  local role=$2
+  local output
+  shift 2
+  if output=$(compose exec -T "$node" lncli --network=regtest \
+    --macaroonpath="/root/.lnd/treeswap/${role}.macaroon" "$@" 2>&1); then
+    echo "$node $role credential unexpectedly authorized: $*" >&2
+    return 1
+  fi
+  if [[ "$output" != *"permission denied"* ]]; then
+    echo "$node $role negative check failed for a reason other than authorization: $*" >&2
+    return 1
+  fi
+}
+
+verify_role_negative_matrix() {
+  local node=$1
+  local role=$2
+  assert_role_command_denied "$node" "$role" walletbalance
+  assert_role_command_denied "$node" "$role" listinvoices
+  assert_role_command_denied "$node" "$role" listpayments
+  assert_role_command_denied "$node" "$role" listmacaroonids
+  if [[ "$role" != "observer" ]]; then
+    assert_role_command_denied "$node" "$role" channelbalance
+  fi
+  if [[ "$role" == "observer" ]]; then
+    assert_role_command_denied "$node" "$role" getnetworkinfo
+  fi
+}
+
 bake_credentials() {
+  local node role
   bake_node_credentials alice
   bake_node_credentials bob
+  for node in alice bob; do
+    for role in observer invoice payer; do
+      verify_role_manifest "$node" "$role"
+      verify_role_negative_matrix "$node" "$role"
+    done
+  done
   compose exec -T alice lncli --network=regtest \
     --macaroonpath=/root/.lnd/treeswap/observer.macaroon getinfo >/dev/null
-  if compose exec -T alice lncli --network=regtest \
-    --macaroonpath=/root/.lnd/treeswap/invoice.macaroon walletbalance >/dev/null 2>&1; then
-    echo "invoice credential unexpectedly authorized WalletBalance" >&2
+}
+
+delete_test_macaroon_id() {
+  local node=$1
+  local root_key_id=$2
+  if compose exec -T "$node" lncli --network=regtest listmacaroonids |
+    jq -e --arg rootKeyId "$root_key_id" '.root_key_ids | index($rootKeyId) != null' >/dev/null; then
+    compose exec -T "$node" lncli --network=regtest deletemacaroonid "$root_key_id" >/dev/null
+  fi
+}
+
+assert_test_credential_denied() {
+  local node=$1
+  local macaroon_path=$2
+  local expected_reason=$3
+  local output
+  if output=$(compose exec -T "$node" lncli --network=regtest \
+    --macaroonpath="$macaroon_path" getinfo 2>&1); then
+    echo "$node disposable credential remained authorized after $expected_reason" >&2
     return 1
   fi
-  if compose exec -T alice lncli --network=regtest \
-    --macaroonpath=/root/.lnd/treeswap/payer.macaroon addinvoice --amt=1 >/dev/null 2>&1; then
-    echo "payer credential unexpectedly authorized AddInvoice" >&2
-    return 1
-  fi
+  case "$expected_reason" in
+    expiry)
+      if [[ "$output" != *"macaroon has expired"* ]]; then
+        echo "$node disposable credential did not fail specifically because it expired" >&2
+        return 1
+      fi
+      ;;
+    revocation)
+      if [[ "$output" != *"cannot get macaroon"* && "$output" != *"permission denied"* ]]; then
+        echo "$node disposable credential did not fail specifically because its root key was revoked" >&2
+        return 1
+      fi
+      ;;
+    *) echo "unknown credential denial reason" >&2; return 1 ;;
+  esac
+}
+
+smoke_credential_lifecycle() {
+  ensure_runtime_env
+  start_lab >/dev/null
+  local node=alice
+  local expiry_root_key_id=9001
+  local revocation_root_key_id=9002
+  local expiry_path=/root/.lnd/treeswap/expiry-test.macaroon
+  local revocation_path=/root/.lnd/treeswap/revocation-test.macaroon
+
+  delete_test_macaroon_id "$node" "$expiry_root_key_id"
+  delete_test_macaroon_id "$node" "$revocation_root_key_id"
+  compose exec -T "$node" rm -f "$expiry_path" "$revocation_path"
+
+  compose exec -T "$node" lncli --network=regtest bakemacaroon \
+    --timeout=2 --root_key_id="$expiry_root_key_id" --save_to="$expiry_path" \
+    uri:/lnrpc.Lightning/GetInfo >/dev/null
+  compose exec -T "$node" lncli --network=regtest \
+    --macaroonpath="$expiry_path" getinfo >/dev/null
+  sleep 3
+  assert_test_credential_denied "$node" "$expiry_path" expiry
+  compose exec -T "$node" lncli --network=regtest getinfo >/dev/null
+  delete_test_macaroon_id "$node" "$expiry_root_key_id"
+
+  compose exec -T "$node" lncli --network=regtest bakemacaroon \
+    --timeout=60 --root_key_id="$revocation_root_key_id" --save_to="$revocation_path" \
+    uri:/lnrpc.Lightning/GetInfo >/dev/null
+  compose exec -T "$node" lncli --network=regtest \
+    --macaroonpath="$revocation_path" getinfo >/dev/null
+  compose exec -T "$node" lncli --network=regtest \
+    deletemacaroonid "$revocation_root_key_id" >/dev/null
+  assert_test_credential_denied "$node" "$revocation_path" revocation
+  compose exec -T "$node" lncli --network=regtest getinfo >/dev/null
+  compose exec -T "$node" rm -f "$expiry_path" "$revocation_path"
+
+  echo "Credential lifecycle smoke passed: exact role manifests, authorization-only denials, expiry, and root-key revocation."
 }
 
 node_tls_fingerprint() {
@@ -491,12 +677,13 @@ case "${1:-}" in
   up) start_lab ;;
   smoke) smoke_hold_invoice ;;
   adapter-smoke) smoke_adapter_hold_invoice ;;
+  credential-smoke) smoke_credential_lifecycle ;;
   coordinator-smoke) smoke_coordinator_reconciliation ;;
   status) status_lab ;;
   down) stop_lab ;;
   destroy) destroy_lab ;;
   *)
-    echo "Usage: $0 {up|smoke|adapter-smoke|coordinator-smoke|status|down|destroy}" >&2
+    echo "Usage: $0 {up|smoke|adapter-smoke|credential-smoke|coordinator-smoke|status|down|destroy}" >&2
     exit 2
     ;;
 esac
