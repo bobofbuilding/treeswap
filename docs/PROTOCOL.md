@@ -64,7 +64,7 @@ The user chooses among the solver quotes it actually receives, then signs one co
 - globally single-use payment hashes; and
 - an immutable protocol-fee ceiling.
 
-The prototype accepts canonical 65-byte EOA signatures and rejects high-s signatures. EIP-1271 contract-wallet signatures are not yet supported. The price band and volume limits are immutable deployment parameters; they limit damage from a stale reference but do not establish an external fair price or monitor the upgradeable BIT token.
+The escrows accept canonical 65-byte EOA signatures, reject high-s signatures, and support ERC-1271 contract signatures through a shared static signature checker. The price band and volume limits are immutable deployment parameters; they limit damage from a stale reference but do not establish an external fair price or monitor the upgradeable BIT token.
 
 ## 5. Lightning inventory
 

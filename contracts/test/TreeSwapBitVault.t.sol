@@ -2,7 +2,7 @@
 pragma solidity 0.8.24;
 
 import {TreeSwapBitVault} from "../src/TreeSwapBitVault.sol";
-import {MockBit, TestBase} from "./helpers/TestBase.sol";
+import {Mock1271Wallet, MockBit, TestBase} from "./helpers/TestBase.sol";
 
 contract TreeSwapBitVaultTest is TestBase {
     MockBit internal bit;
@@ -100,6 +100,29 @@ contract TreeSwapBitVaultTest is TestBase {
         vm.expectRevert(TreeSwapBitVault.InvalidSignature.selector);
         vm.prank(SOLVER);
         vault.reserve(quote, hex"1234");
+    }
+
+    function testEip1271UserCanAuthorizeExactSelectedQuote() public {
+        Mock1271Wallet wallet = new Mock1271Wallet(user);
+        _deposit(vault, 1_000 ether);
+        TreeSwapBitVault.SelectedQuote memory quote =
+            _quote(keccak256("contract-user"), paymentHash, BENEFICIARY, 500 ether, 0, nextNonce++);
+        quote.user = address(wallet);
+        bytes memory signature = _sign(vault, quote);
+
+        vm.prank(SOLVER);
+        vault.reserve(quote, signature);
+        assertEq(uint256(vault.swapState(quote.quoteId)), uint256(TreeSwapBitVault.SwapState.LOCKED), "1271 reserve failed");
+    }
+
+    function testEip1271UserRejectsWrongOwnerSignature() public {
+        Mock1271Wallet wallet = new Mock1271Wallet(ATTACKER);
+        _deposit(vault, 1_000 ether);
+        TreeSwapBitVault.SelectedQuote memory quote =
+            _quote(keccak256("contract-user-wrong"), paymentHash, BENEFICIARY, 500 ether, 0, nextNonce++);
+        quote.user = address(wallet);
+
+        _expectReserveRevert(vault, quote, TreeSwapBitVault.InvalidSignature.selector);
     }
 
     function testUserNonceCannotBeReused() public {

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: MIT
 pragma solidity 0.8.24;
 
+import {TreeSwapSignatureChecker} from "./TreeSwapSignatureChecker.sol";
+
 interface IERC20Minimal {
     function balanceOf(address account) external view returns (uint256);
     function transfer(address to, uint256 amount) external returns (bool);
@@ -14,6 +16,7 @@ interface IERC20Minimal {
 ///      binds the solver, beneficiary, amounts, invoice digest, payment hash,
 ///      nonce, acceptance expiry, Lightning cutoff, and Ethereum refund time.
 contract TreeSwapBitVault {
+    using TreeSwapSignatureChecker for address;
     enum SwapState {
         UNSET,
         LOCKED,
@@ -101,7 +104,6 @@ contract TreeSwapBitVault {
         keccak256("EIP712Domain(string name,string version,uint256 chainId,address verifyingContract)");
     bytes32 private constant NAME_HASH = keccak256("TreeSwap BIT Vault");
     bytes32 private constant VERSION_HASH = keccak256("1");
-    uint256 private constant SECP256K1N_DIV_2 = 0x7fffffffffffffffffffffffffffffff5d576e7357a4501ddfe92f46681b20a0;
 
     IERC20Minimal public immutable BIT;
     address public immutable feeCollector;
@@ -364,7 +366,7 @@ contract TreeSwapBitVault {
         if (nonceUsed[quote.user][quote.nonce]) revert NonceAlreadyUsed();
 
         _validatePriceBand(quote.amount - quote.fee, quote.lightningAmountSats);
-        if (_recoverSigner(hashSelectedQuote(quote), userSignature) != quote.user) revert InvalidSignature();
+        if (!quote.user.isValidSignatureNow(hashSelectedQuote(quote), userSignature)) revert InvalidSignature();
     }
 
     function _validatePriceBand(uint256 netBitAmount, uint256 lightningAmountSats) internal view {
@@ -373,23 +375,6 @@ contract TreeSwapBitVault {
         uint256 lowerBound = referenceScaled * (10_000 - maxPriceDeviationBps);
         uint256 upperBound = referenceScaled * (10_000 + maxPriceDeviationBps);
         if (quotedSatsScaled < lowerBound || quotedSatsScaled > upperBound) revert PriceOutsideBand();
-    }
-
-    function _recoverSigner(bytes32 digest, bytes calldata signature) internal pure returns (address signer) {
-        if (signature.length != 65) revert InvalidSignature();
-
-        bytes32 r;
-        bytes32 s;
-        uint8 v;
-        assembly {
-            r := calldataload(signature.offset)
-            s := calldataload(add(signature.offset, 32))
-            v := byte(0, calldataload(add(signature.offset, 64)))
-        }
-
-        if (uint256(s) > SECP256K1N_DIV_2 || (v != 27 && v != 28)) revert InvalidSignature();
-        signer = ecrecover(digest, v, r, s);
-        if (signer == address(0)) revert InvalidSignature();
     }
 
     function _buildDomainSeparator() internal view returns (bytes32) {

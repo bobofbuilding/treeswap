@@ -2,7 +2,7 @@
 pragma solidity 0.8.24;
 
 import {TreeSwapUserEscrow} from "../src/TreeSwapUserEscrow.sol";
-import {MockBit, TestBase} from "./helpers/TestBase.sol";
+import {Mock1271Wallet, MockBit, TestBase} from "./helpers/TestBase.sol";
 
 contract TreeSwapUserEscrowTest is TestBase {
     MockBit internal bit;
@@ -62,6 +62,25 @@ contract TreeSwapUserEscrowTest is TestBase {
         vm.expectRevert(TreeSwapUserEscrow.InvalidUser.selector);
         vm.prank(ATTACKER);
         escrow.open(quote, signature);
+    }
+
+    function testEip1271SolverCanSignFirmQuote() public {
+        Mock1271Wallet wallet = new Mock1271Wallet(solver);
+        solver = address(wallet);
+        TreeSwapUserEscrow.SolverQuote memory quote =
+            _quote(keccak256("contract-solver"), paymentHash, BENEFICIARY, 500 ether, 0, nextNonce++);
+        _submit(quote);
+
+        assertEq(uint256(escrow.swapState(quote.quoteId)), uint256(TreeSwapUserEscrow.SwapState.LOCKED), "1271 open failed");
+    }
+
+    function testEip1271SolverRejectsWrongOwnerSignature() public {
+        Mock1271Wallet wallet = new Mock1271Wallet(ATTACKER);
+        solver = address(wallet);
+        TreeSwapUserEscrow.SolverQuote memory quote =
+            _quote(keccak256("contract-solver-wrong"), paymentHash, BENEFICIARY, 500 ether, 0, nextNonce++);
+
+        _expectOpenRevert(quote, TreeSwapUserEscrow.InvalidSignature.selector);
     }
 
     function testExpiredSwapRefundsCompleteAmountWithoutFee() public {

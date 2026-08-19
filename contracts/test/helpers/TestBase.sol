@@ -57,3 +57,29 @@ contract MockBit {
         return true;
     }
 }
+
+contract Mock1271Wallet {
+    bytes4 internal constant MAGIC_VALUE = 0x1626ba7e;
+    uint256 internal constant SECP256K1N_DIV_2 =
+        0x7fffffffffffffffffffffffffffffff5d576e7357a4501ddfe92f46681b20a0;
+
+    address public immutable owner;
+
+    constructor(address owner_) {
+        owner = owner_;
+    }
+
+    function isValidSignature(bytes32 digest, bytes calldata signature) external view returns (bytes4) {
+        if (signature.length != 65) return 0xffffffff;
+        bytes32 r;
+        bytes32 s;
+        uint8 v;
+        assembly {
+            r := calldataload(signature.offset)
+            s := calldataload(add(signature.offset, 32))
+            v := byte(0, calldataload(add(signature.offset, 64)))
+        }
+        if (uint256(s) > SECP256K1N_DIV_2 || (v != 27 && v != 28)) return 0xffffffff;
+        return ecrecover(digest, v, r, s) == owner ? MAGIC_VALUE : bytes4(0xffffffff);
+    }
+}

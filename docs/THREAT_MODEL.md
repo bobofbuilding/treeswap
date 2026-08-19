@@ -96,9 +96,11 @@ The escrows verify direction-specific accepted terms onchain. `lib/rfq.mjs` now 
 
 ### TS-H01 — Replay across contracts, chains, or versions
 
+**Status:** Implemented in both direction-specific escrows; account-login SIWE remains EOA-only by design
+
 EIP-712 itself does not supply a nonce policy. A signature can be replayed unless the domain and message bind `chainId`, verifying escrow contract, protocol version, maker nonce, direction, amounts, recipient, payment hash, and expiry. The contract must cancel or consume each nonce exactly once.
 
-The Lightning → BIT vault implements chain, verifying-contract, version, solver, amount, recipient, hash, invoice digest, nonce, and deadline binding with single-use user nonces. It currently supports EOAs only. The complementary direction needs a distinct type/domain and EIP-1271 must be added before contract wallets are supported.
+Both escrows bind chain, verifying contract, protocol version, direction-specific type, participants, amount, fee, invoice digest, payment hash, nonce, and deadlines. User and solver nonces and payment hashes are consumed once. Canonical low-s EOA signatures and ERC-1271 contract signatures are supported through a shared static signature checker; malformed return data, a wrong magic value, a revert, or the wrong owner fails closed. The account-login SIWE surface remains EOA-only and does not advertise contract-wallet login.
 
 ### TS-H02 — Reservation griefing and solver last-look
 
