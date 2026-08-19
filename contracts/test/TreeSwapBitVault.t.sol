@@ -247,6 +247,42 @@ contract TreeSwapBitVaultTest is TestBase {
         _submit(vault, quote);
     }
 
+    function testTokenPauseAfterReserveCannotCorruptAndUnpauseRestoresClaim() public {
+        _deposit(vault, 1_000 ether);
+        TreeSwapBitVault.SelectedQuote memory quote =
+            _reserve(vault, keccak256("pause-after-reserve"), paymentHash, BENEFICIARY, 400 ether, 0);
+        bit.setPaused(true);
+        vm.expectRevert(TreeSwapBitVault.TokenTransferFailed.selector);
+        vault.claim(quote.quoteId, PREIMAGE);
+        assertEq(
+            uint256(vault.swapState(quote.quoteId)), uint256(TreeSwapBitVault.SwapState.LOCKED), "pause changed state"
+        );
+
+        bit.setPaused(false);
+        vault.claim(quote.quoteId, PREIMAGE);
+        assertEq(bit.balanceOf(BENEFICIARY), 400 ether, "unpause did not restore claim");
+    }
+
+    function testFeeOnTransferBehaviorFailsExactBalanceDelta() public {
+        bit.setTransferFeeBps(100);
+        vm.expectRevert(TreeSwapBitVault.UnexpectedTokenBalanceDelta.selector);
+        vm.prank(solver);
+        vault.deposit(500 ether);
+
+        bit.setTransferFeeBps(0);
+        _deposit(vault, 500 ether);
+        TreeSwapBitVault.SelectedQuote memory quote =
+            _reserve(vault, keccak256("fee-on-transfer"), paymentHash, BENEFICIARY, 400 ether, 0);
+        bit.setTransferFeeBps(100);
+        vm.expectRevert(TreeSwapBitVault.UnexpectedTokenBalanceDelta.selector);
+        vault.claim(quote.quoteId, PREIMAGE);
+        assertEq(
+            uint256(vault.swapState(quote.quoteId)),
+            uint256(TreeSwapBitVault.SwapState.LOCKED),
+            "fee token changed state"
+        );
+    }
+
     function testUserNonceCannotBeReused() public {
         _deposit(vault, 1_000 ether);
         uint256 nonce = nextNonce++;
@@ -380,6 +416,56 @@ contract TreeSwapBitVaultTest is TestBase {
         }
 
         assertEq(vault.accountedBalance(), bit.balanceOf(address(vault)), "fuzz accounting mismatch");
+    }
+
+    function testEverySelectedQuoteFieldChangesTheSignedDigest() public view {
+        TreeSwapBitVault.SelectedQuote memory base =
+            _quote(keccak256("all-fields"), paymentHash, BENEFICIARY, 500 ether, 2 ether, 77);
+        bytes32 expected = vault.hashSelectedQuote(base);
+        TreeSwapBitVault.SelectedQuote memory changed = base;
+
+        changed.quoteId = keccak256("changed-id");
+        _assertDigestChanged(changed, expected);
+        changed = base;
+        changed.user = ATTACKER;
+        _assertDigestChanged(changed, expected);
+        changed = base;
+        changed.solver = ATTACKER;
+        _assertDigestChanged(changed, expected);
+        changed = base;
+        changed.beneficiary = ATTACKER;
+        _assertDigestChanged(changed, expected);
+        changed = base;
+        changed.amount += 1;
+        _assertDigestChanged(changed, expected);
+        changed = base;
+        changed.fee += 1;
+        _assertDigestChanged(changed, expected);
+        changed = base;
+        changed.lightningAmountSats += 1;
+        _assertDigestChanged(changed, expected);
+        changed = base;
+        changed.paymentHash = keccak256("changed-payment");
+        _assertDigestChanged(changed, expected);
+        changed = base;
+        changed.invoiceDigest = keccak256("changed-invoice");
+        _assertDigestChanged(changed, expected);
+        changed = base;
+        changed.nonce += 1;
+        _assertDigestChanged(changed, expected);
+        changed = base;
+        changed.quoteExpiresAt += 1;
+        _assertDigestChanged(changed, expected);
+        changed = base;
+        changed.lastSafeClaimAt += 1;
+        _assertDigestChanged(changed, expected);
+        changed = base;
+        changed.refundAfter += 1;
+        _assertDigestChanged(changed, expected);
+    }
+
+    function _assertDigestChanged(TreeSwapBitVault.SelectedQuote memory quote, bytes32 expected) internal view {
+        assertTrue(vault.hashSelectedQuote(quote) != expected, "selected quote field is missing from digest");
     }
 
     function _riskConfig() internal pure returns (TreeSwapBitVault.RiskConfig memory) {

@@ -202,6 +202,91 @@ contract TreeSwapUserEscrowTest is TestBase {
         _submit(quote);
     }
 
+    function testTokenPauseAfterOpenCannotCorruptAndUnpauseRestoresClaim() public {
+        TreeSwapUserEscrow.SolverQuote memory quote =
+            _open(keccak256("reverse-pause-after-open"), paymentHash, BENEFICIARY, 400 ether, 0);
+        bit.setPaused(true);
+        vm.expectRevert(TreeSwapUserEscrow.TokenTransferFailed.selector);
+        escrow.claim(quote.quoteId, PREIMAGE);
+        assertEq(
+            uint256(escrow.swapState(quote.quoteId)),
+            uint256(TreeSwapUserEscrow.SwapState.LOCKED),
+            "pause changed state"
+        );
+
+        bit.setPaused(false);
+        escrow.claim(quote.quoteId, PREIMAGE);
+        assertEq(bit.balanceOf(BENEFICIARY), 400 ether, "unpause did not restore reverse claim");
+    }
+
+    function testFeeOnTransferBehaviorFailsExactBalanceDelta() public {
+        bit.setTransferFeeBps(100);
+        TreeSwapUserEscrow.SolverQuote memory quote =
+            _quote(keccak256("reverse-fee-on-transfer"), paymentHash, BENEFICIARY, 400 ether, 0, nextNonce++);
+        _expectOpenRevert(quote, TreeSwapUserEscrow.UnexpectedTokenBalanceDelta.selector);
+
+        bit.setTransferFeeBps(0);
+        quote = _open(keccak256("reverse-fee-on-claim"), paymentHash, BENEFICIARY, 400 ether, 0);
+        bit.setTransferFeeBps(100);
+        vm.expectRevert(TreeSwapUserEscrow.UnexpectedTokenBalanceDelta.selector);
+        escrow.claim(quote.quoteId, PREIMAGE);
+        assertEq(
+            uint256(escrow.swapState(quote.quoteId)),
+            uint256(TreeSwapUserEscrow.SwapState.LOCKED),
+            "fee token changed state"
+        );
+    }
+
+    function testEverySolverQuoteFieldChangesTheSignedDigest() public view {
+        TreeSwapUserEscrow.SolverQuote memory base =
+            _quote(keccak256("reverse-all-fields"), paymentHash, BENEFICIARY, 500 ether, 2 ether, 77);
+        bytes32 expected = escrow.hashSolverQuote(base);
+        TreeSwapUserEscrow.SolverQuote memory changed = base;
+
+        changed.quoteId = keccak256("changed-id");
+        _assertDigestChanged(changed, expected);
+        changed = base;
+        changed.user = ATTACKER;
+        _assertDigestChanged(changed, expected);
+        changed = base;
+        changed.solver = ATTACKER;
+        _assertDigestChanged(changed, expected);
+        changed = base;
+        changed.solverBeneficiary = ATTACKER;
+        _assertDigestChanged(changed, expected);
+        changed = base;
+        changed.amount += 1;
+        _assertDigestChanged(changed, expected);
+        changed = base;
+        changed.fee += 1;
+        _assertDigestChanged(changed, expected);
+        changed = base;
+        changed.lightningAmountSats += 1;
+        _assertDigestChanged(changed, expected);
+        changed = base;
+        changed.paymentHash = keccak256("changed-payment");
+        _assertDigestChanged(changed, expected);
+        changed = base;
+        changed.invoiceDigest = keccak256("changed-invoice");
+        _assertDigestChanged(changed, expected);
+        changed = base;
+        changed.solverNonce += 1;
+        _assertDigestChanged(changed, expected);
+        changed = base;
+        changed.quoteExpiresAt += 1;
+        _assertDigestChanged(changed, expected);
+        changed = base;
+        changed.lastSafeClaimAt += 1;
+        _assertDigestChanged(changed, expected);
+        changed = base;
+        changed.refundAfter += 1;
+        _assertDigestChanged(changed, expected);
+    }
+
+    function _assertDigestChanged(TreeSwapUserEscrow.SolverQuote memory quote, bytes32 expected) internal view {
+        assertTrue(escrow.hashSolverQuote(quote) != expected, "solver quote field is missing from digest");
+    }
+
     function _riskConfig() internal pure returns (TreeSwapUserEscrow.RiskConfig memory) {
         return TreeSwapUserEscrow.RiskConfig({
             maxFeeBps: 100,

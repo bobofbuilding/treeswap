@@ -275,21 +275,23 @@ A production escrow test suite should prove at least:
 
 ## Required adversarial tests
 
-- Stateful fuzzing of every escrow transition and signature field.
+- Stateful fuzzing of every escrow transition and signature field. **Complete for both local escrows: six invariants, 256 × 64-call campaigns per property, plus all-field digest tests.**
 - Claim/refund transactions in the same block and around every timeout boundary. **Deterministic and contract boundary harness complete.**
-- Preimage copied from the mempool by an unrelated account.
+- Preimage copied from the mempool by an unrelated account. **Complete: unrelated relayers receive no BIT in either direction.**
 - Ethereum reorg after escrow creation and after claim. **Authorization rejects an orphaned escrow; fork fault injection remains.**
 - Bitcoin block delay, LND restart, held HTLC timeout, and force-close. **Policy harness complete; regtest fault injection remains.**
-- Replayed intent on another chain, escrow address, protocol version, and nonce.
-- Replayed or mutated SIWE domain, URI, nonce, chain, issued time, and expiry.
-- Cross-origin session mutation, expired session use, and notification access from a different wallet.
-- Unverified-email delivery, preference bypass, unsubscribe failure, and wallet/email deletion.
-- BIT recipient or amount mutation between review and submission, account/network changes, paused or upgraded token behavior, failed transfer simulation, malformed invoices, WebLN rejection, and `lightning:` fallback falsely reported as paid.
-- BIT pause and implementation upgrade while escrows are open.
-- Fee rounding across dust, maximum values, and thousands of small fills.
-- Solver quote spam, cancellation, capacity exhaustion, and deliberate last-look failure.
-- Relay suppression, quote substitution, and stale fallback selection.
-- LP withdrawal while liabilities are reserved or in flight.
+- Replayed intent on another chain, escrow address, protocol version, and nonce. **Complete in local contract tests.**
+- Replayed or mutated SIWE domain, URI, nonce, chain, issued time, and expiry. **Complete in the EOA policy harness.**
+- Cross-origin session mutation, expired session use, and notification access from a different wallet. **Complete in policy tests; durable store integration remains a deployment gate.**
+- Unverified-email delivery, preference bypass, unsubscribe failure, and wallet/email deletion. **Delivery is hard-disabled; authorization and 24-hour deletion policy tests complete.**
+- BIT recipient or amount mutation between review and submission, account/network changes, paused or upgraded token behavior, failed transfer simulation, malformed invoices, WebLN rejection, and `lightning:` fallback falsely reported as paid. **Client policy and rendered-boundary tests complete; a compromised wallet remains outside the web client's trust boundary.**
+- BIT pause and implementation upgrade while escrows are open. **Local pause/recovery and exact-delta tests complete; proxy upgrade remains a mainnet-fork gate.**
+- Fee rounding across dust, maximum values, and thousands of small fills. **Complete.**
+- Solver quote spam, cancellation, capacity exhaustion, and deliberate last-look failure. **Repository policy complete; persistent distributed enforcement remains a deployment gate.**
+- Relay suppression, quote substitution, and stale fallback selection. **Substitution and fallback tests complete; suppression is disclosed and global-best is not claimed.**
+- LP withdrawal while liabilities are reserved or in flight. **Solver-vault stateful invariant complete; live Lightning reconciliation remains a deployment gate.**
+
+The full local campaign report is in [`contracts/test/fuzz/report.md`](../contracts/test/fuzz/report.md).
 
 ## Launch gates
 

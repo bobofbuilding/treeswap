@@ -2,7 +2,12 @@ import { and, eq, gt, lt } from "drizzle-orm";
 import type { ReadonlyRequestCookies } from "next/dist/server/web/spec-extension/adapters/request-cookies";
 import { getDb } from "@/db";
 import { authSessions, notificationPreferences } from "@/db/schema";
-import { isAllowedTreeSwapOrigin } from "@/lib/siwe-policy.mjs";
+import {
+  isActiveMainnetSession,
+  isAllowedTreeSwapOrigin,
+  isExactRequestOrigin,
+  ownsNotificationRecord,
+} from "@/lib/siwe-policy.mjs";
 
 export const SESSION_COOKIE = "__Host-treeswap_session";
 export const SESSION_DURATION_SECONDS = 24 * 60 * 60;
@@ -52,8 +57,7 @@ export function noStoreJson(body: unknown, init: ResponseInit = {}): Response {
 }
 
 export function sameOrigin(request: Request): boolean {
-  const origin = request.headers.get("Origin");
-  return origin === new URL(request.url).origin;
+  return isExactRequestOrigin(request.url, request.headers.get("Origin"));
 }
 
 export async function createSession(walletAddress: string, chainId: number): Promise<string> {
@@ -96,7 +100,7 @@ export async function getCurrentSession(cookies: ReadonlyRequestCookies): Promis
     )
     .limit(1);
 
-  if (!session) return null;
+  if (!session || !isActiveMainnetSession(session, new Date())) return null;
 
   const [preferences] = await db
     .select()
@@ -108,7 +112,7 @@ export async function getCurrentSession(cookies: ReadonlyRequestCookies): Promis
     walletAddress: session.walletAddress,
     chainId: session.chainId,
     expiresAt: session.expiresAt,
-    notifications: preferences
+    notifications: preferences && ownsNotificationRecord(session, preferences)
       ? {
           email: preferences.email,
           invoiceEmails: preferences.invoiceEmails,

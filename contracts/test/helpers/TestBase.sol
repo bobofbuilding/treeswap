@@ -27,10 +27,13 @@ abstract contract TestBase {
 }
 
 contract MockBit {
+    error TokenPaused();
+
     string public constant name = "Mock BIT";
     string public constant symbol = "BIT";
     uint8 public decimals = 18;
     bool public paused;
+    uint16 public transferFeeBps;
 
     mapping(address => uint256) public balanceOf;
     mapping(address => mapping(address => uint256)) public allowance;
@@ -47,22 +50,28 @@ contract MockBit {
         paused = value;
     }
 
+    function setTransferFeeBps(uint16 value) external {
+        transferFeeBps = value;
+    }
+
     function approve(address spender, uint256 amount) external returns (bool) {
         allowance[msg.sender][spender] = amount;
         return true;
     }
 
     function transfer(address recipient, uint256 amount) external returns (bool) {
+        if (paused) revert TokenPaused();
         balanceOf[msg.sender] -= amount;
-        balanceOf[recipient] += amount;
+        balanceOf[recipient] += amount - (amount * transferFeeBps) / 10_000;
         return true;
     }
 
     function transferFrom(address owner, address recipient, uint256 amount) external returns (bool) {
+        if (paused) revert TokenPaused();
         uint256 allowed = allowance[owner][msg.sender];
         if (allowed != type(uint256).max) allowance[owner][msg.sender] = allowed - amount;
         balanceOf[owner] -= amount;
-        balanceOf[recipient] += amount;
+        balanceOf[recipient] += amount - (amount * transferFeeBps) / 10_000;
         return true;
     }
 }

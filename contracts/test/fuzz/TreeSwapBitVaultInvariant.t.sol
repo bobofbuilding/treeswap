@@ -83,6 +83,36 @@ contract VaultHandler {
         vault.claim(quoteId, preimages[index]);
     }
 
+    function mutateSignedQuote(uint8 rawField, uint96 rawAmount) external {
+        uint96 amount = _boundedReservationAmount(rawAmount);
+        if (amount == 0) return;
+        uint256 nonce = sequence++;
+        bytes32 preimage = keccak256(abi.encode("mutated", nonce, rawAmount));
+        bytes32 quoteId = keccak256(abi.encode("mutated-quote", nonce));
+        TreeSwapBitVault.SelectedQuote memory quote = TreeSwapBitVault.SelectedQuote({
+            quoteId: quoteId,
+            user: user,
+            solver: solver,
+            beneficiary: address(0xBEEF),
+            amount: amount,
+            fee: 0,
+            lightningAmountSats: uint64((uint256(amount) * vault.referenceSatsPerBit()) / 1 ether),
+            paymentHash: sha256(abi.encodePacked(preimage)),
+            invoiceDigest: keccak256(abi.encode("mutated-invoice", quoteId)),
+            nonce: nonce,
+            quoteExpiresAt: uint64(block.timestamp + 5 minutes),
+            lastSafeClaimAt: uint64(block.timestamp + 1 hours),
+            refundAfter: uint64(block.timestamp + 1 hours) + uint64(vault.minClaimBuffer())
+        });
+        (bytes memory userSignature, bytes memory solverSignature) = _signatures(quote);
+        _mutateQuote(quote, rawField % 13);
+
+        vm.prank(user);
+        (bool accepted,) =
+            address(vault).call(abi.encodeCall(TreeSwapBitVault.reserve, (quote, userSignature, solverSignature)));
+        require(!accepted, "mutated selected quote was accepted");
+    }
+
     function refund(uint256 rawIndex) external {
         if (quoteIds.length == 0) return;
         bytes32 quoteId = quoteIds[rawIndex % quoteIds.length];
@@ -105,16 +135,40 @@ contract VaultHandler {
     }
 
     function _signAndReserve(TreeSwapBitVault.SelectedQuote memory quote) internal {
+        (bytes memory userSignature, bytes memory solverSignature) = _signatures(quote);
+        vm.prank(user);
+        vault.reserve(quote, userSignature, solverSignature);
+    }
+
+    function _signatures(TreeSwapBitVault.SelectedQuote memory quote)
+        internal
+        returns (bytes memory userSignature, bytes memory solverSignature)
+    {
         bytes32 digest = vault.hashSelectedQuote(quote);
         (uint8 userV, bytes32 userR, bytes32 userS) = vm.sign(USER_PK, digest);
         (uint8 solverV, bytes32 solverR, bytes32 solverS) = vm.sign(SOLVER_PK, digest);
-        vm.prank(user);
-        vault.reserve(quote, abi.encodePacked(userR, userS, userV), abi.encodePacked(solverR, solverS, solverV));
+        return (abi.encodePacked(userR, userS, userV), abi.encodePacked(solverR, solverS, solverV));
     }
 
     function _recordEpochVolume() internal {
         uint256 observed = vault.solverEpochVolume(solver, block.timestamp / vault.epochDuration());
         if (observed > maxObservedEpochVolume) maxObservedEpochVolume = observed;
+    }
+
+    function _mutateQuote(TreeSwapBitVault.SelectedQuote memory quote, uint8 field) internal pure {
+        if (field == 0) quote.quoteId = keccak256("changed quote");
+        else if (field == 1) quote.user = address(0xA77A);
+        else if (field == 2) quote.solver = address(0x5017E2);
+        else if (field == 3) quote.beneficiary = address(0xA77A);
+        else if (field == 4) quote.amount += 1;
+        else if (field == 5) quote.fee += 1;
+        else if (field == 6) quote.lightningAmountSats += 1;
+        else if (field == 7) quote.paymentHash = keccak256("changed payment");
+        else if (field == 8) quote.invoiceDigest = keccak256("changed invoice");
+        else if (field == 9) quote.nonce += 1;
+        else if (field == 10) quote.quoteExpiresAt += 1;
+        else if (field == 11) quote.lastSafeClaimAt += 1;
+        else quote.refundAfter += 1;
     }
 
     function _min(uint256 a, uint256 b) internal pure returns (uint256) {

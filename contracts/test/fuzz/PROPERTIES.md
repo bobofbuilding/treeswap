@@ -1,24 +1,28 @@
-# TreeSwap BIT vault properties
+# TreeSwap escrow properties
 
-The Foundry campaign exercises the smallest production-relevant BIT inventory boundary for solver-funded Lightning → BIT swaps.
+The Foundry campaign exercises both immutable BIT escrow directions, the sealed payment-hash registry, and the fail-closed open gate.
 
 ## Executable properties
 
-1. The vault token balance always equals available solver inventory plus locked swap inventory.
-2. A solver can withdraw only inventory that is not locked to an accepted swap.
-3. A valid preimage always pays the beneficiary fixed in the user-signed quote, regardless of who relays it.
-4. A swap reaches only one terminal state: claimed or refunded.
-5. Every payment hash is single-use, including after a terminal state.
-6. Every user nonce is single-use.
-7. A signed quote cannot be changed after acceptance and cannot replay on another vault or chain.
-8. Malformed or non-canonical ECDSA signatures cannot reserve inventory.
-9. The signed net BIT amount and Lightning amount must remain within the immutable reference-price band.
-10. No reservation can exceed the immutable per-swap cap or the solver's immutable per-epoch volume cap.
-11. Quote acceptance precedes the last safe Lightning claim time, which precedes the Ethereum refund by an immutable buffer.
-12. Claims close at the exact timestamp refunds open, eliminating an overlapping terminal-action window.
-13. A failed or expired swap charges no execution fee.
-14. A successful fee never exceeds the immutable contract cap.
+1. The solver vault token balance always equals available inventory plus locked inventory.
+2. The user escrow token balance always equals locked user liabilities.
+3. Every user-funded deposit is exactly one of claimed, refunded, or still locked.
+4. A solver can withdraw only inventory that is not locked to an accepted swap.
+5. A valid preimage pays only the beneficiary fixed in the signed quote, regardless of the relayer.
+6. A swap reaches only one terminal state, and claim closes exactly when refund opens.
+7. Every payment hash is single-use across both real escrow contracts, including after a terminal state.
+8. User and solver nonces are single-use in their direction.
+9. Every field in both EIP-712 quote structures changes the signed digest.
+10. Stateful mutation attempts against every signed field are rejected while other deposits, withdrawals, opens, claims, and refunds interleave.
+11. Quotes cannot replay on another vault, chain, direction, or signature role.
+12. Canonical EOA and ERC-1271 signatures pass; malformed, high-risk, wrong-owner, and mutated signatures fail.
+13. Reference-price, per-swap, per-epoch, and fee caps cannot be exceeded.
+14. Failed or expired swaps collect no fee; claims apply only the exact signed BIT fee.
+15. Gate halts block new exposure without blocking withdrawals, claims, or refunds.
+16. A token pause after open leaves state locked and recoverable after unpause.
+17. Fee-on-transfer behavior fails the exact sender/recipient balance-delta checks and cannot advance state.
+18. Registry allowlisting is exactly two contracts and irreversible after sealing.
 
-## Out of scope for this harness
+## External campaigns still required
 
-The campaign does not model Bitcoin block production, Lightning HTLC behavior, deriving `lastSafeClaimAt` from BOLT 11 expiry and CLTV, Ethereum reorgs, BIT proxy upgrades or pauses, EIP-1271 contract-wallet signatures, or the complementary user-funded BIT → Lightning escrow. Those require regtest, mainnet-fork, and integration tests before a testnet funding flow.
+This local campaign does not model Bitcoin block production, live Lightning HTLC behavior, LND restarts or force closes, Ethereum reorg execution, or the deployed upgradeable BIT proxy. Those require Bitcoin regtest, a controlled Ethereum fork, exact deployed bytecode, and an isolated Lightning adapter before any funded testnet phase.

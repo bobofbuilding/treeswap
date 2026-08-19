@@ -4,7 +4,10 @@ import { SiweMessage } from "siwe";
 import { buildSiweMessage } from "../lib/account.mjs";
 import {
   SIWE_STATEMENT,
+  isActiveMainnetSession,
   isAllowedTreeSwapOrigin,
+  isExactRequestOrigin,
+  ownsNotificationRecord,
   validateSiweMessageFields,
 } from "../lib/siwe-policy.mjs";
 
@@ -79,4 +82,23 @@ test("rejects stale, premature, future-issued, and overlong messages", () => {
   const overlong = parsed();
   overlong.expirationTime = overlongRecord.expiresAt;
   assert.match(validateSiweMessageFields({ message: overlong, nonceRecord: overlongRecord, identity, now: NOW }).reasons.join("; "), /too long/);
+});
+
+test("rejects cross-origin account mutations and expired sessions", () => {
+  assert.equal(isExactRequestOrigin("https://treeswap.vercel.app/api/notifications", "https://treeswap.vercel.app"), true);
+  assert.equal(isExactRequestOrigin("https://treeswap.vercel.app/api/notifications", "https://attacker.example"), false);
+  assert.equal(isExactRequestOrigin("https://attacker.example/api/notifications", "https://attacker.example"), false);
+  assert.equal(isExactRequestOrigin("https://treeswap.vercel.app.attacker.example/api", "https://treeswap.vercel.app.attacker.example"), false);
+
+  const session = { walletAddress: "0x1111111111111111111111111111111111111111", chainId: 1, expiresAt: EXPIRES };
+  assert.equal(isActiveMainnetSession(session, NOW), true);
+  assert.equal(isActiveMainnetSession(session, EXPIRES), false);
+  assert.equal(isActiveMainnetSession({ ...session, chainId: 10 }, NOW), false);
+});
+
+test("never exposes a notification record belonging to another wallet", () => {
+  const session = { walletAddress: "0x1111111111111111111111111111111111111111" };
+  assert.equal(ownsNotificationRecord(session, { walletAddress: session.walletAddress }), true);
+  assert.equal(ownsNotificationRecord(session, { walletAddress: "0x2222222222222222222222222222222222222222" }), false);
+  assert.equal(ownsNotificationRecord(null, { walletAddress: session.walletAddress }), false);
 });
