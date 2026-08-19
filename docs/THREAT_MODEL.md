@@ -23,7 +23,7 @@ The prototype is appropriate for product exploration. Real funds should remain d
 ### TS-C01 — Fixed-par inventory drain
 
 **Severity:** Critical  
-**Status:** Partially implemented in the Lightning → BIT vault; external market and BIT-proxy controls remain open
+**Status:** Repository controls implemented; live monitor, pinned deployment values, and independent executable-price sources remain a testnet gate
 
 The 100-sat par value is not enforced by the BIT token contract. If BIT's executable market value or BNote redemption value moves below 100 sats, an attacker can acquire discounted BIT and repeatedly drain the Lightning side at TreeSwap's stale par. If BIT moves above par, the BIT side can be drained instead.
 
@@ -37,7 +37,7 @@ Safeguards:
 - display that par is a project rule, not an onchain guarantee;
 - start with solver-owned inventory so no public LP absorbs an undefined peg risk.
 
-Implemented now: the vault enforces an immutable reference-price band, maximum BIT per swap, maximum BIT per solver epoch, and maximum fee. These are damage limits, not proof of fair value. Executable external-price checks, dynamic inventory controls, and BIT proxy monitoring remain launch requirements.
+Implemented now: the vault enforces an immutable reference-price band, maximum BIT per swap, maximum BIT per solver epoch, and maximum fee. The fail-closed policy in `lib/risk-policy.mjs` additionally requires a fresh ERC-1967 implementation and code-hash match, an unpaused 18-decimal token, healthy Ethereum finality, three independent fresh executable price sources, a bounded source spread, a market/reference band, per-direction inventory reserves, and scarcity fees. `docs/RISK_POLICY.md` defines halt and recovery behavior. These controls are executable and tested, but production quotes remain disabled until the live inputs, pinned values, monitor, alerts, and multisig recovery process are deployed and independently reviewed.
 
 ### TS-C02 — Unbound preimage claim
 
