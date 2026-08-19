@@ -64,7 +64,8 @@ The command refuses to overwrite an existing file and never records the RPC URL.
   - [x] Standard invoices above the signed fee cap or per-payment cap are rejected before dispatch, and read-only tracking proves `NOT_FOUND`.
   - [ ] Standard-invoice route failure and duplicate/ambiguous outcomes remain; standard success plus lost-response recovery pass.
 - [ ] Inject delayed and fast Bitcoin blocks, LND restart, lost responses, idempotent retry, force close, unsynced state, TLS pin change, credential rotation, and credential revocation. Accepted-state LND restart, one-dispatch lost-response recovery, root-key revocation, live in-flight saturation, channel-offline recovery, and TLS-pin mismatch now pass.
-- [ ] Prove that the computed Lightning cutoff always precedes the EVM refund boundary by the published margin.
+  - [x] Rapid blocks reach the live HTLC boundary; the adapter rejects settlement at a 24-block reserve, six blocks before the auto-cancel boundary observed in pinned LND.
+- [ ] Prove that the computed Lightning cutoff always precedes the EVM refund boundary by the published margin. Pure ordering and the live Lightning-height boundary pass; combined EVM/Lightning fork or testnet evidence remains.
 - [ ] Produce a secret-free evidence bundle containing versions, configuration hashes, test results, and timestamps—never macaroons, invoices, or preimages.
 
 The current adapter boundary, live lab, and remaining fault matrix are documented in [Lightning adapter](./LIGHTNING_ADAPTER.md) and [Lightning regtest lab](./LIGHTNING_REGTEST.md).

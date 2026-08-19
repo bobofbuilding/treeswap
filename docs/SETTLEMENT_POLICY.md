@@ -1,6 +1,6 @@
 # TreeSwap settlement clock policy
 
-Status: deterministic policy and boundary-test harness. Regtest, mainnet-fork, and fault-injection campaigns remain required before testnet funding.
+Status: deterministic policy and boundary-test harness plus a live rapid-block LND cutoff campaign. Combined EVM/Lightning fork or testnet timing evidence remains required before funding.
 
 ## One ordered schedule
 
@@ -20,7 +20,9 @@ The onchain contracts independently enforce the same ordering and make claim and
 
 For BIT → Lightning, the solver pays a validated external invoice only after the user's BIT escrow is canonical and finalized.
 
-For Lightning → BIT, TreeSwap creates a hold invoice with a larger final CLTV than an ordinary invoice. The default policy requires at least 48 blocks and reserves 18 blocks for terminal onchain fulfillment. The wall-clock estimate uses a conservative minimum block interval because unexpectedly fast Bitcoin blocks make a height deadline arrive sooner. Once an HTLC is accepted, its actual expiry height is checked and may shorten—but never extend—the signed deadline.
+For Lightning → BIT, TreeSwap creates a hold invoice with a larger final CLTV than an ordinary invoice. The default policy requires at least 48 blocks and reserves 24 blocks for terminal onchain fulfillment. The wall-clock estimate uses a conservative minimum block interval because unexpectedly fast Bitcoin blocks make a height deadline arrive sooner. Once an HTLC is accepted, its actual expiry height is checked and may shorten—but never extend—the signed deadline.
+
+The pinned regtest LND release canceled a held HTLC when rapid mining reached the prior 18-block reserve. TreeSwap therefore uses 24 blocks locally, creating a six-block separation from that observed implementation boundary. This is conservative local evidence, not a promise that every LND version or channel policy uses the same auto-cancel height; production must pin and retest the node release and keep the TreeSwap cutoff earlier.
 
 ## Authorization gate
 
@@ -41,4 +43,4 @@ Authorization is not a reusable boolean. `issueLightningAuthorization` creates a
 
 ## Required integration campaign
 
-The pure policy tests cover ordering, exact cutoffs, unsafe invoice expiry, insufficient final CLTV, held-HTLC boundaries, Ethereum finality, reorg detection, and fail-closed service state. The remaining campaign must run with Bitcoin regtest, LND hold invoices, an Ethereum fork or testnet, controlled reorgs, delayed and fast blocks, mempool congestion, LND restart, held-HTLC timeout, and force-close. Those external results are a testnet launch gate, not something unit tests can prove.
+The pure policy tests cover ordering, exact cutoffs, unsafe invoice expiry, insufficient final CLTV, held-HTLC boundaries, Ethereum finality, reorg detection, and fail-closed service state. Regtest now proves rapid blocks reach the 24-block reserve while the HTLC remains accepted, the adapter rejects the correct preimage at the exact boundary, cancellation releases the payer, and no replacement payment is issued. Combined Ethereum/Lightning timing, controlled reorgs, prolonged block delay, mempool congestion, and force-close remain testnet launch gates.

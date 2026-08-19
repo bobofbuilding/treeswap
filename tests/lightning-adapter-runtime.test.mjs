@@ -32,7 +32,7 @@ const policy = {
   maximumInvoiceExpirySeconds: 10_800,
   minimumHoldInvoiceCltvBlocks: 48,
   maximumHoldInvoiceCltvBlocks: 144,
-  fulfillmentSafetyBlocks: 18,
+  fulfillmentSafetyBlocks: 24,
   maximumPaymentTimeoutSeconds: 30,
   maximumRoutingFeeSats: 10,
   invoiceExpiryMarginSeconds: 60,

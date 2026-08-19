@@ -19,6 +19,7 @@ npm run regtest:adapter-smoke
 npm run regtest:credential-smoke
 npm run regtest:invoice-fault-smoke
 npm run regtest:policy-fault-smoke
+npm run regtest:htlc-cutoff-smoke
 npm run regtest:coordinator-smoke
 npm run regtest:status
 npm run regtest:down
@@ -42,13 +43,15 @@ For all six node/role pairs, the bootstrap reads the baked macaroon back, requir
 
 `regtest:policy-fault-smoke` submits valid invoices with an excessive fee limit and excessive amount, then requires adapter rejection and `NOT_FOUND` tracking proof that neither payment was dispatched. It also proves the tracking error contains neither the raw nor REST-encoded payment hash. It holds two real 80,000-sat HTLCs, reads at least 160,000 sats in flight from LND, rejects another exposure above the 150,000-sat cap, and cancels both probes. It then stops Bob, waits until Alice reports zero active channels, rejects a fresh payment, recovers and unlocks Bob, requires both channel views to become active, and again proves the rejected hash is unknown to LND. Finally, a disposable payer-adapter process must refuse a deliberately mismatched TLS pin while the unchanged pinned adapter still decodes the exact invoice. The campaign does not emit invoices, macaroons, or preimages.
 
+`regtest:htlc-cutoff-smoke` accepts a real hold payment with an 80-block final CLTV, derives its actual HTLC expiry height, and mines enough blocks rapidly for both LND nodes to reach exactly the configured 24-block reserve. The invoice must still be `ACCEPTED`; the adapter must reject even the correct preimage specifically because the HTLC is inside its settlement margin; cancellation must release the original payer as failed. An earlier trial showed pinned LND auto-canceling at 18 blocks, which is why the TreeSwap reserve was raised to 24 rather than relying on the node's terminal boundary.
+
 `regtest:coordinator-smoke` rebuilds and uses a separate coordinator container and credential volume so stale local images cannot satisfy the campaign. It has the Ed25519 private key and its own SQLite volume but no LND macaroon. The payer adapter has only the public key and its payer macaroon. The campaign pays a real standard 10,000-sat invoice, discards the successful response, reopens the durable store in `UNKNOWN`, and uses a new signed read-only tracking request to recover `SUCCEEDED`. It requires one dispatch and proves the raw invoice was not written to the coordinator database. The reservation input is simulated, so this is not EVM finality evidence.
 
 ## Remaining campaigns
 
 - Standard-invoice route failure and duplicate/ambiguous request. Success, excessive-fee and amount rejection, no-dispatch tracking, and lost-response reconciliation now pass.
-- HTLC cutoff under live block advancement. Hold-invoice cancel, expiry, wrong preimage, late settle, signed-action replay, and restart while accepted now pass.
-- Delayed and fast blocks, force close, unsynced node, and stale capacity epoch. Accepted-state LND restart, channel-offline rejection/recovery, and live in-flight-cap saturation now pass.
+- Hold-invoice cancel, expiry, wrong preimage, late settle, signed-action replay, restart while accepted, and the 24-block HTLC cutoff under rapid block advancement now pass.
+- Prolonged block delay, force close, unsynced node, and stale capacity epoch. Rapid blocks, accepted-state LND restart, channel-offline rejection/recovery, and live in-flight-cap saturation now pass.
 - Real certificate rotation, overlap credential rotation, and stateless initialization. TLS-pin mismatch, exact grant manifests, timeout enforcement, root-key revocation, and representative forbidden-RPC categories now pass.
 - Secret-free evidence export with binary/config hashes and exact test timestamps.
 

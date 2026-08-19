@@ -112,6 +112,22 @@ wait_for_chain_sync() {
   return 1
 }
 
+wait_for_block_height() {
+  local node=$1
+  local target_height=$2
+  local block_height=0
+  for _ in $(seq 1 90); do
+    block_height=$(compose exec -T "$node" lncli --network=regtest getinfo 2>/dev/null |
+      jq -r '.block_height | tonumber' || true)
+    if (( block_height >= target_height )); then
+      return 0
+    fi
+    sleep 1
+  done
+  echo "$node did not reach regtest block height $target_height" >&2
+  return 1
+}
+
 wait_for_active_channel() {
   local node=$1
   local active_channels=0
@@ -1082,6 +1098,152 @@ smoke_policy_faults() {
   echo "Policy fault smoke passed: fee, amount, in-flight, offline-channel, no-dispatch, recovery, and TLS-pin enforcement."
 }
 
+smoke_htlc_cutoff() {
+  ensure_runtime_env
+  start_lab >/dev/null
+  local amount_sats=10000
+  local safety_blocks=24
+  local preimage payment_hash intent_digest create_id create_result payment_request invoice_digest
+  local payment_id payment_envelope payment_result="" payment_pid=""
+  local lookup_id lookup_result state accepted expiry_height current_height remaining_blocks
+  local blocks_to_mine miner_address target_height settle_id settle_result cancel_id cancel_result
+  local boundary_outcome
+
+  trap '[[ -z "${payment_hash:-}" ]] || compose exec -T bob lncli --network=regtest cancelinvoice "${payment_hash#0x}" >/dev/null 2>&1 || true; \
+    [[ -z "${payment_pid:-}" ]] || kill "$payment_pid" 2>/dev/null || true; \
+    [[ -z "${payment_result:-}" ]] || rm -f "$payment_result"' EXIT
+
+  preimage="0x$(openssl rand -hex 32)"
+  payment_hash="0x$(printf '%s' "${preimage#0x}" | xxd -r -p |
+    openssl dgst -sha256 -binary | xxd -p -c 256)"
+  intent_digest="0x$(openssl rand -hex 32)"
+  create_id="0x$(openssl rand -hex 32)"
+  create_result=$(call_adapter invoice-adapter /invoicesrpc.Invoices/AddHoldInvoice \
+    "$create_id" "$intent_digest" "$payment_hash" \
+    "0x$(printf '00%.0s' {1..32})" "$amount_sats" \
+    "$(jq -cn '{memo:"treeswap-cltv-cutoff",expirySeconds:600,cltvExpiry:80,isPrivate:true}')")
+  payment_request=$(jq -er '.result.paymentRequest' <<<"$create_result")
+  invoice_digest=$(jq -er '.result.invoiceDigest' <<<"$create_result")
+  payment_id="0x$(openssl rand -hex 32)"
+  payment_envelope=$(sign_adapter_authorization /routerrpc.Router/SendPaymentV2 \
+    "$payment_id" "$intent_digest" "$payment_hash" "$invoice_digest" "$amount_sats" \
+    "$(jq -cn --arg paymentRequest "$payment_request" \
+      '{paymentRequest:$paymentRequest,timeoutSeconds:30,feeLimitSats:"10"}')")
+  umask 077
+  payment_result=$(mktemp "$STATE_DIR/htlc-cutoff-payment.XXXXXX")
+  printf '%s\n' "$payment_envelope" | call_signed_adapter payer-adapter >"$payment_result" &
+  payment_pid=$!
+
+  accepted=false
+  for _ in $(seq 1 30); do
+    lookup_id="0x$(openssl rand -hex 32)"
+    lookup_result=$(call_adapter invoice-adapter /invoicesrpc.Invoices/LookupInvoiceV2 \
+      "$lookup_id" "$intent_digest" "$payment_hash" "$invoice_digest" "$amount_sats" '{}')
+    state=$(jq -er '.result.state' <<<"$lookup_result")
+    if [[ "$state" == "ACCEPTED" ]]; then
+      accepted=true
+      break
+    fi
+    sleep 1
+  done
+  if [[ "$accepted" != true ]]; then
+    echo "CLTV cutoff probe was not accepted" >&2
+    return 1
+  fi
+  expiry_height=$(jq -er '[.result.htlcs[] | select(.state == "ACCEPTED") | .expiryHeight] | min' \
+    <<<"$lookup_result")
+  current_height=$(compose exec -T bob lncli --network=regtest getinfo |
+    jq -er '.block_height | tonumber')
+  remaining_blocks=$((expiry_height - current_height))
+  if (( remaining_blocks <= safety_blocks )); then
+    echo "accepted HTLC began inside the configured settlement safety margin" >&2
+    return 1
+  fi
+  echo "HTLC cutoff stage passed: accepted outside the settlement reserve."
+  blocks_to_mine=$((remaining_blocks - safety_blocks))
+  miner_address=$(compose exec -T alice lncli --network=regtest newaddress p2tr | jq -er '.address')
+  compose exec -T bitcoind bitcoin-cli -regtest \
+    -rpcuser="$BITCOIND_RPC_USER" -rpcpassword="$BITCOIND_RPC_PASSWORD" \
+    generatetoaddress "$blocks_to_mine" "$miner_address" >/dev/null
+  target_height=$((current_height + blocks_to_mine))
+  wait_for_block_height alice "$target_height"
+  wait_for_block_height bob "$target_height"
+  wait_for_chain_sync alice
+  wait_for_chain_sync bob
+  echo "HTLC cutoff stage passed: both LND nodes reached the rapid-block target."
+
+  lookup_id="0x$(openssl rand -hex 32)"
+  if ! lookup_result=$(call_adapter invoice-adapter /invoicesrpc.Invoices/LookupInvoiceV2 \
+    "$lookup_id" "$intent_digest" "$payment_hash" "$invoice_digest" "$amount_sats" '{}'); then
+    echo "invoice lookup failed after rapid block advancement" >&2
+    jq -c '{error,errorCode,ambiguous}' <<<"$lookup_result" >&2
+    return 1
+  fi
+  state=$(jq -er '.result.state' <<<"$lookup_result")
+  if [[ "$state" == "ACCEPTED" ]]; then
+    expiry_height=$(jq -er '[.result.htlcs[] | select(.state == "ACCEPTED") | .expiryHeight] | min' \
+      <<<"$lookup_result")
+    current_height=$(compose exec -T bob lncli --network=regtest getinfo |
+      jq -er '.block_height | tonumber')
+    remaining_blocks=$((expiry_height - current_height))
+    if (( remaining_blocks > safety_blocks )); then
+      echo "fast-block campaign did not reach the exact settlement safety boundary" >&2
+      return 1
+    fi
+    boundary_outcome=adapter-cutoff
+  elif [[ "$state" == "CANCELED" ]]; then
+    if ! jq -e '(.result.htlcs | length) > 0 and ([.result.htlcs[] | select(.state != "CANCELED")] | length == 0)' \
+      <<<"$lookup_result" >/dev/null; then
+      echo "LND canceled the invoice but left a non-canceled HTLC at the safety boundary" >&2
+      return 1
+    fi
+    boundary_outcome=lnd-auto-cancel
+  else
+    echo "hold invoice reached an unexpected state at the settlement safety boundary" >&2
+    return 1
+  fi
+
+  settle_id="0x$(openssl rand -hex 32)"
+  if settle_result=$(call_adapter invoice-adapter /invoicesrpc.Invoices/SettleInvoice \
+    "$settle_id" "$intent_digest" "$payment_hash" "$invoice_digest" "$amount_sats" \
+    "$(jq -cn --arg preimage "$preimage" '{preimage:$preimage}')"); then
+    echo "invoice adapter settled an HTLC inside its block-safety margin" >&2
+    return 1
+  fi
+  if [[ "$boundary_outcome" == "adapter-cutoff" ]]; then
+    if ! jq -e '.error | test("inside the settlement safety margin")' <<<"$settle_result" >/dev/null; then
+      echo "CLTV cutoff settlement failed for an unexpected reason" >&2
+      jq -c '{error,errorCode,ambiguous}' <<<"$settle_result" >&2
+      return 1
+    fi
+  elif ! jq -e '.error | test("not accepted")' <<<"$settle_result" >/dev/null; then
+    echo "CLTV cutoff settlement failed for an unexpected reason" >&2
+    jq -c '{error,errorCode,ambiguous}' <<<"$settle_result" >&2
+    return 1
+  fi
+
+  if [[ "$boundary_outcome" == "adapter-cutoff" ]]; then
+    cancel_id="0x$(openssl rand -hex 32)"
+    cancel_result=$(call_adapter invoice-adapter /invoicesrpc.Invoices/CancelInvoice \
+      "$cancel_id" "$intent_digest" "$payment_hash" "$invoice_digest" "$amount_sats" '{}')
+    jq -e '.result.state == "CANCELED"' <<<"$cancel_result" >/dev/null
+  fi
+  payment_hash=""
+  if wait "$payment_pid"; then
+    payment_pid=""
+    echo "payer succeeded after the near-cutoff hold was canceled" >&2
+    return 1
+  fi
+  payment_pid=""
+  jq -e '.error | test("Lightning payment failed")' "$payment_result" >/dev/null
+  rm -f "$payment_result"
+  payment_result=""
+  unset preimage payment_request payment_envelope
+  trap - EXIT
+
+  echo "HTLC cutoff smoke passed: rapid blocks reached the 24-block reserve, settlement failed closed ($boundary_outcome), and the payer was released."
+}
+
 smoke_coordinator_reconciliation() {
   ensure_runtime_env
   start_lab >/dev/null
@@ -1127,12 +1289,13 @@ case "${1:-}" in
   credential-smoke) smoke_credential_lifecycle ;;
   invoice-fault-smoke) smoke_invoice_faults ;;
   policy-fault-smoke) smoke_policy_faults ;;
+  htlc-cutoff-smoke) smoke_htlc_cutoff ;;
   coordinator-smoke) smoke_coordinator_reconciliation ;;
   status) status_lab ;;
   down) stop_lab ;;
   destroy) destroy_lab ;;
   *)
-    echo "Usage: $0 {up|smoke|adapter-smoke|credential-smoke|invoice-fault-smoke|policy-fault-smoke|coordinator-smoke|status|down|destroy}" >&2
+    echo "Usage: $0 {up|smoke|adapter-smoke|credential-smoke|invoice-fault-smoke|policy-fault-smoke|htlc-cutoff-smoke|coordinator-smoke|status|down|destroy}" >&2
     exit 2
     ;;
 esac

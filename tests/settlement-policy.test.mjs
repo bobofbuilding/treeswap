@@ -17,7 +17,7 @@ const policy = {
   maxClockSkewSeconds: 60,
   minimumPaymentCltvBlocks: 18,
   minimumHoldInvoiceCltvBlocks: 48,
-  fulfillmentSafetyBlocks: 18,
+  fulfillmentSafetyBlocks: 24,
   minimumBitcoinBlockSeconds: 300,
   invoiceExpiryMarginSeconds: 300,
   ethereumConfirmations: 12,
@@ -69,7 +69,7 @@ test("derives quote, Lightning cutoff, and refund in a strict monotonic order", 
   assert.ok(schedule.lastSafeClaimAt < schedule.refundAfter);
   assert.ok(schedule.ethereumFinalAt + policy.minimumPaymentWindowSeconds <= schedule.lastSafeClaimAt);
   assert.equal(schedule.claimBufferSeconds, 2_616);
-  assert.equal(schedule.cltvSafeHeight, HEIGHT + 42);
+  assert.equal(schedule.cltvSafeHeight, HEIGHT + 36);
 });
 
 test("rejects an invoice that cannot outlive finality and payment margins", () => {
