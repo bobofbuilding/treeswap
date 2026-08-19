@@ -1861,6 +1861,230 @@ smoke_stateless_chain_initialization() {
   echo "Stateless chain-initialization smoke passed: fresh state and restart failed closed, a higher real block unlocked exposure, and exactly one payment settled."
 }
 
+smoke_production_duration_chain_delay() {
+  ensure_runtime_env
+  start_lab >/dev/null
+  local amount_sats=10000 duration_seconds=3600 poll_seconds=30
+  local suffix payer_container payer_journal chain_progress
+  local baseline_invoice baseline_request baseline_hash baseline_digest baseline_intent baseline_id baseline_operation baseline_result
+  local restore_request="" baseline_paid=false
+  local stale_invoice stale_request stale_hash="" stale_digest stale_intent stale_id stale_operation stale_result
+  local baseline_info current_info baseline_height baseline_block_hash baseline_header
+  local current_height current_block_hash current_header bitcoin_height bitcoin_block_hash
+  local baseline_time target_time now last_check remaining sleep_seconds next_report=300
+  local baseline_monotonic target_monotonic monotonic_now last_monotonic monotonic_elapsed
+  local observations=0 restart_done=false restart_elapsed=0 payment_count
+
+  suffix=$(openssl rand -hex 8)
+  payer_container="treeswap-regtest-production-duration-payer-$suffix"
+  payer_journal="/data/production-duration-$suffix.jsonl"
+  chain_progress="/data/production-duration-$suffix.json"
+  cleanup_production_duration() {
+    [[ -z "${stale_hash:-}" ]] || \
+      compose exec -T bob lncli --network=regtest cancelinvoice "${stale_hash#0x}" >/dev/null 2>&1 || true; \
+    [[ "${baseline_paid:-false}" != true || -z "${restore_request:-}" ]] || \
+      compose exec -T bob lncli --network=regtest --macaroonpath=/root/.lnd/treeswap/payer.macaroon \
+        payinvoice --force --fee_limit=10 --timeout=30s "$restore_request" >/dev/null 2>&1 || true; \
+    docker rm -f "${payer_container:-missing}" >/dev/null 2>&1 || true; \
+    compose --profile adapter run --rm -T --no-deps --entrypoint /bin/sh payer-adapter \
+      -ec "rm -f '${payer_journal:-/invalid}' '${chain_progress:-/invalid}'" >/dev/null 2>&1 || true
+  }
+  trap cleanup_production_duration EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+
+  read_monotonic_seconds() {
+    local uptime
+    uptime=$(compose exec -T bitcoind cat /proc/uptime)
+    printf '%s\n' "${uptime%%.*}"
+  }
+
+  docker rm -f "$payer_container" >/dev/null 2>&1 || true
+  compose --profile adapter run --rm -d --name "$payer_container" \
+    -e MAX_CHAIN_NO_PROGRESS_SECONDS="$duration_seconds" \
+    -e MAX_CHAIN_HEADER_AGE_SECONDS=7200 \
+    -e ADAPTER_JOURNAL_PATH="$payer_journal" \
+    -e CHAIN_PROGRESS_PATH="$chain_progress" \
+    payer-adapter >/dev/null
+  wait_for_disposable_adapter "$payer_container"
+  docker exec "$payer_container" node -e \
+    'const {mode}=require("node:fs").statSync(process.argv[1]);if((mode&0o777)!==0o600)process.exit(1)' \
+    "$chain_progress"
+  refresh_regtest_chain_header
+
+  baseline_invoice=$(compose exec -T bob lncli --network=regtest addinvoice \
+    --amt="$amount_sats" --memo=treeswap-production-duration-baseline --expiry=600 --private)
+  baseline_request=$(jq -er '.payment_request' <<<$baseline_invoice)
+  baseline_hash=$(compose exec -T alice lncli --network=regtest \
+    --macaroonpath=/root/.lnd/treeswap/payer.macaroon decodepayreq "$baseline_request" |
+    jq -er '.payment_hash | ascii_downcase | "0x" + .')
+  baseline_digest="0x$(printf '%s' "$baseline_request" | openssl dgst -sha256 -binary | xxd -p -c 256)"
+  baseline_intent="0x$(openssl rand -hex 32)"
+  baseline_id="0x$(openssl rand -hex 32)"
+  baseline_operation=$(jq -cn --arg paymentRequest "$baseline_request" \
+    '{paymentRequest:$paymentRequest,timeoutSeconds:30,feeLimitSats:"10"}')
+  restore_request=$(compose exec -T alice lncli --network=regtest addinvoice \
+    --amt="$amount_sats" --memo=treeswap-production-duration-restore --expiry=600 --private |
+    jq -er '.payment_request')
+  baseline_result=$(sign_adapter_authorization /routerrpc.Router/SendPaymentV2 \
+    "$baseline_id" "$baseline_intent" "$baseline_hash" "$baseline_digest" "$amount_sats" "$baseline_operation" |
+    docker exec -i "$payer_container" node /app/infra/lightning-adapter/client.mjs)
+  jq -e --arg paymentHash "$baseline_hash" --arg amount "$amount_sats" \
+    '.result.status == "SUCCEEDED" and .result.paymentHash == $paymentHash and .result.amountSats == $amount' \
+    <<<$baseline_result >/dev/null
+  baseline_paid=true
+  compose exec -T bob lncli --network=regtest \
+    --macaroonpath=/root/.lnd/treeswap/payer.macaroon payinvoice \
+    --force --fee_limit=10 --timeout=30s "$restore_request" >/dev/null
+  baseline_paid=false
+  restore_request=""
+
+  baseline_info=$(compose exec -T alice lncli --network=regtest getinfo)
+  jq -e '.synced_to_chain == true and .wallet_synced == true and (.num_active_channels | tonumber) > 0' \
+    <<<$baseline_info >/dev/null
+  baseline_height=$(jq -er '.block_height | tonumber' <<<$baseline_info)
+  baseline_block_hash=$(jq -er '.block_hash | ascii_downcase | select(test("^[0-9a-f]{64}$"))' \
+    <<<$baseline_info)
+  baseline_header=$(jq -er '.best_header_timestamp | tonumber' <<<$baseline_info)
+  bitcoin_height=$(compose exec -T bitcoind bitcoin-cli -regtest \
+    -rpcuser="$BITCOIND_RPC_USER" -rpcpassword="$BITCOIND_RPC_PASSWORD" getblockcount)
+  bitcoin_block_hash=$(compose exec -T bitcoind bitcoin-cli -regtest \
+    -rpcuser="$BITCOIND_RPC_USER" -rpcpassword="$BITCOIND_RPC_PASSWORD" getbestblockhash)
+  if (( bitcoin_height != baseline_height )) || [[ "$bitcoin_block_hash" != "$baseline_block_hash" ]]; then
+    echo "LND and Bitcoin Core did not agree on the production-duration chain baseline" >&2
+    return 1
+  fi
+  baseline_time=$(date +%s)
+  target_time=$((baseline_time + duration_seconds + 1))
+  baseline_monotonic=$(read_monotonic_seconds)
+  target_monotonic=$((baseline_monotonic + duration_seconds + 1))
+  last_check=$baseline_time
+  last_monotonic=$baseline_monotonic
+
+  stale_invoice=$(compose exec -T bob lncli --network=regtest addinvoice \
+    --amt="$amount_sats" --memo=treeswap-production-duration-reject --expiry=7200 --private)
+  stale_request=$(jq -er '.payment_request' <<<$stale_invoice)
+  stale_hash=$(compose exec -T alice lncli --network=regtest \
+    --macaroonpath=/root/.lnd/treeswap/payer.macaroon decodepayreq "$stale_request" |
+    jq -er '.payment_hash | ascii_downcase | "0x" + .')
+  stale_digest="0x$(printf '%s' "$stale_request" | openssl dgst -sha256 -binary | xxd -p -c 256)"
+  stale_intent="0x$(openssl rand -hex 32)"
+  stale_operation=$(jq -cn --arg paymentRequest "$stale_request" \
+    '{paymentRequest:$paymentRequest,timeoutSeconds:30,feeLimitSats:"10"}')
+  echo "Production-duration stage: 3601-second no-block interval started with 30-second continuity checks."
+
+  while true; do
+    now=$(date +%s)
+    monotonic_now=$(read_monotonic_seconds)
+    if (( now < last_check || now - last_check > 45 \
+      || monotonic_now < last_monotonic || monotonic_now - last_monotonic > 45 )); then
+      echo "production-duration observation cadence or wall clock was interrupted" >&2
+      return 1
+    fi
+    current_info=$(compose exec -T alice lncli --network=regtest getinfo)
+    if ! jq -e '.synced_to_chain == true and .wallet_synced == true and (.num_active_channels | tonumber) > 0' \
+      <<<$current_info >/dev/null; then
+      echo "payer LND lost chain sync, wallet sync, or its active channel during the production-duration interval" >&2
+      return 1
+    fi
+    current_height=$(jq -er '.block_height | tonumber' <<<$current_info)
+    current_block_hash=$(jq -er '.block_hash | ascii_downcase | select(test("^[0-9a-f]{64}$"))' \
+      <<<$current_info)
+    current_header=$(jq -er '.best_header_timestamp | tonumber' <<<$current_info)
+    bitcoin_height=$(compose exec -T bitcoind bitcoin-cli -regtest \
+      -rpcuser="$BITCOIND_RPC_USER" -rpcpassword="$BITCOIND_RPC_PASSWORD" getblockcount)
+    bitcoin_block_hash=$(compose exec -T bitcoind bitcoin-cli -regtest \
+      -rpcuser="$BITCOIND_RPC_USER" -rpcpassword="$BITCOIND_RPC_PASSWORD" getbestblockhash)
+    if (( current_height != baseline_height || current_header != baseline_header \
+      || bitcoin_height != baseline_height )) \
+      || [[ "$current_block_hash" != "$baseline_block_hash" \
+        || "$bitcoin_block_hash" != "$baseline_block_hash" ]]; then
+      echo "Bitcoin regtest advanced during the production-duration no-block interval" >&2
+      return 1
+    fi
+    if ! docker exec "$payer_container" node -e \
+      'fetch("http://127.0.0.1:3000/healthz").then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))' \
+      >/dev/null 2>&1; then
+      echo "production-duration adapter stopped responding" >&2
+      return 1
+    fi
+    observations=$((observations + 1))
+    monotonic_elapsed=$((monotonic_now - baseline_monotonic))
+
+    if [[ "$restart_done" != true ]] && (( monotonic_elapsed >= duration_seconds / 2 )); then
+      docker rm -f "$payer_container" >/dev/null
+      compose --profile adapter run --rm -d --name "$payer_container" \
+        -e MAX_CHAIN_NO_PROGRESS_SECONDS="$duration_seconds" \
+        -e MAX_CHAIN_HEADER_AGE_SECONDS=7200 \
+        -e ADAPTER_JOURNAL_PATH="$payer_journal" \
+        -e CHAIN_PROGRESS_PATH="$chain_progress" \
+        payer-adapter >/dev/null
+      wait_for_disposable_adapter "$payer_container"
+      docker exec "$payer_container" node -e \
+        'const {mode}=require("node:fs").statSync(process.argv[1]);if((mode&0o777)!==0o600)process.exit(1)' \
+        "$chain_progress"
+      restart_done=true
+      restart_elapsed=$(( $(read_monotonic_seconds) - baseline_monotonic ))
+      echo "Production-duration stage: adapter restart preserved the chain-progress record after ${restart_elapsed}s."
+    fi
+
+    if (( monotonic_elapsed >= next_report )); then
+      remaining=$((target_monotonic - monotonic_now))
+      (( target_time - now > remaining )) && remaining=$((target_time - now))
+      (( remaining < 0 )) && remaining=0
+      echo "Production-duration heartbeat: ${monotonic_elapsed}s elapsed, ${remaining}s remaining, no block progress."
+      next_report=$((next_report + 300))
+    fi
+    if (( now >= target_time && monotonic_now >= target_monotonic )); then
+      break
+    fi
+    remaining=$((target_monotonic - monotonic_now))
+    (( target_time - now > remaining )) && remaining=$((target_time - now))
+    sleep_seconds=$poll_seconds
+    (( remaining < sleep_seconds )) && sleep_seconds=$remaining
+    last_check=$now
+    last_monotonic=$monotonic_now
+    sleep "$sleep_seconds"
+  done
+
+  if [[ "$restart_done" != true ]] || (( observations < 110 )); then
+    echo "production-duration campaign lacked continuous observations or the required restart" >&2
+    return 1
+  fi
+  stale_id="0x$(openssl rand -hex 32)"
+  if stale_result=$(sign_adapter_authorization /routerrpc.Router/SendPaymentV2 \
+    "$stale_id" "$stale_intent" "$stale_hash" "$stale_digest" "$amount_sats" "$stale_operation" |
+    docker exec -i "$payer_container" node /app/infra/lightning-adapter/client.mjs); then
+    echo "production-duration stale adapter dispatched a new payment" >&2
+    return 1
+  fi
+  if ! jq -e '.ambiguous == false and (.error | test("chain made no observed progress"))' \
+    <<<$stale_result >/dev/null; then
+    echo "production-duration adapter failed for an unexpected reason" >&2
+    jq -c '{error,errorCode,ambiguous}' <<<$stale_result >&2
+    return 1
+  fi
+  payment_count=$(compose exec -T alice lncli --network=regtest listpayments |
+    jq --arg paymentHash "${stale_hash#0x}" \
+      '[.payments[] | select((.payment_hash | ascii_downcase) == $paymentHash)] | length')
+  if (( payment_count != 0 )); then
+    echo "production-duration rejection still reached native LND payment history" >&2
+    return 1
+  fi
+
+  refresh_regtest_chain_header
+  assert_adapter_payment_not_found "$stale_intent" "$stale_hash" "$stale_digest" "$amount_sats"
+  compose exec -T bob lncli --network=regtest cancelinvoice "${stale_hash#0x}" >/dev/null
+  stale_hash=""
+  unset baseline_request stale_request
+  docker exec "$payer_container" rm -f "$payer_journal" "$chain_progress"
+  docker rm -f "$payer_container" >/dev/null
+  trap - EXIT INT TERM
+
+  monotonic_elapsed=$(( $(read_monotonic_seconds) - baseline_monotonic ))
+  echo "Production-duration chain-delay smoke passed: ${monotonic_elapsed}s monotonic duration without a block, ${observations} continuous observations, restart persistence, deterministic rejection, and zero dispatch."
+}
+
 smoke_stale_chain_header() {
   ensure_runtime_env
   start_lab >/dev/null
@@ -2521,6 +2745,7 @@ case "${1:-}" in
   directional-capacity-smoke) smoke_directional_capacity ;;
   daily-cap-smoke) smoke_daily_cap ;;
   stateless-init-smoke) smoke_stateless_chain_initialization ;;
+  production-duration-smoke) smoke_production_duration_chain_delay ;;
   stale-chain-smoke) smoke_stale_chain_header ;;
   unsynced-chain-smoke) smoke_unsynced_chain_catchup ;;
   force-close-smoke) smoke_force_close_recovery ;;
@@ -2532,7 +2757,7 @@ case "${1:-}" in
   down) stop_lab ;;
   destroy) destroy_lab ;;
   *)
-    echo "Usage: $0 {up|smoke|adapter-smoke|credential-smoke|credential-rotation-smoke|tls-rotation-smoke|invoice-fault-smoke|policy-fault-smoke|directional-capacity-smoke|daily-cap-smoke|stateless-init-smoke|stale-chain-smoke|unsynced-chain-smoke|force-close-smoke|route-fault-smoke|htlc-cutoff-smoke|coordinator-smoke|coordinator-invoice-smoke|status|down|destroy}" >&2
+    echo "Usage: $0 {up|smoke|adapter-smoke|credential-smoke|credential-rotation-smoke|tls-rotation-smoke|invoice-fault-smoke|policy-fault-smoke|directional-capacity-smoke|daily-cap-smoke|stateless-init-smoke|production-duration-smoke|stale-chain-smoke|unsynced-chain-smoke|force-close-smoke|route-fault-smoke|htlc-cutoff-smoke|coordinator-smoke|coordinator-invoice-smoke|status|down|destroy}" >&2
     exit 2
     ;;
 esac

@@ -88,6 +88,7 @@ const campaigns = [
   ["lightning:directional-capacity", "npm", ["run", "regtest:directional-capacity-smoke"]],
   ["lightning:daily-cap", "npm", ["run", "regtest:daily-cap-smoke"]],
   ["lightning:stateless-chain-initialization", "npm", ["run", "regtest:stateless-init-smoke"]],
+  ["lightning:production-duration-chain-delay", "npm", ["run", "regtest:production-duration-smoke"]],
   ["lightning:stale-chain-header", "npm", ["run", "regtest:stale-chain-smoke"]],
   ["lightning:unsynced-chain-catchup", "npm", ["run", "regtest:unsynced-chain-smoke"]],
   ["lightning:force-close-recovery", "npm", ["run", "regtest:force-close-smoke"]],

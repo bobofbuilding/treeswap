@@ -30,6 +30,7 @@
     "regtest:directional-capacity-smoke": "bash infra/regtest/lab.sh directional-capacity-smoke",
     "regtest:daily-cap-smoke": "bash infra/regtest/lab.sh daily-cap-smoke",
     "regtest:stateless-init-smoke": "bash infra/regtest/lab.sh stateless-init-smoke",
+    "regtest:production-duration-smoke": "bash infra/regtest/lab.sh production-duration-smoke",
     "regtest:stale-chain-smoke": "bash infra/regtest/lab.sh stale-chain-smoke",
     "regtest:unsynced-chain-smoke": "bash infra/regtest/lab.sh unsynced-chain-smoke",
     "regtest:force-close-smoke": "bash infra/regtest/lab.sh force-close-smoke",

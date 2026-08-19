@@ -74,7 +74,7 @@ The command refuses to overwrite an existing file and never records the RPC URL.
   - [x] Separate live payer and invoice adapters saturate a 10,000-sat daily cap, restart against their durable journals, and reject the next exposure before dispatch; exact-boundary tests prove UTC value rollover never rolls permanent replay protection.
   - [x] Prove an exact replacement credential works concurrently, remains live after deterministic old-root revocation, and permits baseline recovery without leaving the temporary root or credential behind.
   - [x] Prove a real LND certificate/key rotation invalidates the old pin, preserves the node/channel, dispatches no payment, and recovers only after explicit peer reconnection and new-pin rollout, with rollback on failure.
-  - [x] Prove fresh adapter state and restart cannot authorize exposure until a higher real block is durably observed; clock/height/header conflicts remain latched until later progress.
+  - [x] Prove fresh adapter state and restart cannot authorize exposure until a higher real block and new hash are durably observed; clock/height/hash/header conflicts remain latched until later progress.
   - [ ] Prove the production-duration block-delay threshold without compressing the configured interval.
 - [ ] Prove that the computed Lightning cutoff always precedes the EVM refund boundary by the published margin. Pure ordering and the live Lightning-height boundary pass; combined EVM/Lightning fork or testnet evidence remains.
 - [ ] Produce a secret-free evidence bundle from the final published release commit containing versions, configuration hashes, test results, and timestamps—never macaroons, invoices, or preimages.

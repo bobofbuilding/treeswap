@@ -15,6 +15,8 @@ const NOW = 2_000_000_000;
 const PAYMENT_REQUEST = "lnbcrt1treeswapexact";
 const PREIMAGE = id("runtime-preimage").toLowerCase();
 const PAYMENT_HASH = sha256(PREIMAGE).toLowerCase();
+const BLOCK_HASH = "ab".repeat(32);
+const PREVIOUS_BLOCK_HASH = "cd".repeat(32);
 const { privateKey, publicKey } = generateKeyPairSync("ed25519");
 
 const policy = {
@@ -48,7 +50,13 @@ class MockLnd {
   privateNetworkVerified = true;
   sendError = null;
   calls = [];
-  info = { synced_to_chain: true, wallet_synced: true, best_header_timestamp: String(NOW - 30), block_height: 900_000 };
+  info = {
+    synced_to_chain: true,
+    wallet_synced: true,
+    best_header_timestamp: String(NOW - 30),
+    block_height: 900_000,
+    block_hash: BLOCK_HASH,
+  };
 
   async getInfo() { return this.info; }
   async listChannels() {
@@ -112,6 +120,7 @@ async function runtime(role, lnd = new MockLnd(), now = () => NOW + 1, policyOve
   if (options.seedChainProgress !== false) {
     await chainProgress.observe({
       blockHeight: Number(lnd.info.block_height) - 1,
+      bestBlockHash: PREVIOUS_BLOCK_HASH,
       bestHeaderTimestamp: Number(lnd.info.best_header_timestamp),
       observedAt: NOW,
     });
@@ -196,8 +205,20 @@ test("rejects a changed invoice before dispatch", async () => {
 
 test("rejects a stale best header or unsynced wallet before payment dispatch", async () => {
   for (const info of [
-    { synced_to_chain: true, wallet_synced: true, best_header_timestamp: String(NOW - 3_601), block_height: 900_000 },
-    { synced_to_chain: true, wallet_synced: false, best_header_timestamp: String(NOW - 30), block_height: 900_000 },
+    {
+      synced_to_chain: true,
+      wallet_synced: true,
+      best_header_timestamp: String(NOW - 3_601),
+      block_height: 900_000,
+      block_hash: BLOCK_HASH,
+    },
+    {
+      synced_to_chain: true,
+      wallet_synced: false,
+      best_header_timestamp: String(NOW - 30),
+      block_height: 900_000,
+      block_hash: BLOCK_HASH,
+    },
   ]) {
     const lnd = new MockLnd();
     lnd.info = info;
@@ -220,6 +241,7 @@ test("rejects locally observed header stagnation even when the reported timestam
     wallet_synced: true,
     best_header_timestamp: String(NOW + 5),
     block_height: 900_000,
+    block_hash: BLOCK_HASH,
   };
   const { adapter } = await runtime("payer", lnd, () => observedAt, {
     maxChainNoProgressSeconds: 1,
@@ -245,6 +267,7 @@ test("rejects a header beyond the configured future-skew limit", async () => {
     wallet_synced: true,
     best_header_timestamp: String(NOW + 302),
     block_height: 900_000,
+    block_hash: BLOCK_HASH,
   };
   const { adapter } = await runtime("payer", lnd);
   const envelope = authorization("/routerrpc.Router/SendPaymentV2", {
@@ -282,7 +305,7 @@ test("persists an uninitialized chain baseline across restart until a higher blo
   assert.equal(lnd.calls.some(([name]) => name === "send"), false);
 
   observedAt += 1;
-  lnd.info = { ...lnd.info, block_height: 900_001 };
+  lnd.info = { ...lnd.info, block_height: 900_001, block_hash: "ef".repeat(32) };
   const progressedEnvelope = authorization("/routerrpc.Router/SendPaymentV2", {
     paymentRequest: PAYMENT_REQUEST,
     timeoutSeconds: 10,
