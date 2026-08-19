@@ -22,6 +22,8 @@ The user experience is invoice-first. BIT → Lightning starts with an exact, am
 
 There is no central limit order book, shared LP pool, market-making reward, partial fill, or permissionless solver admission in v1.
 
+The RFQ client follows [`RFQ_POLICY.md`](RFQ_POLICY.md): it validates complete solver-signed offers, bounds work and one retained offer per solver, orders the verified received set by executable input price and receipt time, and commits that set before the user selects one quote. It never claims that a relay supplied a globally complete market.
+
 ## 3. Selected-quote intent
 
 For the implemented Lightning → BIT vault, the user accepts the exact selected terms with EIP-712 typed data. The domain binds protocol name, version, chain ID, and verifying vault. The message binds:
