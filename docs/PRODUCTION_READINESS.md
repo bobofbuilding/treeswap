@@ -1,6 +1,6 @@
 # Production readiness
 
-Status: Gate 0 is complete. Gate 1 tooling has started. No funded testnet or mainnet gate is complete.
+Status: Gate 0 is complete. Gates 1 and 2 are in progress. No funded testnet or mainnet gate is complete.
 
 “Production” means a capped mainnet bridge operated against published limits after testnet evidence and independent review. It does not mean public pooled liquidity, yield, or unlimited permissionless exposure.
 
@@ -53,14 +53,18 @@ The command refuses to overwrite an existing file and never records the RPC URL.
 - [x] Build a pinned, internal two-node Bitcoin/LND regtest with balanced private-channel liquidity.
 - [x] Bake distinct exact-URI invoice, payer, and observer credentials and prove representative forbidden RPCs fail.
 - [x] Complete a real 10,000-sat hold-invoice create, decode, pay, accept, settle, and success smoke across the nodes.
-- [ ] Connect the repository policy to a real isolated adapter process.
+- [x] Connect the repository policy to separate real invoice and payer adapter processes on the internal regtest network.
+- [x] Require an exact, short-lived Ed25519 coordinator authorization before every action; the adapters hold only the public key.
+- [x] Pin and verify LND TLS, mount one exact role credential per process, recheck node sync/active directional liquidity, and expose no host port.
+- [x] Persist request IDs before dispatch and prove a completed payment remains replay-blocked after the payer process restarts.
+- [x] Prove a payer authorization is rejected by the invoice process and representative forbidden macaroon RPCs fail.
 - [ ] Prove the complete forbidden-RPC matrix and credential timeouts.
-- [ ] Test standard invoices and hold invoices through create, accept, settle, cancel, expire, and replay paths.
+- [ ] Test standard invoices and hold invoices through create, accept, settle, cancel, expire, late-settle, and replay paths. Create/accept/settle and restart-safe replay now pass.
 - [ ] Inject delayed and fast Bitcoin blocks, LND restart, lost responses, idempotent retry, force close, unsynced state, TLS pin change, credential rotation, and credential revocation.
 - [ ] Prove that the computed Lightning cutoff always precedes the EVM refund boundary by the published margin.
 - [ ] Produce a secret-free evidence bundle containing versions, configuration hashes, test results, and timestamps—never macaroons, invoices, or preimages.
 
-The current lab and remaining fault matrix are documented in [Lightning regtest lab](./LIGHTNING_REGTEST.md).
+The current adapter boundary, live lab, and remaining fault matrix are documented in [Lightning adapter](./LIGHTNING_ADAPTER.md) and [Lightning regtest lab](./LIGHTNING_REGTEST.md).
 
 ## Gate 3 — build the durable automatic coordinator
 

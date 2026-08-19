@@ -28,7 +28,7 @@ Reviewed surfaces:
 | TS-H04 | Integer units, rounding, overflow, dust, and conservation implemented | None |
 | TS-H05 | BIT-only signed capped fee accounting implemented | Pin deployed collector and caps |
 | TS-H06 | Public pool/shares/yield/rewards/partial fills disabled | Live solver reconciliation and failure drills |
-| TS-H07 | Least-privilege adapter policy and secret-free audit implemented | Isolated regtest adapter, credentials, rotation and failure drills |
+| TS-H07 | Least-privilege isolated regtest adapters, signed actions, durable replay journal, and secret-free audit implemented | Complete permission matrix, rotation, reconciliation, and failure drills |
 | TS-H08 | Full-fill invoice policy and sealed shared hash registry implemented | Live LND decoding and regtest integration |
 | TS-H09 | Finality authorization and dispatch-time revalidation implemented | Controlled fork reorg campaign |
 | TS-M01 | Maker rewards excluded from v1 | None |
@@ -176,15 +176,15 @@ TreeSwap v1 does not accept public LP funds or create a pooled claim. `V1_CAPABI
 
 ### TS-H07 — Lightning adapter or macaroon compromise
 
-**Status:** Exact RPC allowlists, credential/TLS isolation, intent-bound authorization, value caps, rotation checks, and secret-free audits implemented as repository policy; regtest adapter and credential drills remain deployment gates
+**Status:** Exact RPC allowlists, credential/TLS isolation, signed intent-bound authorization, directional value caps, durable replay journal, and secret-free audits pass isolated regtest; full permission, rotation, ambiguous-response, and failure drills remain deployment gates
 
 An adapter that can create, settle, cancel, and inspect every invoice is a hot-wallet control plane. A broad LND admin macaroon can also affect the node beyond TreeSwap.
 
-`lib/lightning-adapter-policy.mjs` defines separate exact-URI invoice, payer, and observer roles. It rejects broad or cross-role RPCs, browser-exposed/default/stale/revoked credentials, TLS or private-network failures, node-health and capacity-epoch changes, replayed request IDs, mutated intent/hash/invoice/amount fields, and per-payment/daily/in-flight cap breaches. Hold-invoice settlement also proves `sha256(preimage) == paymentHash`. Macaroons are injected only inside the isolated adapter and are never accepted from an application request; audits contain no macaroon, preimage, or invoice text. [`LIGHTNING_ADAPTER.md`](LIGHTNING_ADAPTER.md) specifies dedicated root-key IDs, exact URI baking, rotation, revocation, and incident response. A live regtest process, permission-negative tests, and rotation/restart/force-close drills remain required before funding.
+`lib/lightning-adapter-policy.mjs` defines separate exact-URI invoice, payer, and observer roles. It rejects broad or cross-role RPCs, browser-exposed/default/stale/revoked credentials, TLS or private-network failures, node-health and capacity-epoch changes, replayed request IDs or exposure hashes, mutated intent/hash/invoice/amount fields, insufficient directional liquidity, and per-payment/daily/in-flight cap breaches. Hold-invoice settlement also proves `sha256(preimage) == paymentHash`. Macaroons are injected only inside isolated read-only processes and are never accepted from an application request; audits contain no macaroon, preimage, or invoice text. A coordinator Ed25519 signature prevents the application from forging both the request and its matching intent. The regtest campaign proves exact payment, role separation, pinned TLS, and restart-safe replay rejection. [`LIGHTNING_ADAPTER.md`](LIGHTNING_ADAPTER.md) specifies the remaining permission, rotation, revocation, ambiguous-response, and force-close gates.
 
 ### TS-H08 — Partial-fill hash reuse
 
-**Status:** Full-fill-only invoice policy and sealed cross-direction onchain payment-hash registry implemented; live LND decode/regtest integration remains a deployment gate
+**Status:** Full-fill-only invoice policy, sealed cross-direction onchain payment-hash registry, and exact live LND regtest decode implemented; standard-invoice and failure campaigns remain deployment gates
 
 A Lightning invoice is not a divisible onchain order. TreeSwap v1 now rejects partial and child intents rather than attempting to divide one invoice. `validateFullFillInvoice` accepts one exact, amount-bearing mainnet BOLT 11 invoice and rejects AMP, keysend, amountless invoices, BOLT 12, unsupported required features, duplicate singleton tags, and mismatched invoice kind. Basic MPP is allowed only as internal delivery of the single exact invoice total, never as separate TreeSwap fills. `TreeSwapPaymentHashRegistry` is configured with exactly the two reviewed direction contracts and irreversibly sealed; opening either direction consumes the hash globally, so the opposite escrow cannot reuse it. [`INVOICE_POLICY.md`](INVOICE_POLICY.md) defines the boundary. Live LND decoding and regtest integration remain required.
 
@@ -230,7 +230,7 @@ Anyone, including an unrelated mempool bot, may relay a valid preimage, but both
 
 **Status:** Full decoded BOLT 11 field validation and exact invoice-digest binding implemented; live LND decoder integration remains a deployment gate
 
-`validateFullFillInvoice` requires a successful BOLT 11 checksum/signature decode and validates the exact mainnet network, invoice digest, payment hash, whole-satoshi amount, payee, nonzero payment secret, expiry, final CLTV, required features, route-hint bound, singleton tags, and direction-specific hold/standard kind. Amountless, ambiguous, mutated, duplicate-tag, stale, and unsupported invoices fail closed. Both EIP-712 quote shapes bind `invoiceDigest` and `paymentHash`, and the Lightning adapter rechecks those fields before an RPC. The production decoder must be the isolated LND adapter and is still a regtest gate.
+`validateFullFillInvoice` requires a successful BOLT 11 checksum/signature decode and validates the exact mainnet network, invoice digest, payment hash, whole-satoshi amount, payee, nonzero payment secret, expiry, final CLTV, required features, route-hint bound, singleton tags, and direction-specific hold/standard kind. Amountless, ambiguous, mutated, duplicate-tag, stale, and unsupported invoices fail closed. Both EIP-712 quote shapes bind `invoiceDigest` and `paymentHash`, and the isolated Lightning adapter rechecks those fields with LND before an RPC. The exact hold-invoice path passes regtest; the standard-invoice and malformed-live-input matrix remains required.
 
 ### TS-M07 — Data and UI injection
 

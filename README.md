@@ -39,7 +39,7 @@ Email preferences are attached to the signed-in wallet account, never included i
 
 ## Security status
 
-This repository is not audited and the bridge is not ready for real funds. The design removes the shared public pool, public order book, and rewards from v1. Immutable escrows, deterministic timeout policy, signed quote selection, fail-closed risk gates, a pinned BIT mainnet-fork campaign, and a real two-node LND hold-invoice smoke are implemented. Authenticated independent-provider evidence, controlled reorg and Lightning fault campaigns, a live isolated adapter/coordinator, deployed multisigs, monitoring, and independent review remain release-blocking. Direct sends are ordinary wallet payments rather than bridge transactions, but they are irreversible and depend on the user's wallet, destination, token contract, and invoice validation.
+This repository is not audited and the bridge is not ready for real funds. The design removes the shared public pool, public order book, and rewards from v1. Immutable escrows, deterministic timeout policy, signed quote selection, fail-closed risk gates, a pinned BIT mainnet-fork campaign, and isolated invoice/payer LND adapters now pass local evidence. Authenticated independent-provider evidence, controlled reorg and Lightning fault campaigns, a durable coordinator, deployed multisigs, monitoring, and independent review remain release-blocking. Direct sends are ordinary wallet payments rather than bridge transactions, but they are irreversible and depend on the user's wallet, destination, token contract, and invoice validation.
 
 ## Local preview
 
@@ -64,7 +64,7 @@ MAINNET_RPC_URL=<secret> npm run test:fork
 ## Production work still required
 
 - Controlled EVM reorg/finality campaigns and two authenticated provider observations
-- Lightning hold-invoice coordinator
+- Durable Lightning coordinator and ambiguous-response reconciliation
 - Solver daemon and quote transport
 - Bridge-escrow wallet integration with exact intent authorization and explicit approval boundaries
 - Keep email delivery disabled; a later mail release requires ownership verification, unsubscribe, rate limits, auditing, and sender authentication

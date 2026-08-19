@@ -28,7 +28,7 @@ const transport = {
   peerCertificateFingerprint: policy.pinnedCertificateFingerprint,
   privateNetwork: true,
 };
-const service = { healthy: true, syncedToChain: true, capacityEpoch: 7, inFlightSats: 25_000n };
+const service = { healthy: true, syncedToChain: true, capacityEpoch: 7, inFlightSats: 25_000n, availableSats: 250_000n };
 const usage = { dailyValueSats: 100_000n, requestIds: [] };
 
 function credential(role, overrides = {}) {
@@ -118,6 +118,7 @@ test("enforces exact hash, amount, invoice, replay, and value caps", () => {
   assert.equal(authorize({ usage: { ...usage, requestIds: [request("/routerrpc.Router/SendPaymentV2").requestId] } }).allowed, false);
   assert.equal(authorize({ policy: { ...policy, maxPaymentSats: 49_999n } }).allowed, false);
   assert.equal(authorize({ usage: { ...usage, dailyValueSats: 475_000n } }).allowed, false);
+  assert.equal(authorize({ service: { ...service, availableSats: 49_999n } }).allowed, false);
 });
 
 test("settles a hold invoice only with the matching preimage", () => {
@@ -127,6 +128,19 @@ test("settles a hold invoice only with the matching preimage", () => {
     credential: credential("invoice"),
   });
   assert.equal(accepted.allowed, true);
+  assert.equal(accepted.nextDailyValueSats, usage.dailyValueSats);
+
+  const exitAtCaps = authorizeLightningRpc({
+    request: request(method, { preimage: PREIMAGE }),
+    credential: credential("invoice"),
+    transport,
+    intent,
+    service: { ...service, inFlightSats: 999_999n, availableSats: 0n },
+    usage: { ...usage, dailyValueSats: 999_999n },
+    policy: { ...policy, maxPaymentSats: 1n, maxDailyValueSats: 1n, maxInFlightSats: 1n },
+    now: NOW,
+  });
+  assert.equal(exitAtCaps.allowed, true);
 
   const rejected = authorize({
     request: request(method, { preimage: id("wrong") }),

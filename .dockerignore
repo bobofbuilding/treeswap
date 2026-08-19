@@ -1,0 +1,10 @@
+node_modules
+.git
+.github
+.next
+.vinext
+contracts/cache
+contracts/out
+infra/regtest/.state
+outputs
+work

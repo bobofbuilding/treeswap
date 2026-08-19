@@ -77,7 +77,8 @@ Stopping new quotes must not disable valid claim, refund, or solver withdrawal p
 - [x] Complementary user-funded exact escrow
 - [x] BIT mainnet-fork pause, implementation-slot, both-direction settlement, and balance-delta tests
 - [ ] Controlled EVM reorg before and after Lightning authorization
-- [ ] Lightning regtest adapter with hold invoices
+- [x] Isolated signed Lightning regtest adapters with hold-invoice create, accept, settle, payment, role isolation, and restart-safe replay rejection
+- [ ] Full Lightning failure injection and durable coordinator reconciliation
 - [x] Deterministic cross-clock timeout model and boundary tests
 - [ ] Reconciliation service and signed capacity heartbeats
 - [ ] Two independent solver deployments

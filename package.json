@@ -19,6 +19,7 @@
     "test:fork": "bash scripts/run-mainnet-fork.sh",
     "regtest:up": "bash infra/regtest/lab.sh up",
     "regtest:smoke": "bash infra/regtest/lab.sh smoke",
+    "regtest:adapter-smoke": "bash infra/regtest/lab.sh adapter-smoke",
     "regtest:status": "bash infra/regtest/lab.sh status",
     "regtest:down": "bash infra/regtest/lab.sh down"
   },

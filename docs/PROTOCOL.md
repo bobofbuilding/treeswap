@@ -174,7 +174,7 @@ Direct sends do not inherit solver quotes, reference-par pricing, bridge fee log
 
 1. Exercise the current signed, capped BIT inventory vault against the mainnet-fork BIT proxy, including pause and implementation-change scenarios.
 2. Repeat the locally complete complementary BIT → Lightning and cross-direction campaigns against the deployed BIT proxy on a controlled mainnet fork.
-3. Build the least-privilege Lightning regtest adapter and derive `lastSafeClaimAt` from validated BOLT 11 expiry, CLTV, Bitcoin height, and operating margins.
+3. Complete the least-privilege Lightning adapter fault matrix and derive `lastSafeClaimAt` from validated BOLT 11 expiry, CLTV, Bitcoin height, and operating margins.
 4. Test reorgs and boundary races across both chain clocks, including delayed blocks, congestion, restart, and force-close cases.
 5. Add BIT proxy monitoring, reconciliation, quote shutdown, and an incident runbook without blocking existing claims or refunds.
 6. Keep email delivery disabled; treat verification, delivery, unsubscribe, and abuse controls as a separately reviewed future release.

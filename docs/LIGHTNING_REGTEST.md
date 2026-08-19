@@ -1,6 +1,6 @@
 # Lightning regtest lab
 
-Status: reproducible two-node lab and hold-invoice smoke pass locally. Failure injection and adapter integration remain.
+Status: reproducible two-node lab, direct hold-invoice smoke, and isolated signed-adapter smoke pass locally. The full failure-injection matrix remains.
 
 The lab uses immutable multi-architecture image digests for:
 
@@ -15,19 +15,22 @@ The Docker network is internal and publishes no host ports. Runtime RPC and wall
 ```sh
 npm run regtest:up
 npm run regtest:smoke
+npm run regtest:adapter-smoke
 npm run regtest:status
 npm run regtest:down
 ```
 
 `regtest:up` initializes both wallets without printing their test seeds, mines spendable regtest funds, opens and confirms the private channel, and bakes separate credentials under distinct root-key IDs:
 
-- observer: exact read-only info, channel, decode, and lookup RPCs;
-- invoice: exact hold-invoice create, lookup, subscribe, settle, and cancel RPCs; and
-- payer: exact decode, send-payment, and track-payment RPCs.
+- observer: exact read-only node, channel, pending-channel, and balance RPCs;
+- invoice: minimum node/channel health reads plus exact hold-invoice create, v2 lookup, settle, and cancel RPCs; and
+- payer: minimum node/channel health reads plus exact decode, send-payment, and track-payment RPCs.
 
-The bootstrap proves the invoice credential cannot call `GetInfo` and the payer credential cannot create an invoice.
+The bootstrap proves the invoice credential cannot read wallet balance and the payer credential cannot create an invoice.
 
 `regtest:smoke` creates a fresh preimage and 10,000-sat hold invoice on Bob, decodes and pays it from Alice, waits for `ACCEPTED`, settles only with the matching preimage, and requires `SUCCEEDED`. Its temporary payment result is mode-restricted and deleted after validation.
+
+`regtest:adapter-smoke` performs that lifecycle exclusively through the internal invoice and payer adapter processes. A local coordinator key signs exact 30-second authorizations; only its public key enters the adapter credential volumes. Each adapter verifies its pinned LND certificate, private-network hostname, role, signature, invoice, amount, hash, capacity epoch, live sync, active-channel liquidity, caps, and replay journal. After success, the campaign restarts the payer adapter and proves the exact request remains rejected, then proves the invoice adapter cannot execute a payer authorization.
 
 ## Remaining campaigns
 
@@ -35,7 +38,6 @@ The bootstrap proves the invoice credential cannot call `GetInfo` and the payer 
 - Hold invoice cancel, expiry, wrong preimage, late settle, replay, restart while accepted, and HTLC cutoff.
 - Delayed and fast blocks, force close, channel offline, unsynced node, stale capacity epoch, and exhausted liquidity.
 - TLS pin change, credential timeout, root-key revocation, negative URI matrix, and stateless initialization.
-- Integration of the repository policy with a real adapter process; no application or browser receives a macaroon.
 - Secret-free evidence export with binary/config hashes and exact test timestamps.
 
 This lab is local evidence, not permission to fund testnet or mainnet.
