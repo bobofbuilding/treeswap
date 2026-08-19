@@ -1,6 +1,6 @@
 # Production readiness
 
-Status: Gate 0 is complete. Gates 1 and 2 are in progress. No funded testnet or mainnet gate is complete.
+Status: Gate 0 is complete. Gates 1, 2, and 3 are in progress. No funded testnet or mainnet gate is complete.
 
 “Production” means a capped mainnet bridge operated against published limits after testnet evidence and independent review. It does not mean public pooled liquidity, yield, or unlimited permissionless exposure.
 
@@ -60,7 +60,7 @@ The command refuses to overwrite an existing file and never records the RPC URL.
 - [x] Prove a payer authorization is rejected by the invoice process and representative forbidden macaroon RPCs fail.
 - [ ] Prove the complete forbidden-RPC matrix and credential timeouts.
 - [ ] Test standard invoices and hold invoices through create, accept, settle, cancel, expire, late-settle, and replay paths. Create/accept/settle and restart-safe replay now pass.
-- [ ] Inject delayed and fast Bitcoin blocks, LND restart, lost responses, idempotent retry, force close, unsynced state, TLS pin change, credential rotation, and credential revocation.
+- [ ] Inject delayed and fast Bitcoin blocks, LND restart, lost responses, idempotent retry, force close, unsynced state, TLS pin change, credential rotation, and credential revocation. A real lost-success-response payment now recovers through read-only tracking with dispatch count one.
 - [ ] Prove that the computed Lightning cutoff always precedes the EVM refund boundary by the published margin.
 - [ ] Produce a secret-free evidence bundle containing versions, configuration hashes, test results, and timestamps—never macaroons, invoices, or preimages.
 
@@ -68,12 +68,21 @@ The current adapter boundary, live lab, and remaining fault matrix are documente
 
 ## Gate 3 — build the durable automatic coordinator
 
-- [ ] Persist intent nonce, payment hash, quote receipt, selected set, capacity epoch, reservation, Lightning action, and terminal state atomically.
+- [x] Persist intent nonce, payment hash, quote receipt, selected set, capacity epoch, reservation, Lightning action, and mutually exclusive terminal state through atomic transitions.
 - [ ] Make every value-moving action idempotent and recoverable after a process crash or ambiguous response.
+  - [x] Lightning actions use a durable one-dispatch outbox; process restart, transport loss, replay conflict, and malformed success enter `UNKNOWN` and block retries.
+  - [x] A live regtest payment recovers from a deliberately lost success response through a fresh read-only tracking request with dispatch count one.
+  - [ ] Apply the same durable outbox, receipt reconciliation, and reorg handling to solver EVM transactions.
 - [ ] Run at least two independent RFQ relays plus direct solver endpoints; a relay may deliver but never rewrite or select a quote.
 - [ ] Operate a solver daemon that quotes, reserves, waits for finality, performs the exact Lightning action, relays the preimage, reconciles, and halts on any mismatch.
 - [ ] Keep browser, web server, relay, coordinator, and Lightning credentials in separate trust domains.
+  - [x] Repository containers separate the coordinator signing key/database from the adapters' public key and role macaroons; the public web database contains neither.
+  - [ ] Reproduce that boundary with deployed service identities, networks, secret scopes, and independent backups.
 - [ ] Add structured metrics and alerts without logging invoices, preimages, wallet links, email, or unrestricted addresses.
+  - [x] The store exposes aggregate state counters and a secret-free event view; the live campaign proves the raw invoice is not persisted.
+  - [ ] Deploy alert routing and prove it closes only new exposure.
+
+The coordinator state, crash semantics, live evidence, runtime qualification risk, and remaining work are documented in [Durable coordinator boundary](./COORDINATOR.md).
 
 ## Gate 4 — permissionless solver testnet
 

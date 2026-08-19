@@ -32,11 +32,13 @@ Before every RPC, `authorizeLightningRpc` independently requires:
 
 Hold-invoice creation uses the all-zero digest only before an invoice exists. The adapter returns the SHA-256 digest of the exact generated BOLT 11 string, and every later decode, pay, lookup, settle, or cancel authorization binds that digest. Payment dispatch decodes the invoice again and checks the exact hash, whole-satoshi and millisatoshi values, expiry margin, and final CLTV. Settlement additionally requires an accepted exact-value HTLC outside the configured block-safety margin and the matching preimage.
 
-The audit record contains hashes, integer amount, method, decision, and reason codes. It excludes macaroons, preimages, and complete invoice text. An append-only journal is synced before dispatch; request IDs and exposure payment hashes cannot be reused. A lost response is recorded as `unknown` and is never automatically resent. Read-only tracking is the recovery path still to be connected to the durable coordinator.
+The audit record contains hashes, integer amount, method, decision, and reason codes. It excludes macaroons, preimages, and complete invoice text. An append-only journal is synced before dispatch; request IDs and exposure payment hashes cannot be reused. A lost response is recorded as `unknown` and is never automatically resent. The durable coordinator now recovers payer actions through a fresh signed `TrackPaymentV2` snapshot and invoice actions through `LookupInvoiceV2`; only a method-compatible exact terminal observation clears `UNKNOWN`.
 
 ## Regtest evidence
 
 `npm run regtest:adapter-smoke` proves a signed 10,000-sat hold invoice can be created on Bob, paid from Alice, observed as `ACCEPTED`, settled with the matching preimage, and completed as `SUCCEEDED`. It then restarts the payer adapter and proves the same signed request remains rejected by the durable journal. The invoice adapter also rejects a correctly signed payer action, and the underlying macaroons reject representative non-role RPCs.
+
+`npm run regtest:coordinator-smoke` pays a real 10,000-sat standard invoice, deliberately loses the successful response, reopens the coordinator database in `UNKNOWN`, and recovers success through read-only tracking without a second dispatch. See [Durable coordinator boundary](./COORDINATOR.md).
 
 ## Rotation and incident response
 
@@ -44,4 +46,4 @@ Bake each role from a dedicated root key, record issuance and expiry, rotate bef
 
 ## Deployment gate
 
-Before testnet funding, prove the complete permission matrix with `ListPermissions`/`CheckMacaroonPermissions`; add cancel, expiry, late-settle, standard-invoice, ambiguous-response reconciliation, fee-limit, amount-limit, exhausted-liquidity, delayed/fast-block, force-close, TLS-pin, rotation, and root-key revocation campaigns; connect read-only reconciliation to the durable coordinator; and independently review the implementation and evidence.
+Before testnet funding, prove the complete permission matrix with `ListPermissions`/`CheckMacaroonPermissions`; add cancel, expiry, late-settle, fee-limit, amount-limit, exhausted-liquidity, delayed/fast-block, force-close, TLS-pin, rotation, and root-key revocation campaigns; add invoice-side ambiguous-response cases; and independently review the implementation and evidence.

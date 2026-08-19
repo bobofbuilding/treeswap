@@ -28,7 +28,7 @@ Reviewed surfaces:
 | TS-H04 | Integer units, rounding, overflow, dust, and conservation implemented | None |
 | TS-H05 | BIT-only signed capped fee accounting implemented | Pin deployed collector and caps |
 | TS-H06 | Public pool/shares/yield/rewards/partial fills disabled | Live solver reconciliation and failure drills |
-| TS-H07 | Least-privilege isolated regtest adapters, signed actions, durable replay journal, and secret-free audit implemented | Complete permission matrix, rotation, reconciliation, and failure drills |
+| TS-H07 | Least-privilege isolated regtest adapters, signed actions, durable replay journal, lost-response coordinator recovery, and secret-free audit implemented | Complete permission matrix, rotation, invoice-side reconciliation, and failure drills |
 | TS-H08 | Full-fill invoice policy and sealed shared hash registry implemented | Live LND decoding and regtest integration |
 | TS-H09 | Finality authorization and dispatch-time revalidation implemented | Controlled fork reorg campaign |
 | TS-M01 | Maker rewards excluded from v1 | None |
@@ -176,11 +176,11 @@ TreeSwap v1 does not accept public LP funds or create a pooled claim. `V1_CAPABI
 
 ### TS-H07 — Lightning adapter or macaroon compromise
 
-**Status:** Exact RPC allowlists, credential/TLS isolation, signed intent-bound authorization, directional value caps, durable replay journal, and secret-free audits pass isolated regtest; full permission, rotation, ambiguous-response, and failure drills remain deployment gates
+**Status:** Exact RPC allowlists, credential/TLS isolation, signed intent-bound authorization, directional value caps, durable replay journal, coordinator lost-response recovery, and secret-free audits pass isolated regtest; full permission, rotation, invoice-side ambiguous-response, and failure drills remain deployment gates
 
 An adapter that can create, settle, cancel, and inspect every invoice is a hot-wallet control plane. A broad LND admin macaroon can also affect the node beyond TreeSwap.
 
-`lib/lightning-adapter-policy.mjs` defines separate exact-URI invoice, payer, and observer roles. It rejects broad or cross-role RPCs, browser-exposed/default/stale/revoked credentials, TLS or private-network failures, node-health and capacity-epoch changes, replayed request IDs or exposure hashes, mutated intent/hash/invoice/amount fields, insufficient directional liquidity, and per-payment/daily/in-flight cap breaches. Hold-invoice settlement also proves `sha256(preimage) == paymentHash`. Macaroons are injected only inside isolated read-only processes and are never accepted from an application request; audits contain no macaroon, preimage, or invoice text. A coordinator Ed25519 signature prevents the application from forging both the request and its matching intent. The regtest campaign proves exact payment, role separation, pinned TLS, and restart-safe replay rejection. [`LIGHTNING_ADAPTER.md`](LIGHTNING_ADAPTER.md) specifies the remaining permission, rotation, revocation, ambiguous-response, and force-close gates.
+`lib/lightning-adapter-policy.mjs` defines separate exact-URI invoice, payer, and observer roles. It rejects broad or cross-role RPCs, browser-exposed/default/stale/revoked credentials, TLS or private-network failures, node-health and capacity-epoch changes, replayed request IDs or exposure hashes, mutated intent/hash/invoice/amount fields, insufficient directional liquidity, and per-payment/daily/in-flight cap breaches. Hold-invoice settlement also proves `sha256(preimage) == paymentHash`. Macaroons are injected only inside isolated read-only processes and are never accepted from an application request; audits contain no macaroon, preimage, or invoice text. A coordinator Ed25519 signature prevents the application from forging both the request and its matching intent. Regtest proves exact payment, role separation, pinned TLS, restart-safe replay rejection, and recovery of a deliberately lost successful payment response through a fresh read-only tracking authorization with dispatch count one. [`LIGHTNING_ADAPTER.md`](LIGHTNING_ADAPTER.md) and [`COORDINATOR.md`](COORDINATOR.md) specify the remaining gates.
 
 ### TS-H08 — Partial-fill hash reuse
 

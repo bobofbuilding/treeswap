@@ -43,3 +43,15 @@ jobs:
       - run: node --check infra/lightning-adapter/server.mjs
       - run: node --check infra/lightning-adapter/client.mjs
       - run: docker build --file infra/lightning-adapter/Dockerfile --tag treeswap/lightning-adapter:${{ github.sha }} .
+
+  coordinator:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 22.13.0
+      - run: node --check lib/coordinator-store.mjs
+      - run: node --check lib/coordinator-action-runner.mjs
+      - run: node --check infra/coordinator/smoke.mjs
+      - run: docker build --file infra/coordinator/Dockerfile --tag treeswap/coordinator:${{ github.sha }} .

@@ -111,11 +111,16 @@ const server = createServer(async (request, response) => {
     send(response, 200, await runtime.execute(await readJsonBody(request)));
   } catch (error) {
     const message = error instanceof Error ? error.message : "adapter request failed";
+    const errorCode = error instanceof LndRestError && Number(error.grpcCode) === 5 ? "NOT_FOUND" : "REJECTED";
     const status = /already used/.test(message) ? 409
       : error instanceof LndRestError && error.ambiguous ? 503
         : error instanceof LndRestError ? 502
           : 403;
-    send(response, status, { error: message.slice(0, 240), ambiguous: error instanceof LndRestError && error.ambiguous });
+    send(response, status, {
+      error: message.slice(0, 240),
+      errorCode,
+      ambiguous: error instanceof LndRestError && error.ambiguous,
+    });
   }
 });
 

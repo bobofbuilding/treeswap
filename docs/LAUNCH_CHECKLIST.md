@@ -24,6 +24,8 @@ No repository checkbox can substitute for deployed evidence. A gate becomes comp
 - [ ] Deploy the gate, registry, and both escrows from the reviewed source commit. Seal the registry to exactly those escrows and prove every constructor immutable and runtime code hash.
 - [ ] Deploy distinct 2-of-3-or-stronger controller, guardian, and fee-recipient contract wallets; record owners, thresholds, hardware-key custody, and recovery contacts.
 - [ ] Operate atomic persistent RFQ quotas, cancellation sequence, capacity epochs, solver reliability, idempotent Lightning requests, and one-shot payment authorization.
+  - [x] Atomic settlement/action store, one-dispatch Lightning outbox, restart recovery, and live lost-response reconciliation implemented.
+  - [ ] Connect atomic RFQ/admission counters, the EVM outbox, complete solver daemon, deployed backups, and alerts.
 - [ ] Operate continuous BIT proxy/pause/finality/price monitoring and BIT/Lightning/in-flight reconciliation. Prove alerts close the gate and never block exits.
 - [ ] Run at least two independent solvers with tiny testnet limits and no public deposits or rewards.
 - [ ] Deploy durable SIWE/session storage only if accounts are enabled; otherwise disable the account feature. Keep email delivery disabled.

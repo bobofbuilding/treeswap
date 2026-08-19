@@ -236,6 +236,7 @@ start_adapters() {
   set +a
   compose run --rm export-alice-payer-credential >/dev/null
   compose run --rm export-bob-invoice-credential >/dev/null
+  compose run --rm export-coordinator-private-key >/dev/null
   compose --profile adapter up -d --build payer-adapter invoice-adapter
   for adapter in payer-adapter invoice-adapter; do
     wait_for_adapter_healthy "$adapter"
@@ -449,6 +450,23 @@ smoke_adapter_hold_invoice() {
   echo "Adapter smoke passed: signed intent, pinned TLS, role isolation, accepted hold, settle, 10000-sat payment, and restart-safe replay rejection."
 }
 
+smoke_coordinator_reconciliation() {
+  ensure_runtime_env
+  start_lab >/dev/null
+  local invoice payment_request payment_hash input
+  invoice=$(compose exec -T bob lncli --network=regtest addinvoice \
+    --amt=10000 --memo=treeswap-coordinator-regtest --expiry=600 --private)
+  payment_request=$(jq -er '.payment_request' <<<"$invoice")
+  payment_hash=$(compose exec -T alice lncli --network=regtest \
+    --macaroonpath=/root/.lnd/treeswap/payer.macaroon decodepayreq "$payment_request" |
+    jq -er '.payment_hash | ascii_downcase | "0x" + .')
+  input=$(jq -cn --arg amountSats 10000 --arg paymentRequest "$payment_request" \
+    '{amountSats:$amountSats,paymentRequest:$paymentRequest}')
+  COORDINATOR_SMOKE_PAYMENT_HASH="$payment_hash" compose --profile adapter --profile tools run --rm -T \
+    coordinator-smoke <<<"$input"
+  unset invoice payment_request input
+}
+
 status_lab() {
   ensure_runtime_env
   compose ps
@@ -460,7 +478,7 @@ status_lab() {
 
 stop_lab() {
   ensure_runtime_env
-  compose --profile adapter down
+  compose --profile adapter --profile tools down
 }
 
 destroy_lab() {
@@ -473,11 +491,12 @@ case "${1:-}" in
   up) start_lab ;;
   smoke) smoke_hold_invoice ;;
   adapter-smoke) smoke_adapter_hold_invoice ;;
+  coordinator-smoke) smoke_coordinator_reconciliation ;;
   status) status_lab ;;
   down) stop_lab ;;
   destroy) destroy_lab ;;
   *)
-    echo "Usage: $0 {up|smoke|adapter-smoke|status|down|destroy}" >&2
+    echo "Usage: $0 {up|smoke|adapter-smoke|coordinator-smoke|status|down|destroy}" >&2
     exit 2
     ;;
 esac

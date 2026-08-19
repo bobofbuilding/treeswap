@@ -1,6 +1,6 @@
 # Lightning regtest lab
 
-Status: reproducible two-node lab, direct hold-invoice smoke, and isolated signed-adapter smoke pass locally. The full failure-injection matrix remains.
+Status: reproducible two-node lab, direct hold-invoice smoke, isolated signed-adapter smoke, and durable lost-response coordinator recovery pass locally. The full failure-injection matrix remains.
 
 The lab uses immutable multi-architecture image digests for:
 
@@ -16,6 +16,7 @@ The Docker network is internal and publishes no host ports. Runtime RPC and wall
 npm run regtest:up
 npm run regtest:smoke
 npm run regtest:adapter-smoke
+npm run regtest:coordinator-smoke
 npm run regtest:status
 npm run regtest:down
 ```
@@ -32,9 +33,11 @@ The bootstrap proves the invoice credential cannot read wallet balance and the p
 
 `regtest:adapter-smoke` performs that lifecycle exclusively through the internal invoice and payer adapter processes. A local coordinator key signs exact 30-second authorizations; only its public key enters the adapter credential volumes. Each adapter verifies its pinned LND certificate, private-network hostname, role, signature, invoice, amount, hash, capacity epoch, live sync, active-channel liquidity, caps, and replay journal. After success, the campaign restarts the payer adapter and proves the exact request remains rejected, then proves the invoice adapter cannot execute a payer authorization.
 
+`regtest:coordinator-smoke` uses a separate coordinator container and credential volume. It has the Ed25519 private key and its own SQLite volume but no LND macaroon. The payer adapter has only the public key and its payer macaroon. The campaign pays a real standard 10,000-sat invoice, discards the successful response, reopens the durable store in `UNKNOWN`, and uses a new signed read-only tracking request to recover `SUCCEEDED`. It requires one dispatch and proves the raw invoice was not written to the coordinator database. The reservation input is simulated, so this is not EVM finality evidence.
+
 ## Remaining campaigns
 
-- Standard invoice success, route failure, fee cap, duplicate request, and ambiguous-response reconciliation.
+- Standard-invoice route failure, fee cap, and duplicate request. Success plus lost-response reconciliation now pass.
 - Hold invoice cancel, expiry, wrong preimage, late settle, replay, restart while accepted, and HTLC cutoff.
 - Delayed and fast blocks, force close, channel offline, unsynced node, stale capacity epoch, and exhausted liquidity.
 - TLS pin change, credential timeout, root-key revocation, negative URI matrix, and stateless initialization.

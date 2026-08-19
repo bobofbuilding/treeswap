@@ -159,6 +159,21 @@ services:
       - ${COORDINATOR_PUBLIC_KEY_PATH}:/coordinator-public.pem:ro
     networks: [regtest]
 
+  export-coordinator-private-key:
+    image: node:22.22.0-alpine@sha256:e4bf2a82ad0a4037d28035ae71529873c069b13eb0455466ae0bc13363826e34
+    profiles: [tools]
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - >-
+        cp -f /coordinator-private.pem /target/coordinator-private.pem;
+        chown 1000:1000 /target/coordinator-private.pem;
+        chmod 0400 /target/coordinator-private.pem
+    volumes:
+      - ${COORDINATOR_PRIVATE_KEY_PATH}:/coordinator-private.pem:ro
+      - coordinator-credentials:/target
+    networks: [regtest]
+
   payer-adapter:
     <<: *adapter-service
     depends_on:
@@ -203,6 +218,27 @@ services:
       - bob-invoice-credentials:/run/treeswap/credentials:ro
       - invoice-adapter-state:/data
 
+  coordinator-smoke:
+    build:
+      context: ../..
+      dockerfile: infra/coordinator/Dockerfile
+    image: treeswap/coordinator:regtest
+    profiles: [tools]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m
+    environment:
+      COORDINATOR_PRIVATE_KEY_PATH: /run/treeswap/credentials/coordinator-private.pem
+      COORDINATOR_DATABASE_PATH: /data/coordinator.sqlite
+      COORDINATOR_KEY_ID: regtest-coordinator-1
+      PAYMENT_HASH: ${COORDINATOR_SMOKE_PAYMENT_HASH:-pending}
+    volumes:
+      - coordinator-credentials:/run/treeswap/credentials:ro
+      - coordinator-state:/data
+    networks: [regtest]
+
 networks:
   regtest:
     internal: true
@@ -215,3 +251,5 @@ volumes:
   bob-invoice-credentials:
   payer-adapter-state:
   invoice-adapter-state:
+  coordinator-credentials:
+  coordinator-state:
