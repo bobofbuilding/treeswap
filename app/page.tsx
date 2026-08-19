@@ -158,8 +158,8 @@ export default function Home() {
       <section className="trade-stage" id="trade">
         <header className="trade-intro">
           <p className="eyebrow">BITCOIN LIGHTNING ↔ BIT</p>
-          <h1>{view === "send" ? "Pay from your wallet." : view === "pool" ? "Earn by solving swaps." : "Swap through an invoice."}</h1>
-          <p>{view === "send" ? "Pay a Lightning invoice or send BIT directly." : view === "pool" ? "Prepare Lightning and BIT inventory for competitive quotes." : "Paste an invoice to pay with BIT, or create one to receive BIT."}</p>
+          <h1>{view === "send" ? "Pay from your wallet." : view === "pool" ? "Run a solver." : "Swap through an invoice."}</h1>
+          <p>{view === "send" ? "Pay a Lightning invoice or send BIT directly." : view === "pool" ? "Estimate solver-owned inventory. No public deposits or promised yield." : "Paste an invoice to pay with BIT, or create one to receive BIT."}</p>
         </header>
 
         <section
@@ -378,9 +378,13 @@ export default function Home() {
             </div>
           ) : (
             <div className="pool-view">
+              <div className="solver-boundary" role="note">
+                <strong>Solver operators only</strong>
+                <span>There is no shared LP pool. This is a planning calculator—not a deposit, LP share, APY, or yield product.</span>
+              </div>
               <div className="pool-heading">
-                <div><span>Solver inventory</span><h2>Fund both sides.</h2></div>
-                <span className="status-pill"><i /> Self-custodied</span>
+                <div><span>Solver-owned inventory</span><h2>Plan both sides.</h2></div>
+                <span className="status-pill"><i /> No LP deposits</span>
               </div>
 
               <div className="amount-panel pool-input">
@@ -421,7 +425,8 @@ export default function Home() {
                   <div><span>Usable Lightning</span><strong>{numberFormat(usableLightning)} sats</strong></div>
                   <div><span>Usable BIT</span><strong>{numberFormat(usableBit, 2)} BIT</strong></div>
                   <div><span>Suggested first-fill cap</span><strong>{numberFormat(fillCap)} sats</strong></div>
-                  <div><span>Pool structure</span><strong>No shared LP pool</strong></div>
+                  <div><span>Ownership</span><strong>One solver only</strong></div>
+                  <div><span>LP shares / APY</span><strong>None</strong></div>
                 </div>
               </details>
 
@@ -431,14 +436,14 @@ export default function Home() {
                 disabled={lightningReserve <= 0 || bitReserve <= 0}
                 onClick={() => setPoolReceipt(true)}
               >
-                Review funding plan <span>→</span>
+                Preview solver capacity <span>→</span>
               </button>
               {poolReceipt && (
                 <div className="funding-receipt" role="status">
                   <span><b>1</b> Verify node identity and Lightning limit</span>
                   <span><b>2</b> Deposit BIT into your solver vault account</span>
                   <span><b>3</b> Activate quotes after both balances reconcile</span>
-                  <small>Plan created. No wallet or node action occurred.</small>
+                  <small>Preview only. No deposit, wallet, or node action occurred.</small>
                 </div>
               )}
             </div>

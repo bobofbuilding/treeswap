@@ -1,6 +1,8 @@
 # TreeSwap liquidity funding
 
-Status: implementation plan. No live funding endpoint or audited contract deployment exists.
+Status: admitted-solver implementation plan. No public funding endpoint or audited contract deployment exists.
+
+The product's Earn tab is a calculator, not a deposit surface. It creates no LP share, yield claim, pooled ownership, or wallet transaction. `V1_CAPABILITIES.webSolverFunding` remains disabled.
 
 ## Chosen model
 

@@ -134,9 +134,11 @@ TreeSwap charges the protocol fee only in BIT wei in both directions and never a
 
 ### TS-H06 — Liquidity-pool insolvency and adverse selection
 
+**Status:** Public LP deposits, shares, yield claims, rewards, partial fills, and web funding disabled in v1; solver reconciliation and fault campaigns remain deployment gates
+
 A Lightning pool is not an ERC-20 vault: channel balances, in-flight HTLCs, force closes, reserves, and node-key compromise affect solvency. Public LPs can also be selected against when par is stale.
 
-TreeSwap v1 does not accept public LP funds. It uses solver-owned Lightning balances and solver-segregated BIT vault accounts, reserves accepted liabilities, reconciles balances, and caps exposure. A separate custody, insolvency, and legal review is required before any third-party deposit product.
+TreeSwap v1 does not accept public LP funds or create a pooled claim. `V1_CAPABILITIES` keeps public deposits, LP shares, promised yield, rewards, partial fills, permissionless solver admission, and web funding disabled. The Earn tab is retained as a calculator for admitted solver operators and now states that it performs no deposit and offers no LP share, APY, or yield. Each vault deposit remains owned and withdrawable only by that solver, while accepted liabilities reduce its own available balance. Lightning stays on that solver's node under a separate budget. Live reconciliation, force-close, restart, and insolvency tests remain required. Any third-party deposit or yield product requires a new contract, custody/economic/legal review, and explicit capability change; it is not an extension of this v1 vault.
 
 ### TS-H07 — Lightning adapter or macaroon compromise
 

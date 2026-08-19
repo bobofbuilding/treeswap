@@ -78,6 +78,8 @@ test("keeps swaps non-production and direct sends explicitly wallet-authorized",
   assert.match(page, /checksum, signature, expiry/);
   assert.match(page, /short-lived, all-in prices/i);
   assert.match(page, /No shared LP pool/i);
+  assert.match(page, /No LP deposits/i);
+  assert.match(page, /No deposit, wallet, or node action occurred/i);
   assert.match(page, /aria-label="TreeSwap tools"[\s\S]*?>\s*Swap\s*<\/button>[\s\S]*?>\s*Pay\s*<\/button>[\s\S]*?>\s*Earn\s*<\/button>/);
   assert.match(page, /aria-label="Swap direction"/);
   assert.match(page, /<InvoiceQr/);
