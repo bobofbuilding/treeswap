@@ -142,9 +142,11 @@ TreeSwap v1 does not accept public LP funds or create a pooled claim. `V1_CAPABI
 
 ### TS-H07 — Lightning adapter or macaroon compromise
 
+**Status:** Exact RPC allowlists, credential/TLS isolation, intent-bound authorization, value caps, rotation checks, and secret-free audits implemented as repository policy; regtest adapter and credential drills remain deployment gates
+
 An adapter that can create, settle, cancel, and inspect every invoice is a hot-wallet control plane. A broad LND admin macaroon can also affect the node beyond TreeSwap.
 
-Use least-privilege baked macaroons, separate invoice and payment services, isolate node credentials, enforce amount/hash policies outside the adapter, maintain an allowlist of RPC methods, rotate and revoke credentials, and run withdrawal/settlement limits independent of the node.
+`lib/lightning-adapter-policy.mjs` defines separate exact-URI invoice, payer, and observer roles. It rejects broad or cross-role RPCs, browser-exposed/default/stale/revoked credentials, TLS or private-network failures, node-health and capacity-epoch changes, replayed request IDs, mutated intent/hash/invoice/amount fields, and per-payment/daily/in-flight cap breaches. Hold-invoice settlement also proves `sha256(preimage) == paymentHash`. Macaroons are injected only inside the isolated adapter and are never accepted from an application request; audits contain no macaroon, preimage, or invoice text. [`LIGHTNING_ADAPTER.md`](LIGHTNING_ADAPTER.md) specifies dedicated root-key IDs, exact URI baking, rotation, revocation, and incident response. A live regtest process, permission-negative tests, and rotation/restart/force-close drills remain required before funding.
 
 ### TS-H08 — Partial-fill hash reuse
 
@@ -292,6 +294,7 @@ A production escrow test suite should prove at least:
 - [BOLT 2 HTLC peer protocol](https://github.com/lightning/bolts/blob/master/02-peer-protocol.md)
 - [BOLT 4 final-hop validation](https://github.com/lightning/bolts/blob/master/04-onion-routing.md)
 - [LND AddHoldInvoice API](https://lightning.engineering/api-docs/api/lnd/invoices/add-hold-invoice/)
+- [LND macaroon permissions and revocation](https://docs.lightning.engineering/lightning-network-tools/lnd/macaroons)
 - [EIP-712 typed structured data](https://eips.ethereum.org/EIPS/eip-712)
 - [ERC-1967 proxy storage](https://eips.ethereum.org/EIPS/eip-1967)
 - [0x firm RFQ lifecycle](https://docs.0x.org/docs/introduction/quickstart/swap-tokens-with-0x-swap-api)
