@@ -194,7 +194,9 @@ Anyone, including an unrelated mempool bot, may relay a valid preimage, but both
 
 ### TS-M06 — Invoice substitution and malformed invoice data
 
-Decode and validate the BOLT 11 signature, exact payment hash, exact amount, payee, network, payment secret, expiry, final CLTV, and supported features. Bind an invoice digest to the accepted quote. Reject ambiguous or amountless invoices.
+**Status:** Full decoded BOLT 11 field validation and exact invoice-digest binding implemented; live LND decoder integration remains a deployment gate
+
+`validateFullFillInvoice` requires a successful BOLT 11 checksum/signature decode and validates the exact mainnet network, invoice digest, payment hash, whole-satoshi amount, payee, nonzero payment secret, expiry, final CLTV, required features, route-hint bound, singleton tags, and direction-specific hold/standard kind. Amountless, ambiguous, mutated, duplicate-tag, stale, and unsupported invoices fail closed. Both EIP-712 quote shapes bind `invoiceDigest` and `paymentHash`, and the Lightning adapter rechecks those fields before an RPC. The production decoder must be the isolated LND adapter and is still a regtest gate.
 
 ### TS-M07 — Data and UI injection
 
