@@ -188,7 +188,9 @@ Every solver offer binds the exact Lightning output, `maxRoutingFeeSats`, short 
 
 ### TS-M05 — Mempool preimage disclosure
 
-Once a preimage appears in a public Ethereum transaction, bots can copy it. Beneficiary binding makes copying harmless, but only if all state transitions pay the pre-bound address. Consider private transaction submission for reliability, not as the primary security control.
+**Status:** Resolved by immutable beneficiary binding in both escrow directions
+
+Anyone, including an unrelated mempool bot, may relay a valid preimage, but both escrow directions transfer only to the beneficiary fixed in the signed quote before Lightning authorization. Tests claim from an attacker address and prove that it receives zero while the bound beneficiary receives the exact payout. The beneficiary cannot be mutated after signing, and the shared registry prevents reuse in the other direction. Private transaction submission may improve inclusion reliability but is neither trusted nor required for theft resistance.
 
 ### TS-M06 — Invoice substitution and malformed invoice data
 
