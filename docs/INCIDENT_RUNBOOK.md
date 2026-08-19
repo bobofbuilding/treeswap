@@ -4,7 +4,7 @@ Status: response sequence defined; live roles, alert integrations, and drills re
 
 ## First principle
 
-Protect exits before availability. Halt only new RFQs, firm quotes, reservations, and opens. Never deploy a response that disables a valid claim, refund, or withdrawal. A BIT-level pause may temporarily prevent token movement, but TreeSwap must preserve the escrow state and retry path after unpause.
+Protect exits before availability. Halt only new RFQs, firm quotes, reservations, and opens. Never deploy a response that disables a valid claim, refund, or withdrawal. The recorded BIT v1 pause leaves ERC-20 transfers enabled; treat any future implementation that blocks them as a degraded exit, preserve escrow state, and keep the retry path available after recovery.
 
 ## Automatic halt conditions
 

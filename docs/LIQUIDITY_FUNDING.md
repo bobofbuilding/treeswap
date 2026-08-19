@@ -75,7 +75,8 @@ Stopping new quotes must not disable valid claim, refund, or solver withdrawal p
 - [x] Deterministic unit and stateful accounting tests
 - [x] Full dual-signed selected-quote EIP-712 verification
 - [x] Complementary user-funded exact escrow
-- [ ] BIT mainnet-fork pause, upgrade, and balance-delta tests
+- [x] BIT mainnet-fork pause, implementation-slot, both-direction settlement, and balance-delta tests
+- [ ] Controlled EVM reorg before and after Lightning authorization
 - [ ] Lightning regtest adapter with hold invoices
 - [x] Deterministic cross-clock timeout model and boundary tests
 - [ ] Reconciliation service and signed capacity heartbeats

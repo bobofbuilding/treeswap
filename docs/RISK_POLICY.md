@@ -41,7 +41,7 @@ It also pins both proxy and implementation bytecode hashes. An `Upgraded` event 
 
 An automated halt is immediate. Resuming requires all inputs to be healthy, a written implementation and market review, the immutable delay, and the configured multisig change process. No single web server or solver process may silently update the pinned implementation or loosen the reference band. The controller and guardian addresses, delay, maximum open duration, and escrow gate address are immutable deployment parameters.
 
-If BIT itself is paused, its token logic may temporarily make claims, refunds, or withdrawals revert even though TreeSwap does not block them. Do not authorize a Lightning action while paused. After an unpause, the same exits remain callable. An implementation change never resumes automatically: review the new code and storage behavior, update the pinned deployment manifest through a new reviewed deployment if required, and only then stage a new risk digest.
+The recorded BIT v1 implementation applies its pause to mint and redeem, not ordinary ERC-20 transfers. The pinned mainnet-fork campaign therefore proves that a BIT pause closes new TreeSwap exposure while existing claims, refunds, and withdrawals remain transferable. TreeSwap must still model a transfer-blocking pause as a future-upgrade fault: if BIT's implementation changes that behavior, escrow state rolls back intact and the exit must be retried after recovery. Never authorize a Lightning action while paused. An implementation change never resumes automatically: review the new code and storage behavior, update the pinned deployment manifest through a new reviewed deployment if required, and only then stage a new risk digest.
 
 ## Deployment gate
 

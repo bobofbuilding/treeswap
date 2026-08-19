@@ -29,6 +29,7 @@ The prototype assumes a business par value of **1 BIT = 100 sats**. This value i
 - Optional Lightning account linking in [`docs/LIGHTNING_ACCOUNTS.md`](docs/LIGHTNING_ACCOUNTS.md)
 - Immutable version transitions in [`docs/UPGRADES.md`](docs/UPGRADES.md)
 - Pinned two-node Lightning lab in [`docs/LIGHTNING_REGTEST.md`](docs/LIGHTNING_REGTEST.md)
+- Reproducible BIT source, provider-comparison, and live-token fork evidence in [`docs/BIT_MAINNET_EVIDENCE.md`](docs/BIT_MAINNET_EVIDENCE.md)
 
 The bridge interface remains a swap simulation: it does not lock BIT, pay a swap invoice, create a payable solver invoice, or publish quotes. The separate **Send** tool can move real funds only after a second review and explicit confirmation in the user's wallet. BIT sends call the token's standard `transfer` function directly and never request an allowance. Lightning sends pass an exact, amount-bearing mainnet BOLT 11 invoice to an available WebLN provider, with a `lightning:` wallet link as the fallback. These direct payments bypass TreeSwap solvers, liquidity, fees, and swap protections.
 
@@ -38,7 +39,7 @@ Email preferences are attached to the signed-in wallet account, never included i
 
 ## Security status
 
-This repository is not audited and the bridge is not ready for real funds. The design removes the shared public pool, public order book, and rewards from v1. Immutable escrows, deterministic timeout policy, signed quote selection, and fail-closed risk gates are implemented, but the production BIT attestation, mainnet-fork/regtest campaigns, live Lightning adapter, deployed multisigs, monitoring, and independent review remain release-blocking. Direct sends are ordinary wallet payments rather than bridge transactions, but they are irreversible and depend on the user's wallet, destination, token contract, and invoice validation.
+This repository is not audited and the bridge is not ready for real funds. The design removes the shared public pool, public order book, and rewards from v1. Immutable escrows, deterministic timeout policy, signed quote selection, fail-closed risk gates, a pinned BIT mainnet-fork campaign, and a real two-node LND hold-invoice smoke are implemented. Authenticated independent-provider evidence, controlled reorg and Lightning fault campaigns, a live isolated adapter/coordinator, deployed multisigs, monitoring, and independent review remain release-blocking. Direct sends are ordinary wallet payments rather than bridge transactions, but they are irreversible and depend on the user's wallet, destination, token contract, and invoice validation.
 
 ## Local preview
 
@@ -54,10 +55,15 @@ Run the BIT vault campaign separately:
 forge test
 ```
 
+Run the pinned live-BIT fork campaign with a secret archive endpoint:
+
+```bash
+MAINNET_RPC_URL=<secret> npm run test:fork
+```
+
 ## Production work still required
 
-- Mainnet-fork testing of BIT upgrades, pauses, and balance behavior
-- Mainnet-fork and cross-chain integration campaigns for both direction-separated escrows
+- Controlled EVM reorg/finality campaigns and two authenticated provider observations
 - Lightning hold-invoice coordinator
 - Solver daemon and quote transport
 - Bridge-escrow wallet integration with exact intent authorization and explicit approval boundaries

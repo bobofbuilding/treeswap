@@ -19,7 +19,7 @@ The Foundry campaign exercises both immutable BIT escrow directions, the sealed 
 13. Reference-price, per-swap, per-epoch, and fee caps cannot be exceeded.
 14. Failed or expired swaps collect no fee; claims apply only the exact signed BIT fee.
 15. Gate halts block new exposure without blocking withdrawals, claims, or refunds.
-16. A token pause after open leaves state locked and recoverable after unpause.
+16. A hostile future token implementation that pauses transfers after open leaves state locked and recoverable after unpause; the recorded BIT v1 pause itself leaves transfers enabled.
 17. Fee-on-transfer behavior fails the exact sender/recipient balance-delta checks and cannot advance state.
 18. Registry allowlisting is exactly two contracts and irreversible after sealing.
 

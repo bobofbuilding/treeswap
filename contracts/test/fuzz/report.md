@@ -24,4 +24,4 @@ The campaign now covers:
 
 The local Node suite separately covers RFQ suppression/substitution boundaries, invoice mutation, adapter authority, finality revalidation, SIWE mutations and session scope, privacy projection, notification exclusion, direct-send mutation, integer rounding, and quote/admission abuse.
 
-Remaining external campaigns are unchanged: mainnet-fork BIT proxy upgrade/pause/reorg scenarios, Bitcoin regtest timing and LND failure drills, live credential rotation, and independent contract/Lightning review.
+The pinned mainnet-fork BIT snapshot, pause/unpause, implementation-slot, exact transfer-delta, both-direction settlement, refund, and cross-direction hash-reuse campaigns now pass. Remaining external campaigns are EVM finality/reorg fault injection, Bitcoin regtest timing and LND failure drills, live credential rotation, and independent contract/Lightning review.

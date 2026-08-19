@@ -146,11 +146,11 @@ V1 has no public order reservation. `TreeSwapBitVault` now requires the user and
 
 ### TS-H03 — BIT proxy upgrade or pause
 
-**Status:** Fail-closed, time-bounded onchain open gate and runtime token checks implemented; live monitor, pinned mainnet values, multisig roles, and fork upgrade/pause tests remain deployment gates
+**Status:** Fail-closed, time-bounded onchain open gate, runtime token checks, and pinned mainnet-fork campaigns implemented; live monitor, reviewed manifest, multisig roles, and controlled reorg evidence remain deployment gates
 
-BIT is an ERC-1967 proxy and its current implementation is pausable and upgradeable. An implementation change could alter transfers, decimals, or trust assumptions; a pause can prevent escrow movement.
+BIT is an ERC-1967 proxy and its current implementation is pausable and upgradeable. The recorded v1 pause blocks mint and redeem but not ordinary ERC-20 transfers. An implementation change could alter transfers, decimals, pause behavior, or trust assumptions.
 
-The risk monitor pins the ERC-1967 implementation slot, proxy and implementation code hashes, decimals, pause state, finality, and executable-price inputs. `buildBitRiskAttestation` commits the exact healthy snapshot. The immutable `TreeSwapOpenGate` deploys closed, requires a delayed controller action to open, expires automatically, and lets a separate guardian halt immediately. Both escrows require that live gate and independently fail closed unless `decimals() == 18` and `paused() == false` at the opening transition. Exact sender and recipient balance deltas are enforced on token movement. The gate is never consulted by withdrawal, claim, or refund, so it cannot trap existing positions; BIT's own pause may still delay transfers until the token is unpaused. Production requires live pinned values, continuous monitoring, multisig-controlled roles, alerting, and mainnet-fork upgrade/pause tests before funding.
+The risk monitor pins the ERC-1967 implementation slot, proxy and implementation code hashes, decimals, pause state, finality, and executable-price inputs. `buildBitRiskAttestation` commits the exact healthy snapshot. The immutable `TreeSwapOpenGate` deploys closed, requires a delayed controller action to open, expires automatically, and lets a separate guardian halt immediately. Both escrows require that live gate and independently fail closed unless `decimals() == 18` and `paused() == false` at the opening transition. Exact sender and recipient balance deltas are enforced on token movement. The gate is never consulted by withdrawal, claim, or refund, so it cannot trap existing positions. A mainnet fork proves exits remain transferable under the recorded v1 pause; the local hostile-token suite separately proves state rolls back if a future implementation blocks transfers. Production still requires live pinned values, continuous monitoring, multisig-controlled roles, alerting, and independent review before funding.
 
 ### TS-H04 — Rounding and unit mismatch
 
@@ -319,7 +319,7 @@ A production escrow test suite should prove at least:
 - Cross-origin session mutation, expired session use, and notification access from a different wallet. **Complete in policy tests; durable store integration remains a deployment gate.**
 - Unverified-email delivery, preference bypass, unsubscribe failure, and wallet/email deletion. **Delivery is hard-disabled; authorization and 24-hour deletion policy tests complete.**
 - BIT recipient or amount mutation between review and submission, account/network changes, paused or upgraded token behavior, failed transfer simulation, malformed invoices, WebLN rejection, and `lightning:` fallback falsely reported as paid. **Client policy and rendered-boundary tests complete; a compromised wallet remains outside the web client's trust boundary.**
-- BIT pause and implementation upgrade while escrows are open. **Local pause/recovery and exact-delta tests complete; proxy upgrade remains a mainnet-fork gate.**
+- BIT pause and implementation upgrade while escrows are open. **Local hostile-token recovery plus pinned mainnet-fork pause, implementation-slot, and exact-delta tests complete; finality fault injection and independent review remain external gates.**
 - Fee rounding across dust, maximum values, and thousands of small fills. **Complete.**
 - Solver quote spam, cancellation, capacity exhaustion, and deliberate last-look failure. **Repository policy complete; persistent distributed enforcement remains a deployment gate.**
 - Relay suppression, quote substitution, and stale fallback selection. **Substitution and fallback tests complete; suppression is disclosed and global-best is not claimed.**

@@ -6,10 +6,12 @@ import { resolve } from "node:path";
 import { createJsonRpcClient, observeBitDeployment } from "../lib/bit-deployment-observer.mjs";
 
 function parseArguments(values) {
-  const parsed = { out: null };
+  const parsed = { out: null, block: null };
   for (let index = 0; index < values.length; index += 1) {
     if (values[index] === "--out" && values[index + 1]) {
       parsed.out = resolve(values[++index]);
+    } else if (values[index] === "--block" && values[index + 1]) {
+      parsed.block = values[++index];
     } else if (values[index] === "--help") {
       parsed.help = true;
     } else {
@@ -30,7 +32,7 @@ function currentCommit() {
 async function main() {
   const options = parseArguments(process.argv.slice(2));
   if (options.help) {
-    process.stdout.write("Usage: ETHEREUM_RPC_URL=<secret> npm run observe:bit -- [--out evidence.json]\n");
+    process.stdout.write("Usage: ETHEREUM_RPC_URL=<secret> npm run observe:bit -- [--block number] [--out evidence.json]\n");
     return;
   }
 
@@ -40,6 +42,7 @@ async function main() {
     rpcCall: createJsonRpcClient(rpcUrl),
     providerLabel: process.env.ETHEREUM_RPC_PROVIDER_LABEL ?? "operator-supplied",
     sourceCommit: currentCommit(),
+    targetBlockNumber: options.block,
   });
   const serialized = `${JSON.stringify(observation, null, 2)}\n`;
 

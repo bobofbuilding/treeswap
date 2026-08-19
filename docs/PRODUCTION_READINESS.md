@@ -17,10 +17,13 @@ Status: Gate 0 is complete. Gate 1 tooling has started. No funded testnet or mai
 - [x] Implement a credential-safe observer for one finalized BIT snapshot.
 - [x] Pin the EIP-1967 implementation slot, proxy and implementation code hashes, pause state, decimals, symbol, finalized block hash, and source commit in its output.
 - [x] Fail on the wrong chain, missing bytecode, an empty implementation slot, malformed finality, or unsafe token state.
+- [x] Pin one exact block behind each provider's finalized head, bind every state read to its canonical block hash with EIP-1898, and compare all safety-critical fields.
+- [x] Reproduce the proxy from an exact Sourcify match and the implementation from Etherscan standard JSON, including the implementation-address immutables.
+- [x] Fork the recorded block and pass live BIT snapshot, transfer-delta, both-direction open/claim/refund, pause/unpause, implementation-slot, and cross-direction hash-reuse campaigns.
 - [ ] Capture the observation through two independently operated Ethereum RPC providers and compare every field.
-- [ ] Match both runtime bytecodes to independently reviewed source and compiler settings.
+- [ ] Obtain independent review of both matched source bundles, compiler inputs, roles, storage, and upgrade behavior.
 - [ ] Promote the reviewed observation into a signed deployment manifest; never promote an `unreviewed-live-observation` automatically.
-- [ ] Fork the recorded block and run proxy upgrade, pause/unpause, transfer-delta, finality rollback, escrow-open, claim, refund, and cross-direction hash-reuse campaigns.
+- [ ] Run controlled execution-client reorgs before and after escrow authorization/claim and attach finality-rollback evidence.
 
 Run the observer only with an authenticated mainnet endpoint:
 
@@ -29,6 +32,19 @@ ETHEREUM_RPC_URL=<secret> \
 ETHEREUM_RPC_PROVIDER_LABEL=<provider> \
 npm run observe:bit -- --out bit-observation.json
 ```
+
+For the second provider, pass the first observation's `finalizedBlock.number` so both providers inspect the identical state:
+
+```sh
+ETHEREUM_RPC_URL=<second-secret> \
+ETHEREUM_RPC_PROVIDER_LABEL=<independent-provider> \
+npm run observe:bit -- --block <first-finalized-block> --out bit-observation-2.json
+npm run compare:bit -- bit-observation.json bit-observation-2.json --out bit-comparison.json
+```
+
+Only an eligible comparison from independent operators may enter review. The comparison remains explicitly unreviewed until source verification and reviewer signatures are attached.
+
+The current reproducibility and fork evidence is recorded in [BIT mainnet boundary evidence](./BIT_MAINNET_EVIDENCE.md).
 
 The command refuses to overwrite an existing file and never records the RPC URL.
 

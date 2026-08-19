@@ -8,6 +8,10 @@ interface Vm {
     function addr(uint256 privateKey) external returns (address);
     function sign(uint256 privateKey, bytes32 digest) external returns (uint8 v, bytes32 r, bytes32 s);
     function chainId(uint256 newChainId) external;
+    function createSelectFork(string calldata rpcUrl, uint256 blockNumber) external returns (uint256 forkId);
+    function envOr(string calldata name, string calldata defaultValue) external returns (string memory value);
+    function load(address target, bytes32 slot) external view returns (bytes32 data);
+    function store(address target, bytes32 slot, bytes32 value) external;
 }
 
 abstract contract TestBase {
@@ -18,6 +22,10 @@ abstract contract TestBase {
     }
 
     function assertEq(address actual, address expected, string memory reason) internal pure {
+        require(actual == expected, reason);
+    }
+
+    function assertEq(bytes32 actual, bytes32 expected, string memory reason) internal pure {
         require(actual == expected, reason);
     }
 
