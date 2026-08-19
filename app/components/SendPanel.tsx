@@ -1,17 +1,21 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { BrowserProvider, Contract, formatUnits, getAddress } from "ethers";
 import { hasMainnetBolt11Shape, parseBolt11AmountSats, sanitizeAmount } from "@/lib/product.mjs";
 import { sanitizeDisplayText } from "@/lib/untrusted-text.mjs";
 import {
   BIT_DECIMALS,
+  BIT_MAINNET_CONTRACT,
+  classifyWebLnPaymentResponse,
+  createBitSendAuthorization,
   prepareBitSend,
   prepareLightningSend,
+  validateBitSendDispatch,
+  validateBitTransactionResponse,
 } from "@/lib/send.mjs";
 import type { EthereumProvider } from "@/types/wallets";
 
-const BIT_CONTRACT = "0x57A447E4d5e18A9423408C365963A73F08B9d18C";
 const BIT_ABI = [
   "function balanceOf(address account) view returns (uint256)",
   "function decimals() view returns (uint8)",
@@ -29,6 +33,7 @@ type BitReview = {
   amountWei: bigint;
   displayAmount: string;
   balance: string;
+  authorization: ReturnType<typeof createBitSendAuthorization>;
 };
 
 type LightningReview = {
@@ -50,7 +55,7 @@ type Receipt =
   | {
       kind: "lightning";
       amountSats: number;
-      status: "paid" | "opened";
+      status: "reported" | "unknown" | "opened";
     };
 
 function shortAddress(address: string) {
@@ -91,6 +96,7 @@ export default function SendPanel() {
   const [sending, setSending] = useState(false);
   const [error, setError] = useState("");
   const [receipt, setReceipt] = useState<Receipt | null>(null);
+  const dispatching = useRef(false);
 
   const invoiceAmount = hasMainnetBolt11Shape(invoice) ? parseBolt11AmountSats(invoice) : null;
 
@@ -127,10 +133,10 @@ export default function SendPanel() {
       const sender = getAddress(await signer.getAddress());
       if (sender === prepared.recipient) throw new Error("The sender and recipient are the same address.");
 
-      const code = await provider.getCode(BIT_CONTRACT);
+      const code = await provider.getCode(BIT_MAINNET_CONTRACT);
       if (code === "0x") throw new Error("The BIT contract was not found on Ethereum mainnet.");
 
-      const token = new Contract(BIT_CONTRACT, BIT_ABI, provider);
+      const token = new Contract(BIT_MAINNET_CONTRACT, BIT_ABI, provider);
       const [symbol, decimals, paused, balance] = await Promise.all([
         token.symbol() as Promise<string>,
         token.decimals() as Promise<bigint>,
@@ -143,6 +149,14 @@ export default function SendPanel() {
       }
       if (paused) throw new Error("BIT transfers are currently paused by the token contract.");
       if (balance < prepared.amountWei) throw new Error("This wallet does not have enough BIT.");
+      const authorization = createBitSendAuthorization({
+        chainId: 1,
+        tokenAddress: BIT_MAINNET_CONTRACT,
+        contractCode: code,
+        sender,
+        recipient: prepared.recipient,
+        amountWei: prepared.amountWei,
+      });
 
       setReview({
         kind: "bit",
@@ -151,6 +165,7 @@ export default function SendPanel() {
         amountWei: prepared.amountWei,
         displayAmount: prepared.displayAmount,
         balance: formatUnits(balance, BIT_DECIMALS),
+        authorization,
       });
     } catch (cause) {
       setError(explainWalletError(cause, "The BIT transfer could not be prepared."));
@@ -170,8 +185,11 @@ export default function SendPanel() {
   }
 
   async function sendBit(checked: BitReview) {
+    if (dispatching.current) return;
+    dispatching.current = true;
     setSending(true);
     setError("");
+    let submissionRequested = false;
 
     try {
       const wallet = window.ethereum;
@@ -185,8 +203,9 @@ export default function SendPanel() {
         throw new Error("The active wallet changed. Close this review and check the transfer again.");
       }
 
-      const token = new Contract(BIT_CONTRACT, BIT_ABI, signer);
-      const [symbol, decimals, paused, balance] = await Promise.all([
+      const token = new Contract(BIT_MAINNET_CONTRACT, BIT_ABI, signer);
+      const [contractCode, symbol, decimals, paused, balance] = await Promise.all([
+        provider.getCode(BIT_MAINNET_CONTRACT),
         token.symbol() as Promise<string>,
         token.decimals() as Promise<bigint>,
         token.paused() as Promise<boolean>,
@@ -196,13 +215,39 @@ export default function SendPanel() {
         throw new Error("BIT contract safety checks changed. The transfer was stopped.");
       }
       if (balance < checked.amountWei) throw new Error("The BIT balance changed and is now too low.");
+      const dispatch = validateBitSendDispatch({
+        authorization: checked.authorization,
+        snapshot: {
+          chainId: 1,
+          tokenAddress: BIT_MAINNET_CONTRACT,
+          contractCode,
+          sender: currentSender,
+          symbol,
+          decimals,
+          paused,
+          balance,
+        },
+      });
+      if (!dispatch.valid) throw new Error(`BIT dispatch stopped: ${dispatch.reasons.join("; ")}`);
 
       const transfers = token.getFunction("transfer");
+      const expectedData = token.interface.encodeFunctionData("transfer", [checked.recipient, checked.amountWei]);
       const simulation = (await transfers.staticCall(checked.recipient, checked.amountWei)) as boolean;
       if (simulation !== true) throw new Error("The BIT contract did not accept the transfer simulation.");
       await transfers.estimateGas(checked.recipient, checked.amountWei);
 
+      const [finalChainId, finalAccounts] = await Promise.all([
+        wallet.request({ method: "eth_chainId" }) as Promise<string>,
+        wallet.request({ method: "eth_accounts" }) as Promise<string[]>,
+      ]);
+      if (finalChainId !== "0x1" || getAddress(finalAccounts[0]) !== checked.sender) {
+        throw new Error("The wallet account or network changed before submission.");
+      }
+
+      submissionRequested = true;
       const transaction = await transfers(checked.recipient, checked.amountWei);
+      const responseCheck = validateBitTransactionResponse(transaction, checked.authorization, expectedData);
+      if (!responseCheck.valid) throw new Error(`Wallet response could not be trusted: ${responseCheck.reasons.join("; ")}`);
       const transactionHash = transaction.hash as string;
       setReceipt({
         kind: "bit",
@@ -213,25 +258,36 @@ export default function SendPanel() {
       });
       setReview(null);
 
-      void transaction.wait(1).then(() => {
-        setReceipt((current) =>
-          current?.kind === "bit" && current.transactionHash === transactionHash
-            ? { ...current, confirmed: true }
-            : current,
-        );
+      void transaction.wait(1).then((mined) => {
+        if (mined?.status === 1 && mined.hash === transactionHash) {
+          setReceipt((current) =>
+            current?.kind === "bit" && current.transactionHash === transactionHash
+              ? { ...current, confirmed: true }
+              : current,
+          );
+        }
       }).catch(() => {
         // The explorer link remains the source of truth if confirmation tracking is interrupted.
       });
     } catch (cause) {
-      setError(explainWalletError(cause, "The BIT transfer was not submitted."));
+      const code = typeof cause === "object" && cause !== null ? (cause as { code?: number }).code : undefined;
+      setError(
+        submissionRequested && code !== 4001
+          ? "Submission status is unknown. Check your wallet or Etherscan before trying again."
+          : explainWalletError(cause, "The BIT transfer was not submitted."),
+      );
     } finally {
+      dispatching.current = false;
       setSending(false);
     }
   }
 
   async function sendLightning(checked: LightningReview) {
+    if (dispatching.current) return;
+    dispatching.current = true;
     setSending(true);
     setError("");
+    let paymentRequested = false;
 
     try {
       const provider = window.webln;
@@ -243,12 +299,23 @@ export default function SendPanel() {
       }
 
       await provider.enable();
-      await provider.sendPayment(checked.invoice);
-      setReceipt({ kind: "lightning", amountSats: checked.amountSats, status: "paid" });
+      const frozen = prepareLightningSend(checked.invoice);
+      if (frozen.invoice !== checked.invoice || frozen.amountSats !== checked.amountSats) {
+        throw new Error("The frozen Lightning invoice changed.");
+      }
+      paymentRequested = true;
+      const payment = await provider.sendPayment(checked.invoice);
+      const result = classifyWebLnPaymentResponse(payment);
+      setReceipt({ kind: "lightning", amountSats: checked.amountSats, status: result.status });
       setReview(null);
     } catch (cause) {
-      setError(explainWalletError(cause, "The Lightning payment was not completed."));
+      setError(
+        paymentRequested
+          ? "Payment status is unknown. Check your Lightning wallet before trying again."
+          : explainWalletError(cause, "The Lightning payment was not started."),
+      );
     } finally {
+      dispatching.current = false;
       setSending(false);
     }
   }
@@ -357,9 +424,11 @@ export default function SendPanel() {
 
       {receipt?.kind === "lightning" && (
         <div className="send-receipt" role="status">
-          <span className={receipt.status === "paid" ? "confirmed" : "pending"}>{receipt.status === "paid" ? "Wallet reports paid" : "Wallet opened"}</span>
+          <span className={receipt.status === "reported" ? "confirmed" : "pending"}>
+            {receipt.status === "reported" ? "Wallet reports paid" : receipt.status === "opened" ? "Wallet opened" : "Status unknown"}
+          </span>
           <strong>{receipt.amountSats.toLocaleString("en-US")} sat invoice</strong>
-          <small>{receipt.status === "paid" ? "The payment preimage was not stored by TreeSwap." : "Return after paying; opening an invoice is not proof of payment."}</small>
+          <small>{receipt.status === "reported" ? "TreeSwap discarded the returned preimage; verify payment history in your wallet." : receipt.status === "opened" ? "Return after paying; opening an invoice is not proof of payment." : "Check your wallet before retrying to avoid a duplicate payment."}</small>
         </div>
       )}
 
@@ -379,7 +448,7 @@ export default function SendPanel() {
                   <div><span>To</span><strong className="full-review-address">{review.recipient}</strong></div>
                   <div><span>Available</span><strong>{review.balance} BIT</strong></div>
                   <div><span>Network</span><strong>Ethereum mainnet</strong></div>
-                  <div><span>Token</span><strong title={BIT_CONTRACT}>{shortAddress(BIT_CONTRACT)}</strong></div>
+                  <div><span>Token</span><strong title={BIT_MAINNET_CONTRACT}>{shortAddress(BIT_MAINNET_CONTRACT)}</strong></div>
                 </div>
                 <div className="checkout-warning send-live-warning">This transfer is irreversible. Check the full recipient address in your wallet. Network gas is paid in ETH.</div>
                 {error && <p className="send-error" role="alert">{error}</p>}

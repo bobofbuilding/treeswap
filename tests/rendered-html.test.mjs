@@ -113,7 +113,9 @@ test("keeps swaps non-production and direct sends explicitly wallet-authorized",
   assert.match(sendPanel, /getFunction\("transfer"\)/);
   assert.doesNotMatch(sendPanel, /approve\(/);
   assert.match(sendPanel, /provider\.sendPayment\(checked\.invoice\)/);
-  assert.match(sendPanel, /The payment preimage was not stored/i);
+  assert.match(sendPanel, /discarded the returned preimage/i);
+  assert.match(sendPanel, /Check your Lightning wallet before trying again/i);
+  assert.match(sendPanel, /validateBitTransactionResponse/);
   assert.match(sendLogic, /parseUnits/);
   assert.match(sendLogic, /zero address cannot receive BIT/i);
   assert.match(authVerify, /sameSite: "strict"/);
