@@ -63,6 +63,8 @@ jobs:
       - run: node --check lib/qualification-evidence.mjs
       - run: node --check infra/coordinator/smoke.mjs
       - run: node --check infra/coordinator/invoice-smoke.mjs
+      - run: node --check infra/evm/escrow-reorg-smoke.mjs
       - run: node --check scripts/run-local-qualification.mjs
       - run: npm run test:coordinator-evm
+      - run: npm run test:escrow-reorg
       - run: docker build --file infra/coordinator/Dockerfile --tag treeswap/coordinator:${{ github.sha }} .

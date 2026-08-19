@@ -35,7 +35,7 @@ Explorer verification and local reproduction prove source-to-bytecode identity, 
 5. an incompatible implementation-slot change fails closed before new exposure; and
 6. the sealed registry prevents one payment hash from being used across both directions.
 
-The observer separately rejects an unfinalized target, a changing finalized hash, non-canonical state reads, a finalized-state regression, and provider disagreement. A controlled execution-client reorg before and after escrow authorization remains required for release evidence.
+The observer separately rejects an unfinalized target, a changing finalized hash, non-canonical state reads, a finalized-state regression, and provider disagreement. The [controlled EVM reorg campaign](./EVM_REORG_EVIDENCE.md) now proves both actual TreeSwap escrows fail closed across local block replacement before authorization, after authorization, and after claim. That campaign uses mock BIT; repetition against the pinned live BIT fork and public-testnet finality remains required for release evidence.
 
 ## Promotion rule
 

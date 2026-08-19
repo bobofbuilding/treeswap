@@ -1,6 +1,6 @@
 # TreeSwap settlement clock policy
 
-Status: deterministic policy and boundary-test harness plus a live rapid-block LND cutoff campaign. Combined EVM/Lightning fork or testnet timing evidence remains required before funding.
+Status: deterministic policy and boundary-test harness, local two-direction execution-client reorg evidence, and a live rapid-block LND cutoff campaign. Combined EVM/Lightning fork or testnet timing evidence remains required before funding.
 
 ## One ordered schedule
 
@@ -43,4 +43,4 @@ Authorization is not a reusable boolean. `issueLightningAuthorization` creates a
 
 ## Required integration campaign
 
-The pure policy tests cover ordering, exact cutoffs, unsafe invoice expiry, insufficient final CLTV, held-HTLC boundaries, Ethereum finality, reorg detection, and fail-closed service state. Regtest now proves rapid blocks reach the 24-block reserve while the HTLC remains accepted, the adapter rejects the correct preimage at the exact boundary, cancellation releases the payer, and no replacement payment is issued. Combined Ethereum/Lightning timing, controlled reorgs, prolonged block delay, mempool congestion, and force-close remain testnet launch gates.
+The pure policy tests cover ordering, exact cutoffs, unsafe invoice expiry, insufficient final CLTV, held-HTLC boundaries, Ethereum finality, reorg detection, and fail-closed service state. A local Anvil campaign replaces blocks containing both direction-specific escrows before authorization, after authorization, and after claim; dispatch is denied on a changed canonical hash and an orphaned claim rolls back to `LOCKED` before one canonical beneficiary-bound recovery claim. Regtest proves rapid blocks reach the 24-block reserve while the HTLC remains accepted, the adapter rejects the correct preimage at the exact boundary, cancellation releases the payer, and no replacement payment is issued. Combined Ethereum/Lightning timing, live BIT-fork/public-testnet finality, prolonged block delay, mempool congestion, and force-close remain testnet launch gates.

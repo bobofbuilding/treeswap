@@ -24,6 +24,8 @@ Status: Gate 0 is complete. Gates 1, 2, and 3 are in progress. No funded testnet
 - [ ] Obtain independent review of both matched source bundles, compiler inputs, roles, storage, and upgrade behavior.
 - [ ] Promote the reviewed observation into a signed deployment manifest; never promote an `unreviewed-live-observation` automatically.
 - [ ] Run controlled execution-client reorgs before and after escrow authorization/claim and attach finality-rollback evidence.
+  - [x] A deterministic Anvil campaign replaces actual vault and user-escrow blocks before authorization, after authorization, and after claim; both directions reject stale authorization/dispatch, roll back orphaned receipts and balances, and recover through one canonical beneficiary-bound claim.
+  - [ ] Reproduce against the pinned live BIT fork and public testnet with genuine finalized/unfinalized transitions and independent-provider observations.
 
 Run the observer only with an authenticated mainnet endpoint:
 
@@ -44,7 +46,7 @@ npm run compare:bit -- bit-observation.json bit-observation-2.json --out bit-com
 
 Only an eligible comparison from independent operators may enter review. The comparison remains explicitly unreviewed until source verification and reviewer signatures are attached.
 
-The current reproducibility and fork evidence is recorded in [BIT mainnet boundary evidence](./BIT_MAINNET_EVIDENCE.md).
+The current reproducibility and fork evidence is recorded in [BIT mainnet boundary evidence](./BIT_MAINNET_EVIDENCE.md) and [controlled EVM reorg evidence](./EVM_REORG_EVIDENCE.md).
 
 The command refuses to overwrite an existing file and never records the RPC URL.
 

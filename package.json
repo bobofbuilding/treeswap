@@ -18,6 +18,7 @@
     "compare:bit": "node scripts/compare-bit-observations.mjs",
     "test:fork": "bash scripts/run-mainnet-fork.sh",
     "test:coordinator-evm": "bash scripts/run-coordinator-evm-smoke.sh",
+    "test:escrow-reorg": "bash scripts/run-escrow-reorg-smoke.sh",
     "regtest:up": "bash infra/regtest/lab.sh up",
     "regtest:smoke": "bash infra/regtest/lab.sh smoke",
     "regtest:adapter-smoke": "bash infra/regtest/lab.sh adapter-smoke",

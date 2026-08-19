@@ -18,6 +18,8 @@ No repository checkbox can substitute for deployed evidence. A gate becomes comp
   - [x] Credential-safe finalized-state observer and negative tests implemented.
   - [ ] Capture matching observations from two independent authenticated RPC providers, verify source/bytecode, and promote them through review.
 - [ ] Run the full escrow suite against a controlled Ethereum mainnet fork: proxy implementation change, pause/unpause while locked, reorg before and after open/claim, nonstandard transfer behavior, and finality rollback.
+  - [x] Both actual TreeSwap escrows pass local Anvil block replacement before authorization, after authorization, and after claim, including canonical recovery with one beneficiary payout.
+  - [ ] Repeat the reorg campaign against the pinned live BIT fork and public testnet; attach genuine finality-transition and independent-provider evidence.
 - [ ] Run an isolated Bitcoin/LND regtest adapter: standard and hold invoices, exact BOLT 11 decode, delayed/fast blocks, accepted-HTLC cutoff, timeout, LND restart, force close, credential rotation/revocation, and negative macaroon permissions.
   - [x] Reproducible two-node regtest, balanced private channel, isolated real adapter processes, distinct expiring exact-URI credentials, authorization-specific negative checks, root-key revocation, hold-invoice terminal faults, accepted-state LND restart, rapid-block 24-block cutoff, fee/amount/in-flight caps, channel-offline recovery, and TLS-pin mismatch implemented.
   - [x] Fail-closed secret-free local qualification generator binds a clean published commit, immutable images, configuration hashes, timestamps, and complete pass states without capturing command output.

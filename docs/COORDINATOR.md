@@ -1,6 +1,6 @@
 # Durable coordinator boundary
 
-Status: the atomic store, exact signed Lightning dispatcher, EVM claim outbox, restart recovery, payer- and invoice-side read-only reconciliation, aggregate metrics, live Lightning lost-response campaigns, and local execution-client claim/reorg campaign are implemented. The full solver daemon, production backup/restore drill, alert delivery, public-chain finality evidence, and independent review remain testnet gates.
+Status: the atomic store, exact signed Lightning dispatcher, EVM claim outbox, restart recovery, payer- and invoice-side read-only reconciliation, aggregate metrics, live Lightning lost-response campaigns, and local execution-client claim/reorg campaigns are implemented. Both actual direction-specific escrows now pass block replacement before authorization, after authorization, and after claim. The full solver daemon, production backup/restore drill, alert delivery, live BIT/public-chain finality evidence, and independent review remain testnet gates.
 
 ## Separate trust domain
 
