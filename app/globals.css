@@ -1431,6 +1431,124 @@ footer a:hover {
   overflow-wrap: anywhere;
 }
 
+.invoice-qr-card {
+  margin: 20px 0 10px;
+  display: grid;
+  justify-items: stretch;
+}
+
+.invoice-qr-heading {
+  margin-bottom: 9px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  color: #77837b;
+  font-size: 8px;
+  font-weight: 750;
+  text-transform: uppercase;
+}
+
+.invoice-qr-heading b {
+  border-radius: 999px;
+  padding: 5px 7px;
+  color: #745226;
+  background: #f8e8c6;
+  font-size: 7px;
+}
+
+.invoice-qr-frame {
+  width: 276px;
+  min-height: 276px;
+  margin: 0 auto;
+  border: 1px solid #d9ded8;
+  border-radius: 18px;
+  padding: 11px;
+  display: grid;
+  place-items: center;
+  background: white;
+  box-shadow: 0 10px 25px rgba(14, 47, 31, 0.08);
+}
+
+.invoice-qr-frame canvas {
+  width: 252px;
+  max-width: 100%;
+  height: auto;
+  display: block;
+}
+
+.invoice-qr-frame.error {
+  min-height: 150px;
+  color: #91493c;
+  background: #fff5f2;
+  text-align: center;
+}
+
+.invoice-qr-frame p {
+  max-width: 190px;
+  margin: 0;
+  font-size: 9px;
+  line-height: 1.5;
+}
+
+.invoice-qr-instruction {
+  margin: 8px 0 12px !important;
+  color: #69776e !important;
+  text-align: center;
+  font-size: 9px !important;
+  font-weight: 650;
+}
+
+.invoice-copy-box {
+  border: 1px solid #dce2da;
+  border-radius: 13px;
+  padding: 10px;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
+  background: #f4f7f1;
+}
+
+.invoice-copy-box > div {
+  min-width: 0;
+  display: grid;
+  gap: 5px;
+}
+
+.invoice-copy-box span {
+  color: #7b877f;
+  font-size: 7px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.invoice-copy-box code {
+  max-height: 42px;
+  overflow: auto;
+  color: #31523f;
+  font: 600 8px/1.4 var(--font-geist-mono), monospace;
+  overflow-wrap: anywhere;
+}
+
+.invoice-copy-box button {
+  min-width: 91px;
+  min-height: 37px;
+  border: 1px solid #b8cdb8;
+  border-radius: 10px;
+  padding: 0 10px;
+  color: var(--forest-700);
+  background: white;
+  font-size: 8px;
+  font-weight: 750;
+  cursor: pointer;
+}
+
+.invoice-copy-box button:hover {
+  border-color: var(--forest-700);
+  background: #eef6e9;
+}
+
 .checkout-rows {
   border: 1px solid #e1e5df;
   border-radius: 13px;
@@ -1888,6 +2006,19 @@ footer a:hover {
 
   .intent-modal {
     padding: 24px 18px;
+  }
+
+  .invoice-qr-frame {
+    width: min(100%, 276px);
+    min-height: 0;
+  }
+
+  .invoice-copy-box {
+    grid-template-columns: 1fr;
+  }
+
+  .invoice-copy-box button {
+    width: 100%;
   }
 
   .account-backdrop {

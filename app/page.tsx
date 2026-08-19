@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import InvoiceQr from "@/app/components/InvoiceQr";
 import SendPanel from "@/app/components/SendPanel";
 import WalletAccount from "@/app/components/WalletAccount";
 import {
@@ -503,10 +504,12 @@ export default function Home() {
 
             {!paymentStarted ? (
               <>
-                <div className="invoice-code-card">
-                  <span>{isPayInvoice ? "Invoice to be paid" : "Prototype invoice to pay"}</span>
-                  <code>{isPayInvoice ? normalizeBolt11(invoice) : generatedInvoice}</code>
-                </div>
+                <InvoiceQr
+                  key={isPayInvoice ? normalizeBolt11(invoice) : generatedInvoice}
+                  invoice={isPayInvoice ? normalizeBolt11(invoice) : generatedInvoice}
+                  label={isPayInvoice ? "Invoice to be paid" : "Invoice to pay"}
+                  prototype={!isPayInvoice}
+                />
                 <div className="checkout-rows">
                   <div><span>Selected solver</span><strong>{activeOffer.name}</strong></div>
                   <div><span>Invoice amount</span><strong>{numberFormat(isPayInvoice ? desiredOutput : displayInput)} sats</strong></div>

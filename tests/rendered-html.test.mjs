@@ -51,8 +51,9 @@ test("server-renders the TreeSwap prototype", async () => {
 });
 
 test("keeps swaps non-production and direct sends explicitly wallet-authorized", async () => {
-  const [page, sendPanel, sendLogic, account, authServer, authVerify, layout, manifest, readme, protocol, threatModel, vault, license] = await Promise.all([
+  const [page, invoiceQr, sendPanel, sendLogic, account, authServer, authVerify, layout, manifest, readme, protocol, threatModel, vault, license] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/components/InvoiceQr.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/components/SendPanel.tsx", import.meta.url), "utf8"),
     readFile(new URL("../lib/send.mjs", import.meta.url), "utf8"),
     readFile(new URL("../app/components/WalletAccount.tsx", import.meta.url), "utf8"),
@@ -73,6 +74,12 @@ test("keeps swaps non-production and direct sends explicitly wallet-authorized",
   assert.match(page, /checksum, signature, expiry/);
   assert.match(page, /short-lived, all-in prices/i);
   assert.match(page, /No shared LP pool/i);
+  assert.match(page, /<InvoiceQr/);
+  assert.match(invoiceQr, /QRCode\.toCanvas/);
+  assert.match(invoiceQr, /`lightning:\$\{invoice\}`/);
+  assert.match(invoiceQr, /navigator\.clipboard/);
+  assert.match(invoiceQr, /Copy invoice/);
+  assert.match(invoiceQr, /Complete BOLT 11 invoice/);
   assert.match(layout, /metadataBase/);
   assert.match(layout, /canonical/);
   assert.match(layout, /og\.png/);
