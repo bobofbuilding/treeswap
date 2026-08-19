@@ -38,10 +38,8 @@ contract TreeSwapMainnetForkTest is TestBase {
     address internal constant COLLECTOR = address(0xFEE);
     address internal constant BENEFICIARY = address(0xBEEF);
     uint256 internal constant FORK_BLOCK = 25_788_856;
-    bytes32 internal constant IMPLEMENTATION_SLOT =
-        0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc;
-    bytes32 internal constant PROXY_CODE_HASH =
-        0xf5648c6316e00873ef8427290251866b3675668407ecf526bf3f467578ff9adc;
+    bytes32 internal constant IMPLEMENTATION_SLOT = 0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc;
+    bytes32 internal constant PROXY_CODE_HASH = 0xf5648c6316e00873ef8427290251866b3675668407ecf526bf3f467578ff9adc;
     bytes32 internal constant IMPLEMENTATION_CODE_HASH =
         0x506816a3d5cf9e4f486659231f21540e9985d7fbc8438dbb385accd2e532b120;
 
@@ -94,9 +92,7 @@ contract TreeSwapMainnetForkTest is TestBase {
         assertEq(BIT_PROXY.codehash, PROXY_CODE_HASH, "proxy runtime changed");
         assertEq(BIT_IMPLEMENTATION.codehash, IMPLEMENTATION_CODE_HASH, "implementation runtime changed");
         bytes32 implementationWord = vm.load(BIT_PROXY, IMPLEMENTATION_SLOT);
-        assertEq(
-            address(uint160(uint256(implementationWord))), BIT_IMPLEMENTATION, "implementation slot changed"
-        );
+        assertEq(address(uint160(uint256(implementationWord))), BIT_IMPLEMENTATION, "implementation slot changed");
         assertEq(uint256(bit.decimals()), 18, "BIT decimals changed");
         assertTrue(keccak256(bytes(bit.symbol())) == keccak256("BIT"), "BIT symbol changed");
         assertTrue(!bit.paused(), "BIT unexpectedly paused");
@@ -156,8 +152,7 @@ contract TreeSwapMainnetForkTest is TestBase {
 
         _depositVault(1_000 ether);
         bytes32 preimage = keccak256("fork-pause");
-        TreeSwapBitVault.SelectedQuote memory locked =
-            _vaultQuote(sha256(abi.encodePacked(preimage)), 400 ether, 0);
+        TreeSwapBitVault.SelectedQuote memory locked = _vaultQuote(sha256(abi.encodePacked(preimage)), 400 ether, 0);
         _reserveVault(locked);
 
         vm.prank(BIT_ADMIN);
