@@ -10,6 +10,8 @@ The lab uses immutable multi-architecture image digests for:
 
 The Docker network is internal and publishes no host ports. Runtime RPC and wallet passwords are generated locally with restrictive permissions under ignored `.state` storage. They are regtest-only and must never be reused.
 
+The persistent lab uses a deliberately high 100,000,000-sat test-only daily ceiling so repeated qualification runs retain replay journals without exhausting the day. This is not a production recommendation or daily-cap evidence. Production must publish a much smaller reviewed limit, and the live cap/UTC-rollover campaign remains open.
+
 ## Commands
 
 ```sh
