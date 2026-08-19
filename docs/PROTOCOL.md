@@ -64,7 +64,7 @@ The user chooses among the solver quotes it actually receives, then signs one co
 - globally single-use payment hashes; and
 - an immutable protocol-fee ceiling.
 
-The escrows accept canonical 65-byte EOA signatures, reject high-s signatures, and support ERC-1271 contract signatures through a shared static signature checker. The price band and volume limits are immutable deployment parameters; they limit damage from a stale reference but do not establish an external fair price or monitor the upgradeable BIT token.
+The escrows accept canonical 65-byte EOA signatures, reject high-s signatures, and support ERC-1271 contract signatures through a shared static signature checker. Lightning → BIT reservations require the user and pre-funded solver to sign the same exact quote; only the named user can exercise it, so the solver has no transaction-time last-look after signing. The price band and volume limits are immutable deployment parameters; they limit damage from a stale reference but do not establish an external fair price or monitor the upgradeable BIT token.
 
 ## 5. Lightning inventory
 

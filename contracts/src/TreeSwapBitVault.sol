@@ -12,9 +12,9 @@ interface IERC20Minimal {
 /// @notice Segregates solver-owned BIT inventory and locks exact amounts for
 ///         Lightning-to-BIT swaps. It is intentionally immutable and has no
 ///         administrator or upgrade path.
-/// @dev Each reservation requires a user-signed EIP-712 quote. The signature
-///      binds the solver, beneficiary, amounts, invoice digest, payment hash,
-///      nonce, acceptance expiry, Lightning cutoff, and Ethereum refund time.
+/// @dev Each reservation requires the user and solver to sign the same EIP-712
+///      quote. The user exercises it directly against pre-funded solver
+///      inventory, removing solver last-look after the firm quote is signed.
 contract TreeSwapBitVault {
     using TreeSwapSignatureChecker for address;
     enum SwapState {
@@ -69,10 +69,10 @@ contract TreeSwapBitVault {
 
     error InvalidAddress();
     error InvalidAmount();
+    error InvalidUser();
     error InvalidPaymentHash();
     error InvalidInvoiceDigest();
     error InvalidRiskConfig();
-    error InvalidSolver();
     error InvalidSignature();
     error InvalidDeadlineOrder();
     error QuoteExpired();
@@ -85,6 +85,7 @@ contract TreeSwapBitVault {
     error SwapAlreadyExists();
     error PaymentHashAlreadyUsed();
     error NonceAlreadyUsed();
+    error TooManyActiveReservations();
     error SwapNotLocked();
     error RefundNotReady();
     error IncorrectPreimage();
@@ -94,6 +95,7 @@ contract TreeSwapBitVault {
 
     uint16 public constant ABSOLUTE_MAX_FEE_BPS = 500;
     uint16 public constant ABSOLUTE_MAX_PRICE_DEVIATION_BPS = 2_500;
+    uint8 public constant MAX_ACTIVE_RESERVATIONS_PER_USER = 1;
     uint256 public constant BIT_SCALE = 1 ether;
 
     bytes32 public constant SELECTED_QUOTE_TYPEHASH = keccak256(
@@ -124,6 +126,7 @@ contract TreeSwapBitVault {
     mapping(bytes32 quoteId => Swap swap) public swaps;
     mapping(bytes32 paymentHash => bool used) public paymentHashUsed;
     mapping(address user => mapping(uint256 nonce => bool used)) public nonceUsed;
+    mapping(address user => uint256 count) public activeUserReservations;
     mapping(address solver => mapping(uint256 epoch => uint256 volume)) public solverEpochVolume;
 
     uint256 public totalAvailable;
@@ -210,22 +213,28 @@ contract TreeSwapBitVault {
         emit Withdrawn(msg.sender, recipient, amount);
     }
 
-    /// @notice Locks solver-owned inventory for one user-accepted, full-fill quote.
-    /// @dev The user signature is EIP-712 domain-separated by chain and vault.
-    ///      A relay cannot change any quote field, and every nonce is single-use.
-    function reserve(SelectedQuote calldata quote, bytes calldata userSignature) external nonReentrant {
-        _validateQuote(quote, userSignature);
+    /// @notice Lets the user exercise one dual-signed, full-fill firm quote
+    ///         against the solver's pre-funded inventory.
+    /// @dev Both signatures share the chain- and vault-bound EIP-712 digest. A
+    ///      relay cannot change a field, and only the named user can reserve.
+    function reserve(
+        SelectedQuote calldata quote,
+        bytes calldata userSignature,
+        bytes calldata solverSignature
+    ) external nonReentrant {
+        _validateQuote(quote, userSignature, solverSignature);
 
         uint256 epoch = block.timestamp / epochDuration;
-        uint256 nextEpochVolume = solverEpochVolume[msg.sender][epoch] + quote.amount;
+        uint256 nextEpochVolume = solverEpochVolume[quote.solver][epoch] + quote.amount;
         if (nextEpochVolume > maxEpochVolume) revert EpochVolumeExceedsCap();
 
-        availableBalance[msg.sender] -= quote.amount;
+        availableBalance[quote.solver] -= quote.amount;
         totalAvailable -= quote.amount;
         totalLocked += quote.amount;
-        solverEpochVolume[msg.sender][epoch] = nextEpochVolume;
+        solverEpochVolume[quote.solver][epoch] = nextEpochVolume;
         paymentHashUsed[quote.paymentHash] = true;
         nonceUsed[quote.user][quote.nonce] = true;
+        activeUserReservations[quote.user] += 1;
         _storeSwap(quote);
         _emitReserved(quote);
     }
@@ -276,8 +285,10 @@ contract TreeSwapBitVault {
         uint256 amount = swap.amount;
         uint256 fee = swap.fee;
         address beneficiary = swap.beneficiary;
+        address user = swap.user;
         swap.state = SwapState.CLAIMED;
         totalLocked -= amount;
+        activeUserReservations[user] -= 1;
 
         _safeTransferExact(beneficiary, amount - fee);
         if (fee != 0) _safeTransferExact(feeCollector, fee);
@@ -293,10 +304,12 @@ contract TreeSwapBitVault {
 
         uint256 amount = swap.amount;
         address solver = swap.solver;
+        address user = swap.user;
         swap.state = SwapState.REFUNDED;
         totalLocked -= amount;
         totalAvailable += amount;
         availableBalance[solver] += amount;
+        activeUserReservations[user] -= 1;
         emit Refunded(quoteId, solver, amount);
     }
 
@@ -342,10 +355,16 @@ contract TreeSwapBitVault {
         return totalAvailable + totalLocked;
     }
 
-    function _validateQuote(SelectedQuote calldata quote, bytes calldata userSignature) internal view {
+    function _validateQuote(
+        SelectedQuote calldata quote,
+        bytes calldata userSignature,
+        bytes calldata solverSignature
+    ) internal view {
+        if (msg.sender != quote.user) revert InvalidUser();
         if (quote.quoteId == bytes32(0)) revert InvalidAmount();
-        if (quote.user == address(0) || quote.beneficiary == address(0)) revert InvalidAddress();
-        if (quote.solver != msg.sender) revert InvalidSolver();
+        if (quote.user == address(0) || quote.solver == address(0) || quote.beneficiary == address(0)) {
+            revert InvalidAddress();
+        }
         if (quote.paymentHash == bytes32(0)) revert InvalidPaymentHash();
         if (quote.invoiceDigest == bytes32(0)) revert InvalidInvoiceDigest();
         if (quote.amount == 0 || quote.fee >= quote.amount || quote.lightningAmountSats == 0) {
@@ -360,13 +379,18 @@ contract TreeSwapBitVault {
                 || uint256(quote.refundAfter) < uint256(quote.lastSafeClaimAt) + uint256(minClaimBuffer)
                 || uint256(quote.refundAfter) > block.timestamp + uint256(maxLockDuration)
         ) revert InvalidDeadlineOrder();
-        if (availableBalance[msg.sender] < quote.amount) revert InsufficientAvailable();
+        if (availableBalance[quote.solver] < quote.amount) revert InsufficientAvailable();
+        if (activeUserReservations[quote.user] >= MAX_ACTIVE_RESERVATIONS_PER_USER) {
+            revert TooManyActiveReservations();
+        }
         if (swaps[quote.quoteId].state != SwapState.UNSET) revert SwapAlreadyExists();
         if (paymentHashUsed[quote.paymentHash]) revert PaymentHashAlreadyUsed();
         if (nonceUsed[quote.user][quote.nonce]) revert NonceAlreadyUsed();
 
         _validatePriceBand(quote.amount - quote.fee, quote.lightningAmountSats);
-        if (!quote.user.isValidSignatureNow(hashSelectedQuote(quote), userSignature)) revert InvalidSignature();
+        bytes32 digest = hashSelectedQuote(quote);
+        if (!quote.user.isValidSignatureNow(digest, userSignature)) revert InvalidSignature();
+        if (!quote.solver.isValidSignatureNow(digest, solverSignature)) revert InvalidSignature();
     }
 
     function _validatePriceBand(uint256 netBitAmount, uint256 lightningAmountSats) internal view {

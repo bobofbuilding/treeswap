@@ -9,8 +9,9 @@ contract TreeSwapBitVaultTest is TestBase {
     TreeSwapBitVault internal vault;
 
     uint256 internal constant USER_PK = 0xA11CE;
+    uint256 internal constant SOLVER_PK = 0x5107E2;
     address internal user;
-    address internal constant SOLVER = address(0x5107E2);
+    address internal solver;
     address internal constant BENEFICIARY = address(0xBEEF);
     address internal constant ATTACKER = address(0xBAD);
     address internal constant COLLECTOR = address(0xFEE);
@@ -21,20 +22,21 @@ contract TreeSwapBitVaultTest is TestBase {
 
     function setUp() public {
         user = vm.addr(USER_PK);
+        solver = vm.addr(SOLVER_PK);
         bit = new MockBit();
         vault = new TreeSwapBitVault(address(bit), COLLECTOR, _riskConfig());
         paymentHash = sha256(abi.encodePacked(PREIMAGE));
-        bit.mint(SOLVER, 10_000 ether);
-        vm.prank(SOLVER);
+        bit.mint(solver, 10_000 ether);
+        vm.prank(solver);
         bit.approve(address(vault), type(uint256).max);
     }
 
     function testDepositAndWithdrawOnlyAvailableInventory() public {
         _deposit(vault, 1_000 ether);
-        vm.prank(SOLVER);
-        vault.withdraw(250 ether, SOLVER);
+        vm.prank(solver);
+        vault.withdraw(250 ether, solver);
 
-        assertEq(vault.availableBalance(SOLVER), 750 ether, "available mismatch");
+        assertEq(vault.availableBalance(solver), 750 ether, "available mismatch");
         assertEq(vault.totalAvailable(), 750 ether, "total available mismatch");
         assertEq(bit.balanceOf(address(vault)), 750 ether, "vault balance mismatch");
     }
@@ -57,49 +59,53 @@ contract TreeSwapBitVaultTest is TestBase {
         _deposit(vault, 1_000 ether);
         TreeSwapBitVault.SelectedQuote memory quote =
             _quote(keccak256("quote-signed"), paymentHash, BENEFICIARY, 500 ether, 2 ether, nextNonce++);
-        bytes memory signature = _sign(vault, quote);
+        bytes memory signature = _signUser(vault, quote);
         quote.beneficiary = ATTACKER;
+        bytes memory solverSignature = _signSolver(vault, quote);
 
         vm.expectRevert(TreeSwapBitVault.InvalidSignature.selector);
-        vm.prank(SOLVER);
-        vault.reserve(quote, signature);
+        vm.prank(user);
+        vault.reserve(quote, signature, solverSignature);
     }
 
     function testQuoteSignatureCannotReplayOnAnotherVault() public {
         TreeSwapBitVault secondVault = new TreeSwapBitVault(address(bit), COLLECTOR, _riskConfig());
-        vm.prank(SOLVER);
+        vm.prank(solver);
         bit.approve(address(secondVault), type(uint256).max);
         _deposit(secondVault, 1_000 ether);
 
         TreeSwapBitVault.SelectedQuote memory quote =
             _quote(keccak256("domain-replay"), paymentHash, BENEFICIARY, 500 ether, 0, nextNonce++);
-        bytes memory wrongDomainSignature = _sign(vault, quote);
+        bytes memory wrongDomainUserSignature = _signUser(vault, quote);
+        bytes memory wrongDomainSolverSignature = _signSolver(vault, quote);
 
         vm.expectRevert(TreeSwapBitVault.InvalidSignature.selector);
-        vm.prank(SOLVER);
-        secondVault.reserve(quote, wrongDomainSignature);
+        vm.prank(user);
+        secondVault.reserve(quote, wrongDomainUserSignature, wrongDomainSolverSignature);
     }
 
     function testQuoteSignatureCannotReplayOnAnotherChain() public {
         _deposit(vault, 1_000 ether);
         TreeSwapBitVault.SelectedQuote memory quote =
             _quote(keccak256("chain-replay"), paymentHash, BENEFICIARY, 500 ether, 0, nextNonce++);
-        bytes memory wrongChainSignature = _sign(vault, quote);
+        bytes memory wrongChainUserSignature = _signUser(vault, quote);
+        bytes memory wrongChainSolverSignature = _signSolver(vault, quote);
         vm.chainId(block.chainid + 1);
 
         vm.expectRevert(TreeSwapBitVault.InvalidSignature.selector);
-        vm.prank(SOLVER);
-        vault.reserve(quote, wrongChainSignature);
+        vm.prank(user);
+        vault.reserve(quote, wrongChainUserSignature, wrongChainSolverSignature);
     }
 
     function testMalformedSignatureCannotReserve() public {
         _deposit(vault, 1_000 ether);
         TreeSwapBitVault.SelectedQuote memory quote =
             _quote(keccak256("malformed-signature"), paymentHash, BENEFICIARY, 500 ether, 0, nextNonce++);
+        bytes memory solverSignature = _signSolver(vault, quote);
 
         vm.expectRevert(TreeSwapBitVault.InvalidSignature.selector);
-        vm.prank(SOLVER);
-        vault.reserve(quote, hex"1234");
+        vm.prank(user);
+        vault.reserve(quote, hex"1234", solverSignature);
     }
 
     function testEip1271UserCanAuthorizeExactSelectedQuote() public {
@@ -108,10 +114,11 @@ contract TreeSwapBitVaultTest is TestBase {
         TreeSwapBitVault.SelectedQuote memory quote =
             _quote(keccak256("contract-user"), paymentHash, BENEFICIARY, 500 ether, 0, nextNonce++);
         quote.user = address(wallet);
-        bytes memory signature = _sign(vault, quote);
+        bytes memory signature = _signUser(vault, quote);
+        bytes memory solverSignature = _signSolver(vault, quote);
 
-        vm.prank(SOLVER);
-        vault.reserve(quote, signature);
+        vm.prank(address(wallet));
+        vault.reserve(quote, signature, solverSignature);
         assertEq(uint256(vault.swapState(quote.quoteId)), uint256(TreeSwapBitVault.SwapState.LOCKED), "1271 reserve failed");
     }
 
@@ -125,12 +132,74 @@ contract TreeSwapBitVaultTest is TestBase {
         _expectReserveRevert(vault, quote, TreeSwapBitVault.InvalidSignature.selector);
     }
 
+    function testEip1271SolverCanCommitPrefundedInventory() public {
+        Mock1271Wallet wallet = new Mock1271Wallet(solver);
+        bit.mint(address(wallet), 1_000 ether);
+        vm.prank(address(wallet));
+        bit.approve(address(vault), type(uint256).max);
+        vm.prank(address(wallet));
+        vault.deposit(1_000 ether);
+
+        TreeSwapBitVault.SelectedQuote memory quote =
+            _quote(keccak256("contract-solver"), paymentHash, BENEFICIARY, 500 ether, 0, nextNonce++);
+        quote.solver = address(wallet);
+        bytes memory userSignature = _signUser(vault, quote);
+        bytes memory solverSignature = _signSolver(vault, quote);
+
+        vm.prank(user);
+        vault.reserve(quote, userSignature, solverSignature);
+        assertEq(vault.availableBalance(address(wallet)), 500 ether, "1271 solver inventory not reserved");
+    }
+
+    function testOnlyNamedUserCanExerciseFirmQuote() public {
+        _deposit(vault, 1_000 ether);
+        TreeSwapBitVault.SelectedQuote memory quote =
+            _quote(keccak256("user-exercise"), paymentHash, BENEFICIARY, 500 ether, 0, nextNonce++);
+        bytes memory userSignature = _signUser(vault, quote);
+        bytes memory solverSignature = _signSolver(vault, quote);
+
+        vm.expectRevert(TreeSwapBitVault.InvalidUser.selector);
+        vm.prank(ATTACKER);
+        vault.reserve(quote, userSignature, solverSignature);
+    }
+
+    function testFirmQuoteCannotUseSolverInventoryWithoutSolverSignature() public {
+        _deposit(vault, 1_000 ether);
+        TreeSwapBitVault.SelectedQuote memory quote =
+            _quote(keccak256("solver-commitment"), paymentHash, BENEFICIARY, 500 ether, 0, nextNonce++);
+        bytes memory userSignature = _signUser(vault, quote);
+
+        vm.expectRevert(TreeSwapBitVault.InvalidSignature.selector);
+        vm.prank(user);
+        vault.reserve(quote, userSignature, hex"1234");
+    }
+
+    function testOneActiveReservationPerUserAndSlotReopensAfterTerminalState() public {
+        _deposit(vault, 1_000 ether);
+        TreeSwapBitVault.SelectedQuote memory first =
+            _reserve(vault, keccak256("active-1"), paymentHash, BENEFICIARY, 400 ether, 0);
+        TreeSwapBitVault.SelectedQuote memory second = _quote(
+            keccak256("active-2"),
+            sha256(abi.encodePacked(bytes32("active-two"))),
+            BENEFICIARY,
+            400 ether,
+            0,
+            nextNonce++
+        );
+
+        _expectReserveRevert(vault, second, TreeSwapBitVault.TooManyActiveReservations.selector);
+        vault.claim(first.quoteId, PREIMAGE);
+        _submit(vault, second);
+        assertEq(vault.activeUserReservations(user), 1, "active slot did not reopen");
+    }
+
     function testUserNonceCannotBeReused() public {
         _deposit(vault, 1_000 ether);
         uint256 nonce = nextNonce++;
         TreeSwapBitVault.SelectedQuote memory first =
             _quote(keccak256("nonce-1"), paymentHash, BENEFICIARY, 400 ether, 0, nonce);
         _submit(vault, first);
+        vault.claim(first.quoteId, PREIMAGE);
 
         TreeSwapBitVault.SelectedQuote memory second = _quote(
             keccak256("nonce-2"), sha256(abi.encodePacked(bytes32("second-preimage"))), BENEFICIARY, 400 ether, 0, nonce
@@ -154,7 +223,11 @@ contract TreeSwapBitVaultTest is TestBase {
             _quote(keccak256("oversized"), paymentHash, BENEFICIARY, 601 ether, 0, nextNonce++);
         _expectReserveRevert(vault, oversized, TreeSwapBitVault.SwapAmountExceedsCap.selector);
 
-        _reserve(vault, keccak256("epoch-1"), sha256(abi.encodePacked(bytes32("epoch-one"))), BENEFICIARY, 500 ether, 0);
+        bytes32 epochOnePreimage = bytes32("epoch-one");
+        TreeSwapBitVault.SelectedQuote memory first = _reserve(
+            vault, keccak256("epoch-1"), sha256(abi.encodePacked(epochOnePreimage)), BENEFICIARY, 500 ether, 0
+        );
+        vault.claim(first.quoteId, epochOnePreimage);
         TreeSwapBitVault.SelectedQuote memory overEpoch = _quote(
             keccak256("epoch-2"), sha256(abi.encodePacked(bytes32("epoch-two"))), BENEFICIARY, 500 ether, 0, nextNonce++
         );
@@ -188,7 +261,7 @@ contract TreeSwapBitVaultTest is TestBase {
         vault.claim(quote.quoteId, PREIMAGE);
 
         vault.refund(quote.quoteId);
-        assertEq(vault.availableBalance(SOLVER), 1_000 ether, "cutoff refund failed");
+        assertEq(vault.availableBalance(solver), 1_000 ether, "cutoff refund failed");
     }
 
     function testWrongPreimageCannotClaim() public {
@@ -209,14 +282,16 @@ contract TreeSwapBitVaultTest is TestBase {
         vm.prank(ATTACKER);
         vault.refund(quote.quoteId);
 
-        assertEq(vault.availableBalance(SOLVER), 1_000 ether, "refund not returned to solver");
+        assertEq(vault.availableBalance(solver), 1_000 ether, "refund not returned to solver");
         assertEq(bit.balanceOf(COLLECTOR), 0, "refund charged fee");
         assertEq(vault.accountedBalance(), bit.balanceOf(address(vault)), "accounting mismatch");
     }
 
     function testPaymentHashCannotBeReused() public {
         _deposit(vault, 1_000 ether);
-        _reserve(vault, keccak256("hash-1"), paymentHash, BENEFICIARY, 300 ether, 0);
+        TreeSwapBitVault.SelectedQuote memory first =
+            _reserve(vault, keccak256("hash-1"), paymentHash, BENEFICIARY, 300 ether, 0);
+        vault.claim(first.quoteId, PREIMAGE);
 
         TreeSwapBitVault.SelectedQuote memory second =
             _quote(keccak256("hash-2"), paymentHash, BENEFICIARY, 300 ether, 0, nextNonce++);
@@ -246,8 +321,8 @@ contract TreeSwapBitVaultTest is TestBase {
         _deposit(vault, amount);
         uint256 withdrawal = amount / 3;
         if (withdrawal != 0) {
-            vm.prank(SOLVER);
-            vault.withdraw(withdrawal, SOLVER);
+            vm.prank(solver);
+            vault.withdraw(withdrawal, solver);
         }
 
         assertEq(vault.accountedBalance(), bit.balanceOf(address(vault)), "fuzz accounting mismatch");
@@ -268,7 +343,7 @@ contract TreeSwapBitVaultTest is TestBase {
     }
 
     function _deposit(TreeSwapBitVault target, uint256 amount) internal {
-        vm.prank(SOLVER);
+        vm.prank(solver);
         target.deposit(amount);
     }
 
@@ -280,7 +355,7 @@ contract TreeSwapBitVaultTest is TestBase {
         return TreeSwapBitVault.SelectedQuote({
             quoteId: quoteId,
             user: user,
-            solver: SOLVER,
+            solver: solver,
             beneficiary: beneficiary,
             amount: amount,
             fee: fee,
@@ -294,7 +369,7 @@ contract TreeSwapBitVaultTest is TestBase {
         });
     }
 
-    function _sign(TreeSwapBitVault target, TreeSwapBitVault.SelectedQuote memory quote)
+    function _signUser(TreeSwapBitVault target, TreeSwapBitVault.SelectedQuote memory quote)
         internal
         returns (bytes memory)
     {
@@ -302,19 +377,29 @@ contract TreeSwapBitVaultTest is TestBase {
         return abi.encodePacked(r, s, v);
     }
 
+    function _signSolver(TreeSwapBitVault target, TreeSwapBitVault.SelectedQuote memory quote)
+        internal
+        returns (bytes memory)
+    {
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(SOLVER_PK, target.hashSelectedQuote(quote));
+        return abi.encodePacked(r, s, v);
+    }
+
     function _submit(TreeSwapBitVault target, TreeSwapBitVault.SelectedQuote memory quote) internal {
-        bytes memory signature = _sign(target, quote);
-        vm.prank(SOLVER);
-        target.reserve(quote, signature);
+        bytes memory userSignature = _signUser(target, quote);
+        bytes memory solverSignature = _signSolver(target, quote);
+        vm.prank(quote.user);
+        target.reserve(quote, userSignature, solverSignature);
     }
 
     function _expectReserveRevert(TreeSwapBitVault target, TreeSwapBitVault.SelectedQuote memory quote, bytes4 selector)
         internal
     {
-        bytes memory signature = _sign(target, quote);
+        bytes memory userSignature = _signUser(target, quote);
+        bytes memory solverSignature = _signSolver(target, quote);
         vm.expectRevert(selector);
-        vm.prank(SOLVER);
-        target.reserve(quote, signature);
+        vm.prank(quote.user);
+        target.reserve(quote, userSignature, solverSignature);
     }
 
     function _reserve(

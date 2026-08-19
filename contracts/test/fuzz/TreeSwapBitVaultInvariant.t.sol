@@ -7,10 +7,12 @@ import {MockBit, TestBase, Vm} from "../helpers/TestBase.sol";
 contract VaultHandler {
     Vm internal constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
     uint256 internal constant USER_PK = 0xA11CE;
+    uint256 internal constant SOLVER_PK = 0x5107E2;
 
     MockBit internal immutable bit;
     TreeSwapBitVault internal immutable vault;
     address internal immutable user;
+    address public immutable solver;
     bytes32[] internal quoteIds;
     bytes32[] internal preimages;
     uint256 internal sequence;
@@ -20,19 +22,23 @@ contract VaultHandler {
         bit = bit_;
         vault = vault_;
         user = vm.addr(USER_PK);
+        solver = vm.addr(SOLVER_PK);
+        vm.prank(solver);
         bit.approve(address(vault), type(uint256).max);
     }
 
     function deposit(uint96 rawAmount) external {
         uint256 amount = 1 + (uint256(rawAmount) % 1_000_000 ether);
-        bit.mint(address(this), amount);
+        bit.mint(solver, amount);
+        vm.prank(solver);
         vault.deposit(amount);
     }
 
     function withdraw(uint96 rawAmount) external {
-        uint256 available = vault.availableBalance(address(this));
+        uint256 available = vault.availableBalance(solver);
         if (available == 0) return;
         uint256 amount = 1 + (uint256(rawAmount) % available);
+        vm.prank(solver);
         vault.withdraw(amount, address(this));
     }
 
@@ -50,7 +56,7 @@ contract VaultHandler {
         TreeSwapBitVault.SelectedQuote memory quote = TreeSwapBitVault.SelectedQuote({
             quoteId: quoteId,
             user: user,
-            solver: address(this),
+            solver: solver,
             beneficiary: address(0xBEEF),
             amount: amount,
             fee: fee,
@@ -92,19 +98,22 @@ contract VaultHandler {
 
     function _boundedReservationAmount(uint96 rawAmount) internal view returns (uint96) {
         uint256 epoch = block.timestamp / vault.epochDuration();
-        uint256 epochRemaining = vault.maxEpochVolume() - vault.solverEpochVolume(address(this), epoch);
-        uint256 limit = _min(vault.availableBalance(address(this)), _min(vault.maxSwapAmount(), epochRemaining));
+        uint256 epochRemaining = vault.maxEpochVolume() - vault.solverEpochVolume(solver, epoch);
+        uint256 limit = _min(vault.availableBalance(solver), _min(vault.maxSwapAmount(), epochRemaining));
         if (limit < 1 ether) return 0;
         return uint96(1 ether + (uint256(rawAmount) % (limit - 1 ether + 1)));
     }
 
     function _signAndReserve(TreeSwapBitVault.SelectedQuote memory quote) internal {
-        (uint8 v, bytes32 r, bytes32 s) = vm.sign(USER_PK, vault.hashSelectedQuote(quote));
-        vault.reserve(quote, abi.encodePacked(r, s, v));
+        bytes32 digest = vault.hashSelectedQuote(quote);
+        (uint8 userV, bytes32 userR, bytes32 userS) = vm.sign(USER_PK, digest);
+        (uint8 solverV, bytes32 solverR, bytes32 solverS) = vm.sign(SOLVER_PK, digest);
+        vm.prank(user);
+        vault.reserve(quote, abi.encodePacked(userR, userS, userV), abi.encodePacked(solverR, solverS, solverV));
     }
 
     function _recordEpochVolume() internal {
-        uint256 observed = vault.solverEpochVolume(address(this), block.timestamp / vault.epochDuration());
+        uint256 observed = vault.solverEpochVolume(solver, block.timestamp / vault.epochDuration());
         if (observed > maxObservedEpochVolume) maxObservedEpochVolume = observed;
     }
 
@@ -179,7 +188,7 @@ contract TreeSwapBitVaultInvariantTest is TestBase {
 
     function invariantHandlerOwnsAllAvailableInventory() public view {
         assertEq(
-            vault.availableBalance(address(handler)),
+            vault.availableBalance(handler.solver()),
             vault.totalAvailable(),
             "available inventory escaped solver account"
         );

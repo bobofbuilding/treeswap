@@ -104,9 +104,11 @@ Both escrows bind chain, verifying contract, protocol version, direction-specifi
 
 ### TS-H02 — Reservation griefing and solver last-look
 
+**Status:** Dual-signed user-exercised BIT reservations and executable admission controls implemented; persistent quotas and live reliability telemetry remain a deployment gate
+
 An attacker can request many quotes, while a solver can advertise attractive liquidity, wait for market movement, and abandon only losing fills.
 
-V1 has no public order reservation. Mitigations include short quote expiries, direct solver-created reservations from the solver's own BIT balance, per-identity concurrency limits, vetted solvers, and measurable fill reliability. Bonds and penalties can be considered only after operational data exists.
+V1 has no public order reservation. `TreeSwapBitVault` now requires the user and solver to sign the same exact quote. The solver pre-funds its segregated BIT balance, only the named user may exercise the quote, and one active reservation is permitted per user until claim or refund. The solver therefore cannot apply last-look after releasing its signature. `lib/admission-policy.mjs` separates non-reserving RFQs from firm quotes; it enforces authenticated per-identity concurrency and rolling quotas, minimum size, cancellation sequences, short expiries, admitted solvers, fresh capacity epochs, bounded firm commitments, and measured fill reliability. Repeated solver-attributable failures suspend the solver, while user expiry does not. BIT → Lightning remains a refundable liveness risk because Ethereum cannot force a Lightning payment. Bonds are deferred until a non-subjective failure adjudicator and operating data exist. Production transport, atomic persistent counters, capacity reconciliation, and reliability telemetry remain required.
 
 ### TS-H03 — BIT proxy upgrade or pause
 
@@ -284,4 +286,5 @@ A production escrow test suite should prove at least:
 - [LND AddHoldInvoice API](https://lightning.engineering/api-docs/api/lnd/invoices/add-hold-invoice/)
 - [EIP-712 typed structured data](https://eips.ethereum.org/EIPS/eip-712)
 - [ERC-1967 proxy storage](https://eips.ethereum.org/EIPS/eip-1967)
+- [0x firm RFQ lifecycle](https://docs.0x.org/docs/introduction/quickstart/swap-tokens-with-0x-swap-api)
 - [BIT verified proxy and implementation](https://etherscan.io/token/0x57A447E4d5e18A9423408C365963A73F08B9d18C#code)
