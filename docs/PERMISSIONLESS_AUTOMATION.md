@@ -1,6 +1,6 @@
 # Permissionless and automatic operation
 
-Status: target architecture. The current prototype does not yet open permissionless solver admission or execute swaps.
+Status: target architecture. Local atomic RFQ/admission persistence is implemented, but the current prototype does not yet open permissionless solver admission or execute swaps. Authenticated capability transport, the complete solver daemon, deployed shared persistence, independent solvers/relays, and testnet fault evidence remain required.
 
 ## Recommended boundary
 

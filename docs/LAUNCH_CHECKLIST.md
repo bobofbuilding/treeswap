@@ -35,7 +35,8 @@ No repository checkbox can substitute for deployed evidence. A gate becomes comp
 - [ ] Operate atomic persistent RFQ quotas, cancellation sequence, capacity epochs, solver reliability, idempotent Lightning requests, and one-shot payment authorization.
   - [x] Atomic settlement/action store, one-dispatch Lightning outbox, restart recovery, and live payer- and invoice-side lost-response reconciliation implemented.
   - [x] Connect the EVM claim outbox to exact signed bytes, canonical receipt/finality checks, and fail-closed reorg detection; local execution-client evidence passes.
-  - [ ] Connect atomic RFQ/admission counters, the complete solver daemon, deployed backups, and alerts; reproduce the EVM evidence on controlled forks and public testnet.
+  - [x] Atomic local RFQ/admission persistence covers opaque rolling identity quotas, permanent cancellation sequences, monotonic capacity epochs, non-oversubscribed firm commitments, fill/failure reliability, and fail-closed suspension across restart and competing connections.
+  - [ ] Connect the complete solver daemon and authenticated capability verifier; deploy the persistence service, backups, and alerts; reproduce the EVM evidence on controlled forks and public testnet.
 - [ ] Operate continuous BIT proxy/pause/finality/price monitoring and BIT/Lightning/in-flight reconciliation. Prove alerts close the gate and never block exits.
 - [ ] Run at least two independent solvers with tiny testnet limits and no public deposits or rewards.
 - [ ] Deploy durable SIWE/session storage only if accounts are enabled; otherwise disable the account feature. Keep email delivery disabled.

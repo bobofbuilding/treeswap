@@ -23,7 +23,7 @@ Reviewed surfaces:
 | TS-C03 | Ordered-deadline derivation and exact boundaries implemented | Bitcoin regtest, Ethereum fork, congestion/restart/force-close drills |
 | TS-C04 | Multi-solver signed received-set selection implemented | None; global-best availability is explicitly not claimed |
 | TS-H01 | Chain/contract/version/direction/nonce replay protection and ERC-1271 implemented | EOA-only SIWE remains an explicit account limitation |
-| TS-H02 | Dual-signed user exercise, admission, capacity, and last-look policy implemented | Persistent counters, reliability telemetry, objective bond decision |
+| TS-H02 | Dual-signed user exercise plus local atomic admission, capacity, and last-look accounting implemented | Deployed shared enforcement, live reliability telemetry, objective bond decision |
 | TS-H03 | Closed expiring gate and token runtime checks implemented | Live proxy monitor, pinned hashes, deployed multisigs, fork campaign |
 | TS-H04 | Integer units, rounding, overflow, dust, and conservation implemented | None |
 | TS-H05 | BIT-only signed capped fee accounting implemented | Pin deployed collector and caps |
@@ -33,7 +33,7 @@ Reviewed surfaces:
 | TS-H09 | Finality authorization, dispatch-time revalidation, exact EVM claim outbox, and local execution-client reorg halt implemented | Controlled mainnet-fork and public-testnet campaigns |
 | TS-M01 | Maker rewards excluded from v1 | None |
 | TS-M02 | Fill/reward incentives excluded from v1 | None |
-| TS-M03 | RFQ quotas, cancellation, work bounds, and capacity admission implemented | Atomic distributed enforcement |
+| TS-M03 | RFQ quotas, cancellation, work bounds, and local atomic capacity admission implemented | Deployed distributed enforcement |
 | TS-M04 | Signed routing cap and fresh directional capacity implemented | Live node capacity/reconciliation |
 | TS-M05 | Preimage relays cannot redirect either payout | Independent review |
 | TS-M06 | Full BOLT 11 field and invoice-digest validation implemented | Isolated live decoder integration |
@@ -139,11 +139,11 @@ Both escrows bind chain, verifying contract, protocol version, direction-specifi
 
 ### TS-H02 — Reservation griefing and solver last-look
 
-**Status:** Dual-signed user-exercised BIT reservations and executable admission controls implemented; persistent quotas and live reliability telemetry remain a deployment gate
+**Status:** Dual-signed user-exercised BIT reservations and local atomic persistent admission controls implemented; deployed shared enforcement and live reliability telemetry remain deployment gates
 
 An attacker can request many quotes, while a solver can advertise attractive liquidity, wait for market movement, and abandon only losing fills.
 
-V1 has no public order reservation. `TreeSwapBitVault` now requires the user and solver to sign the same exact quote. The solver pre-funds its segregated BIT balance, only the named user may exercise the quote, and one active reservation is permitted per user until claim or refund. The solver therefore cannot apply last-look after releasing its signature. `lib/admission-policy.mjs` separates non-reserving RFQs from firm quotes; it enforces authenticated per-identity concurrency and rolling quotas, minimum size, cancellation sequences, short expiries, admitted solvers, fresh capacity epochs, bounded firm commitments, and measured fill reliability. Repeated solver-attributable failures suspend the solver, while user expiry does not. BIT → Lightning remains a refundable liveness risk because Ethereum cannot force a Lightning payment. Bonds are deferred until a non-subjective failure adjudicator and operating data exist. Production transport, atomic persistent counters, capacity reconciliation, and reliability telemetry remain required.
+V1 has no public order reservation. `TreeSwapBitVault` now requires the user and solver to sign the same exact quote. The solver pre-funds its segregated BIT balance, only the named user may exercise the quote, and one active reservation is permitted per user until claim or refund. The solver therefore cannot apply last-look after releasing its signature. `lib/admission-policy.mjs` separates non-reserving RFQs from firm quotes; it enforces authenticated per-identity concurrency and rolling quotas, minimum size, cancellation sequences, short expiries, admitted solvers, fresh capacity epochs, bounded firm commitments, and measured fill reliability. Schema v3 persists those controls under `BEGIN IMMEDIATE`: only opaque identity commitments are retained, cancellation sequences never decrease, capacity epochs never go backward, conflicts latch new quotes closed, and fills atomically release competing commitments. Two independently opened local connections cannot exceed identity or solver limits. Repeated solver-attributable failures suspend the solver, while user expiry or abandonment does not. BIT → Lightning remains a refundable liveness risk because Ethereum cannot force a Lightning payment. Bonds are deferred until a non-subjective failure adjudicator and operating data exist. Production transport, deployed shared persistence, capacity reconciliation, and live reliability telemetry remain required.
 
 ### TS-H03 — BIT proxy upgrade or pause
 
@@ -211,9 +211,9 @@ V1 issues no reward token, points, rebates, maker emissions, or volume incentive
 
 ### TS-M03 — Quote flooding and cancellation churn
 
-**Status:** Bounded admission, nonce/cancellation sequencing, quotas, minimum size, and solver capacity limits implemented; persistent distributed counters remain a deployment gate
+**Status:** Bounded admission, nonce/cancellation sequencing, rolling quotas, minimum size, and local atomic solver capacity limits implemented; deployed distributed enforcement remains a deployment gate
 
-`assessRfqAdmission` requires an authenticated request identity, a nonce above its cancellation sequence, minimum quantity, short expiry, per-key active-request limit, rolling request quota, and cancellation quota. `buildReceivedQuoteBook` rejects an envelope set above the hard maximum before signature verification and retains only one best offer per solver. Firm offers additionally require an admitted solver, fresh capacity epoch, uncommitted capacity, active-offer limit, and reliability floor. Bonds remain deliberately disabled until objective failure adjudication exists. Production must store counters and nonce/cancellation state atomically in a shared persistence layer and test distributed races; one-process memory is not sufficient.
+`assessRfqAdmission` requires an authenticated request identity, a nonce above its cancellation sequence, minimum quantity, short expiry, per-key active-request limit, rolling request quota, and cancellation quota. `buildReceivedQuoteBook` rejects an envelope set above the hard maximum before signature verification and retains only one best offer per solver. Firm offers additionally require a verified solver capability, fresh capacity epoch, uncommitted capacity, active-offer limit, and reliability floor. The coordinator now stores exact rolling events, request lifecycles, cancellation sequences, capacity snapshots, commitments, and reliability outcomes atomically; restart, local multi-connection races, backward time, conflicting epochs, early expiry, and raw-identity persistence are adversarially tested. Bonds remain deliberately disabled until objective failure adjudication exists. Production must connect authenticated capability transport and the solver daemon, deploy the reviewed shared persistence service, and test real multi-instance races; the local SQLite proof is not distributed deployment evidence.
 
 ### TS-M04 — Hidden routing and stale capacity
 

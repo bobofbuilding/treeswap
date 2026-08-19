@@ -1,6 +1,6 @@
 # TreeSwap RFQ and quote-selection policy
 
-Status: deterministic signed-offer validation and selection harness. Live independent solver and relay transport remains a testnet deployment gate.
+Status: deterministic signed-offer validation, selection, and local atomic admission persistence. Live authenticated capability transport plus independent solver and relay operation remain testnet deployment gates.
 
 ## What TreeSwap can prove
 

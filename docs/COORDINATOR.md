@@ -1,6 +1,6 @@
 # Durable coordinator boundary
 
-Status: the atomic store, exact signed Lightning dispatcher, EVM claim outbox, restart recovery, payer- and invoice-side read-only reconciliation, aggregate metrics, live Lightning lost-response campaigns, and local execution-client claim/reorg campaigns are implemented. Both actual direction-specific escrows now pass block replacement before authorization, after authorization, and after claim. The full solver daemon, production backup/restore drill, alert delivery, live BIT/public-chain finality evidence, and independent review remain testnet gates.
+Status: the atomic settlement and RFQ/admission store, exact signed Lightning dispatcher, EVM claim outbox, restart recovery, payer- and invoice-side read-only reconciliation, aggregate metrics, live Lightning lost-response campaigns, and local execution-client claim/reorg campaigns are implemented. Both actual direction-specific escrows now pass block replacement before authorization, after authorization, and after claim. The full solver daemon, deployed authenticated capability transport, production backup/restore drill, alert delivery, live BIT/public-chain finality evidence, and independent review remain testnet gates.
 
 ## Separate trust domain
 
@@ -10,7 +10,7 @@ The coordinator is not part of the public web application and does not use its D
 - one file-backed SQLite database on its own volume; and
 - network access to the isolated role-specific Lightning adapters and authenticated Ethereum RPC providers.
 
-It receives no LND macaroon, node seed, web session secret, email record, user key, or solver-inventory withdrawal key. An optional claim-relayer key may spend only its own capped ETH gas because `claim` is permissionless and its beneficiary is already fixed onchain. The adapters receive only the coordinator public key and one role-specific macaroon. A production deployment must preserve these as distinct hosts, service identities, networks, secret scopes, and backup policies.
+It receives no LND macaroon, node seed, web session secret, email record, user private key, or solver-inventory withdrawal key. An authenticated public identity is compared to its RFQ only in memory; the database retains an opaque identity commitment and a binding digest, never the raw wallet identity. An optional claim-relayer key may spend only its own capped ETH gas because `claim` is permissionless and its beneficiary is already fixed onchain. The adapters receive only the coordinator public key and one role-specific macaroon. A production deployment must preserve these as distinct hosts, service identities, networks, secret scopes, and backup policies.
 
 ## Atomic record
 
@@ -28,7 +28,18 @@ It receives no LND macaroon, node seed, web session secret, email record, user k
 - an EVM claim's chain, sender, contract, nonce, transaction hash, signed-byte digest, broadcast count, and one observed inclusion; and
 - one mutually exclusive terminal result supported by a both-assets reconciliation proof.
 
-Each transition and its secret-free event commit in one `BEGIN IMMEDIATE` transaction. Foreign keys, uniqueness constraints, strict tables, WAL journaling, `synchronous=FULL`, a five-second busy timeout, a mode-`0600` database, and a mode-`0700` parent directory are enforced. One process owns a solver database; multi-writer or multi-replica operation is not supported by this version.
+Schema v3 also persists RFQ/admission state in the same transaction boundary:
+
+- an opaque authenticated identity commitment and permanent cancellation sequence;
+- exact request ID, direction, notional, nonce, expiry, and lifecycle state;
+- rolling accepted-request and cancellation events;
+- a verified solver capability digest, monotonic capacity epoch, fresh available capacity, committed capacity, and conflict latch;
+- one exact firm offer per solver/request, with expiry and mutually exclusive outcome; and
+- successful fills, attributable failures, consecutive-failure suspension, and aggregate-only metrics.
+
+Admission first expires stale requests and releases their exact commitments, then evaluates persisted usage inside `BEGIN IMMEDIATE`. A duplicate request or offer ID is idempotent only for the same committed terms. Cancellation sequences only advance. Two local database connections cannot exceed the active-request limit or reserve the same solver capacity concurrently. A filled offer exercises its RFQ and releases every competing commitment in the same transaction; user abandonment and expiry release capacity without harming solver reliability.
+
+Each transition and its secret-free event commit in one `BEGIN IMMEDIATE` transaction. Foreign keys, uniqueness constraints, strict tables, WAL journaling, `synchronous=FULL`, a five-second busy timeout, a mode-`0600` database, and a mode-`0700` parent directory are enforced. SQLite serializes independently opened local connections, and adversarial tests cover competing admission and capacity reservations. Multi-host or multi-replica operation is not supported by this version.
 
 The pinned runtime is Node `22.22.0`. Its built-in SQLite API remains experimental in that release even though the underlying database and the exact API surface used here are pinned. Before funded beta, either qualify that exact image through backup, restore, corruption, disk-full, power-loss, and version-upgrade drills or move the same schema and transaction tests to a stable reviewed driver.
 
@@ -71,6 +82,8 @@ The invoice campaign accepts a real 10,000-sat hold payment, settles it through 
 
 Both campaigns use a simulated finalized-reservation record, so they are Lightning/coordinator evidence—not cross-chain finality evidence.
 
+`tests/admission-store.test.mjs` proves rolling quotas and cancellation sequences survive restart, backward time fails closed, stale or conflicting capacity epochs reject, early expiry rejects, fills and competing-offer release are atomic, attributable failures suspend while user abandonment does not, v2 migrates to v3, raw user identity is absent from SQLite files, and independent local connections cannot oversubscribe an identity or solver. These are local persistence tests, not deployed distributed-enforcement or solver-identity evidence.
+
 Run the separate local execution-client campaign:
 
 ```sh
@@ -84,7 +97,7 @@ It deploys a test-only claim surface to a fresh Anvil chain, binds and broadcast
 Before funded testnet:
 
 1. prove finalized EVM claim success, reorgs before and after authorization/claim, dropped transactions, nonce contention, RPC disagreement, and relayer-key rotation against controlled forks and public testnet;
-2. implement the complete solver state machine and atomic persistent RFQ/admission counters;
+2. connect the complete solver state machine and authenticated capability verifier to the implemented RFQ/admission ledger, then qualify it on the deployed stable persistence service;
 3. run disk-full, abrupt-kill, WAL recovery, backup/restore, corruption, and coordinator-key rotation drills;
 4. deploy structured metrics, alert routing, and automatic new-exposure halt while preserving exits;
 5. operate against independent relays and at least two independently run testnet solvers; and

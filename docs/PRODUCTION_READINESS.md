@@ -96,11 +96,13 @@ The current adapter boundary, live lab, and remaining fault matrix are documente
   - [ ] Prove finalized success, dropped/replaced transaction handling, nonce contention, provider disagreement, relayer-key rotation, and reorgs before and after authorization/claim on controlled forks and public testnet.
 - [ ] Run at least two independent RFQ relays plus direct solver endpoints; a relay may deliver but never rewrite or select a quote.
 - [ ] Operate a solver daemon that quotes, reserves, waits for finality, performs the exact Lightning action, relays the preimage, reconciles, and halts on any mismatch.
+  - [x] Schema v3 atomically persists opaque identity quotas, rolling cancellation/request events, permanent cancellation sequences, monotonic solver capacity epochs, exact firm commitments, fill/failure reliability, and suspension. Independent local connections cannot oversubscribe an identity or solver, and fills close the RFQ plus release competitors in one transaction.
+  - [ ] Connect verified solver capability declarations and the complete state machine to this ledger; deploy it on the reviewed persistence service and run restart, corruption, and multi-instance drills.
 - [ ] Keep browser, web server, relay, coordinator, and Lightning credentials in separate trust domains.
   - [x] Repository containers separate the coordinator signing key/database from the adapters' public key and role macaroons; the public web database contains neither.
   - [ ] Reproduce that boundary with deployed service identities, networks, secret scopes, and independent backups.
 - [ ] Add structured metrics and alerts without logging invoices, preimages, wallet links, email, or unrestricted addresses.
-  - [x] The store exposes aggregate state counters and a secret-free event view; live campaigns prove neither the raw invoice nor EVM claim preimage is persisted.
+  - [x] The store exposes aggregate settlement, RFQ, firm-offer, capacity-conflict, and suspension counters plus a secret-free event view; live campaigns prove neither the raw invoice nor EVM claim preimage is persisted, and storage tests find no raw RFQ wallet identity.
   - [ ] Deploy alert routing and prove it closes only new exposure.
 
 The coordinator state, crash semantics, live evidence, runtime qualification risk, and remaining work are documented in [Durable coordinator boundary](./COORDINATOR.md).
