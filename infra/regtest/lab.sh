@@ -1262,6 +1262,65 @@ smoke_coordinator_reconciliation() {
   unset invoice payment_request input
 }
 
+smoke_coordinator_invoice_reconciliation() {
+  ensure_runtime_env
+  start_lab >/dev/null
+  local amount_sats=10000
+  local preimage payment_hash invoice payment_request invoice_digest state accepted
+  local payment_result="" payment_pid="" input
+  trap '[[ -z "${payment_hash:-}" ]] || compose exec -T bob lncli --network=regtest cancelinvoice "${payment_hash#0x}" >/dev/null 2>&1 || true; \
+    [[ -z "${payment_pid:-}" ]] || kill "$payment_pid" 2>/dev/null || true; \
+    [[ -z "${payment_result:-}" ]] || rm -f "$payment_result"' EXIT
+
+  preimage="0x$(openssl rand -hex 32)"
+  payment_hash="0x$(printf '%s' "${preimage#0x}" | xxd -r -p |
+    openssl dgst -sha256 -binary | xxd -p -c 256)"
+  invoice=$(compose exec -T bob lncli --network=regtest \
+    --macaroonpath=/root/.lnd/treeswap/invoice.macaroon addholdinvoice \
+    --memo=treeswap-coordinator-invoice-regtest --expiry=600 --cltv_expiry_delta=80 --private \
+    "${payment_hash#0x}" "$amount_sats")
+  payment_request=$(jq -er '.payment_request' <<<"$invoice")
+  invoice_digest="0x$(printf '%s' "$payment_request" | openssl dgst -sha256 -binary | xxd -p -c 256)"
+  umask 077
+  payment_result=$(mktemp "$STATE_DIR/coordinator-invoice-payment.XXXXXX")
+  compose exec -T alice lncli --network=regtest \
+    --macaroonpath=/root/.lnd/treeswap/payer.macaroon payinvoice \
+    --force --fee_limit=10 --timeout=30s --json "$payment_request" >"$payment_result" &
+  payment_pid=$!
+
+  accepted=false
+  for _ in $(seq 1 30); do
+    state=$(compose exec -T bob lncli --network=regtest lookupinvoice "${payment_hash#0x}" |
+      jq -er '.state')
+    if [[ "$state" == "ACCEPTED" ]]; then
+      accepted=true
+      break
+    fi
+    sleep 1
+  done
+  if [[ "$accepted" != true ]]; then
+    echo "coordinator invoice probe was not accepted" >&2
+    return 1
+  fi
+
+  input=$(jq -cn --arg amountSats "$amount_sats" --arg invoiceDigest "$invoice_digest" \
+    --arg preimage "$preimage" \
+    '{amountSats:$amountSats,invoiceDigest:$invoiceDigest,preimage:$preimage}')
+  compose --profile tools build coordinator-invoice-smoke >/dev/null
+  COORDINATOR_SMOKE_PAYMENT_HASH="$payment_hash" compose --profile adapter --profile tools run --rm -T \
+    coordinator-invoice-smoke <<<"$input"
+  payment_hash=""
+  wait "$payment_pid"
+  payment_pid=""
+  jq -e --arg preimage "$preimage" \
+    '.status == "SUCCEEDED" and ("0x" + (.payment_preimage | ascii_downcase)) == $preimage' \
+    "$payment_result" >/dev/null
+  rm -f "$payment_result"
+  payment_result=""
+  unset preimage payment_request input
+  trap - EXIT
+}
+
 status_lab() {
   ensure_runtime_env
   compose ps
@@ -1291,11 +1350,12 @@ case "${1:-}" in
   policy-fault-smoke) smoke_policy_faults ;;
   htlc-cutoff-smoke) smoke_htlc_cutoff ;;
   coordinator-smoke) smoke_coordinator_reconciliation ;;
+  coordinator-invoice-smoke) smoke_coordinator_invoice_reconciliation ;;
   status) status_lab ;;
   down) stop_lab ;;
   destroy) destroy_lab ;;
   *)
-    echo "Usage: $0 {up|smoke|adapter-smoke|credential-smoke|invoice-fault-smoke|policy-fault-smoke|htlc-cutoff-smoke|coordinator-smoke|status|down|destroy}" >&2
+    echo "Usage: $0 {up|smoke|adapter-smoke|credential-smoke|invoice-fault-smoke|policy-fault-smoke|htlc-cutoff-smoke|coordinator-smoke|coordinator-invoice-smoke|status|down|destroy}" >&2
     exit 2
     ;;
 esac

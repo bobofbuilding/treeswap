@@ -48,10 +48,12 @@ The audit record contains hashes, integer amount, method, decision, and reason c
 
 `npm run regtest:coordinator-smoke` pays a real 10,000-sat standard invoice, deliberately loses the successful response, reopens the coordinator database in `UNKNOWN`, and recovers success through read-only tracking without a second dispatch. See [Durable coordinator boundary](./COORDINATOR.md).
 
+`npm run regtest:coordinator-invoice-smoke` settles a real accepted 10,000-sat hold invoice, deliberately loses that successful response, reopens in `UNKNOWN`, and recovers `SETTLED` through a fresh preimage-free lookup. The database, WAL, and shared-memory files contain neither raw nor textual preimage bytes, and dispatch count remains one.
+
 ## Rotation and incident response
 
 Bake each role from a dedicated root key, record issuance and expiry, rotate before the configured maximum age, and revoke the old root-key ID after overlap testing. If a credential, TLS identity, adapter host, signer, or node may be compromised: halt new quotes, stop Lightning authorization, revoke the affected root key, rotate the TLS pin if needed, reconcile every in-flight hash, and do not reopen from the same process image.
 
 ## Deployment gate
 
-Before testnet funding, add live directional-balance exhaustion, daily-cap rollover, prolonged block delay, force-close, unsynced-node, real TLS-certificate rotation, overlap-credential rotation, and invoice-side ambiguous-response campaigns; export a secret-free evidence bundle; and independently review the implementation and evidence. Exact grant manifests, credential timeout, root-key revocation, hold-invoice terminal faults, accepted-state LND restart, rapid-block HTLC cutoff, fee/amount/in-flight caps, channel-offline recovery, and TLS-pin mismatch now pass locally.
+Before testnet funding, add live directional-balance exhaustion, daily-cap rollover, prolonged block delay, force-close, unsynced-node, real TLS-certificate rotation, and overlap-credential rotation campaigns; export a secret-free evidence bundle; and independently review the implementation and evidence. Exact grant manifests, credential timeout, root-key revocation, hold-invoice terminal faults, accepted-state LND restart, payer- and invoice-side lost-response recovery, rapid-block HTLC cutoff, fee/amount/in-flight caps, channel-offline recovery, and TLS-pin mismatch now pass locally.

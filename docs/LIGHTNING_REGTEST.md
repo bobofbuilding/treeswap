@@ -21,6 +21,7 @@ npm run regtest:invoice-fault-smoke
 npm run regtest:policy-fault-smoke
 npm run regtest:htlc-cutoff-smoke
 npm run regtest:coordinator-smoke
+npm run regtest:coordinator-invoice-smoke
 npm run regtest:status
 npm run regtest:down
 ```
@@ -47,9 +48,11 @@ For all six node/role pairs, the bootstrap reads the baked macaroon back, requir
 
 `regtest:coordinator-smoke` rebuilds and uses a separate coordinator container and credential volume so stale local images cannot satisfy the campaign. It has the Ed25519 private key and its own SQLite volume but no LND macaroon. The payer adapter has only the public key and its payer macaroon. The campaign pays a real standard 10,000-sat invoice, discards the successful response, reopens the durable store in `UNKNOWN`, and uses a new signed read-only tracking request to recover `SUCCEEDED`. It requires one dispatch and proves the raw invoice was not written to the coordinator database. The reservation input is simulated, so this is not EVM finality evidence.
 
+`regtest:coordinator-invoice-smoke` gives the same credential-free coordinator a transient matching preimage for a real accepted 10,000-sat hold invoice. It settles through the invoice adapter, discards the successful response, reopens in `UNKNOWN`, and recovers `SETTLED` with one preimage-free signed lookup. It requires one dispatch and scans the closed SQLite database, WAL, and shared-memory files for both the raw and textual preimage. The original payer must succeed, and no replacement action is issued. Its reservation input is also simulated.
+
 ## Remaining campaigns
 
-- Standard-invoice route failure and duplicate/ambiguous request. Success, excessive-fee and amount rejection, no-dispatch tracking, and lost-response reconciliation now pass.
+- Standard-invoice route failure and explicit duplicate request. Success, excessive-fee and amount rejection, no-dispatch tracking, and lost-response reconciliation now pass; invoice-settlement lost-response recovery also passes.
 - Hold-invoice cancel, expiry, wrong preimage, late settle, signed-action replay, restart while accepted, and the 24-block HTLC cutoff under rapid block advancement now pass.
 - Prolonged block delay, force close, unsynced node, and stale capacity epoch. Rapid blocks, accepted-state LND restart, channel-offline rejection/recovery, and live in-flight-cap saturation now pass.
 - Real certificate rotation, overlap credential rotation, and stateless initialization. TLS-pin mismatch, exact grant manifests, timeout enforcement, root-key revocation, and representative forbidden-RPC categories now pass.

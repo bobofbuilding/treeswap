@@ -1,6 +1,6 @@
 # Durable coordinator boundary
 
-Status: the atomic store, exact signed Lightning dispatcher, EVM claim outbox, restart recovery, read-only reconciliation, aggregate metrics, live Lightning lost-response campaign, and local execution-client claim/reorg campaign are implemented. The full solver daemon, production backup/restore drill, alert delivery, public-chain finality evidence, and independent review remain testnet gates.
+Status: the atomic store, exact signed Lightning dispatcher, EVM claim outbox, restart recovery, payer- and invoice-side read-only reconciliation, aggregate metrics, live Lightning lost-response campaigns, and local execution-client claim/reorg campaign are implemented. The full solver daemon, production backup/restore drill, alert delivery, public-chain finality evidence, and independent review remain testnet gates.
 
 ## Separate trust domain
 
@@ -62,9 +62,14 @@ Run:
 
 ```sh
 npm run regtest:coordinator-smoke
+npm run regtest:coordinator-invoice-smoke
 ```
 
-The campaign creates a real 10,000-sat standard regtest invoice, pays it through the signed payer adapter, deliberately discards the successful adapter response, proves the database contains `UNKNOWN`, closes and reopens the store, and recovers `SUCCEEDED` through a new read-only tracking authorization. It requires dispatch count `1` and scans the database to prove the BOLT 11 string was not persisted. Its EVM reservation record is explicitly simulated; this campaign is Lightning/coordinator evidence, not cross-chain finality evidence.
+The payer campaign creates a real 10,000-sat standard regtest invoice, pays it through the signed payer adapter, deliberately discards the successful adapter response, proves the database contains `UNKNOWN`, closes and reopens the store, and recovers `SUCCEEDED` through a new read-only tracking authorization. It requires dispatch count `1` and scans the database to prove the BOLT 11 string was not persisted. Its deterministic evidence digest is `0x795152765a0312b638f56c6102f86dee26a27a5845d42a0e506d5ba70670dcf4`.
+
+The invoice campaign accepts a real 10,000-sat hold payment, settles it through the invoice adapter, deliberately discards the successful response, reopens in `UNKNOWN`, and recovers `SETTLED` through a fresh `LookupInvoiceV2` authorization that contains no preimage. It requires dispatch count `1`, scans the SQLite database, WAL, and shared-memory files for both raw and textual preimage bytes, and requires none. Its deterministic evidence digest is `0xbedd1c725f66526954e2143f7a78cfed108f220daa2ade3b9a9441b75425e37d`.
+
+Both campaigns use a simulated finalized-reservation record, so they are Lightning/coordinator evidence—not cross-chain finality evidence.
 
 Run the separate local execution-client campaign:
 

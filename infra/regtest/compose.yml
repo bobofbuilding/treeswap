@@ -239,6 +239,28 @@ services:
       - coordinator-state:/data
     networks: [regtest]
 
+  coordinator-invoice-smoke:
+    build:
+      context: ../..
+      dockerfile: infra/coordinator/Dockerfile
+    image: treeswap/coordinator:regtest
+    command: ["node", "infra/coordinator/invoice-smoke.mjs"]
+    profiles: [tools]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=16m
+    environment:
+      COORDINATOR_PRIVATE_KEY_PATH: /run/treeswap/credentials/coordinator-private.pem
+      COORDINATOR_DATABASE_PATH: /data/coordinator-invoice.sqlite
+      COORDINATOR_KEY_ID: regtest-coordinator-1
+      PAYMENT_HASH: ${COORDINATOR_SMOKE_PAYMENT_HASH:-pending}
+    volumes:
+      - coordinator-credentials:/run/treeswap/credentials:ro
+      - coordinator-state:/data
+    networks: [regtest]
+
 networks:
   regtest:
     internal: true

@@ -62,8 +62,8 @@ The command refuses to overwrite an existing file and never records the RPC URL.
 - [ ] Test standard invoices and hold invoices through create, accept, settle, cancel, expire, late-settle, and replay paths.
   - [x] Hold create/accept/settle, cancel, expiry, wrong and late preimage, exact signed-action replay, and restart while accepted pass through the isolated adapters.
   - [x] Standard invoices above the signed fee cap or per-payment cap are rejected before dispatch, and read-only tracking proves `NOT_FOUND`.
-  - [ ] Standard-invoice route failure and duplicate/ambiguous outcomes remain; standard success plus lost-response recovery pass.
-- [ ] Inject delayed and fast Bitcoin blocks, LND restart, lost responses, idempotent retry, force close, unsynced state, TLS pin change, credential rotation, and credential revocation. Accepted-state LND restart, one-dispatch lost-response recovery, root-key revocation, live in-flight saturation, channel-offline recovery, and TLS-pin mismatch now pass.
+  - [ ] Standard-invoice route failure and an explicit duplicate-payment attempt remain; standard success plus payer- and invoice-side lost-response recovery pass.
+- [ ] Inject delayed and fast Bitcoin blocks, LND restart, lost responses, idempotent retry, force close, unsynced state, TLS pin change, credential rotation, and credential revocation. Accepted-state LND restart, one-dispatch payer and invoice recovery, root-key revocation, live in-flight saturation, channel-offline recovery, and TLS-pin mismatch now pass.
   - [x] Rapid blocks reach the live HTLC boundary; the adapter rejects settlement at a 24-block reserve, six blocks before the auto-cancel boundary observed in pinned LND.
 - [ ] Prove that the computed Lightning cutoff always precedes the EVM refund boundary by the published margin. Pure ordering and the live Lightning-height boundary pass; combined EVM/Lightning fork or testnet evidence remains.
 - [ ] Produce a secret-free evidence bundle containing versions, configuration hashes, test results, and timestamps—never macaroons, invoices, or preimages.
@@ -76,6 +76,7 @@ The current adapter boundary, live lab, and remaining fault matrix are documente
 - [ ] Make every value-moving action idempotent and recoverable after a process crash or ambiguous response.
   - [x] Lightning actions use a durable one-dispatch outbox; process restart, transport loss, replay conflict, and malformed success enter `UNKNOWN` and block retries.
   - [x] A live regtest payment recovers from a deliberately lost success response through a fresh read-only tracking request with dispatch count one.
+  - [x] A live accepted hold invoice recovers from a deliberately lost settlement response through a preimage-free lookup with dispatch count one; SQLite, WAL, and shared-memory scans contain no preimage.
   - [x] Bind EVM claims to one signed transaction hash before broadcast; persist no raw preimage; permit only byte-identical rebroadcasts; require a canonical finalized successful receipt and exact `Claimed` event.
   - [x] A local Anvil campaign proves a real claim remains `UNKNOWN` after RPC acceptance, records its inclusion, and halts after the included transaction is removed by a snapshot reorg.
   - [ ] Prove finalized success, dropped/replaced transaction handling, nonce contention, provider disagreement, relayer-key rotation, and reorgs before and after authorization/claim on controlled forks and public testnet.

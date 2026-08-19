@@ -291,6 +291,71 @@ test("reconciles an unknown payment through a fresh signed read-only tracking re
   }
 });
 
+test("reconciles an unknown invoice settlement through a preimage-free lookup", async () => {
+  const store = await CoordinatorStore.open(":memory:", { allowMemory: true });
+  const value = { ...settlement("reconcile-invoice"), direction: "lightning-to-bit" };
+  const settleOperation = { preimage: PREIMAGE };
+  const draft = {
+    actionId: hash(`${value.settlementId}:action`),
+    settlementId: value.settlementId,
+    method: "/invoicesrpc.Invoices/SettleInvoice",
+    requestId: hash("reconcile-invoice:settle-request"),
+    payloadDigest: hash("placeholder"),
+    intentDigest: value.intentDigest,
+    paymentHash: value.paymentHash,
+    invoiceDigest: value.invoiceDigest,
+    amountSats: value.amountSats,
+    capacityEpoch: value.capacityEpoch,
+    plannedAt: NOW + 20,
+  };
+  const action = { ...draft, payloadDigest: lightningActionCommitment(draft, settleOperation) };
+  store.acceptSettlement(value);
+  store.recordReservation(reservation(value));
+  store.planAction(action);
+  try {
+    await assert.rejects(() => dispatchLightningAction({
+      store,
+      actionId: action.actionId,
+      operation: settleOperation,
+      privateKey,
+      keyId: "coordinator-test-1",
+      adapterUrl: "http://invoice-adapter:3000",
+      nowSeconds: () => NOW + 21,
+      requestImpl: async () => { throw new Error("lost after settlement"); },
+    }), (error) => error.ambiguous === true && error.actionState === "UNKNOWN");
+    const result = await reconcileLightningAction({
+      store,
+      actionId: action.actionId,
+      reconciliationRequestId: hash("reconcile-invoice:lookup-request"),
+      privateKey,
+      keyId: "coordinator-test-1",
+      adapterUrl: "http://invoice-adapter:3000",
+      nowSeconds: () => NOW + 30,
+      requestImpl: async (_url, options) => {
+        const envelope = JSON.parse(options.body);
+        assert.equal(envelope.payload.method, "/invoicesrpc.Invoices/LookupInvoiceV2");
+        assert.deepEqual(envelope.payload.operation, {});
+        assert.equal(JSON.stringify(envelope).includes(PREIMAGE), false);
+        return new Response(JSON.stringify({
+          result: {
+            paymentHash: PAYMENT_HASH,
+            state: "SETTLED",
+            valueSats: "10000",
+            amountPaidSats: "10000",
+            htlcs: [{ state: "SETTLED", amountMsat: "10000000", acceptHeight: 900_000, expiryHeight: 900_080 }],
+          },
+          audit: { decision: "allow" },
+        }), { status: 200 });
+      },
+    });
+    assert.equal(result.disposition, "confirmed");
+    assert.equal(result.action.dispatchCount, 1);
+    assert.equal(store.getSettlement(value.settlementId).reconciliationRequired, false);
+  } finally {
+    store.close();
+  }
+});
+
 test("keeps IN_FLIGHT and NOT_FOUND observations blocked until a terminal proof arrives", async () => {
   const inflight = await makeUnknown("reconcile-inflight");
   try {
