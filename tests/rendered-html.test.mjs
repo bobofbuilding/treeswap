@@ -32,13 +32,14 @@ test("server-renders the TreeSwap prototype", async () => {
 
   const html = await response.text();
   assert.match(html, /<title>TreeSwap \| Bitcoin Lightning ↔ BIT Swaps<\/title>/i);
-  assert.match(html, /Lightning ↔/);
-  assert.match(html, /BIT swaps/);
+  assert.match(html, /Swap sats and BIT/);
+  assert.match(html, /Review swap/);
+  assert.match(html, /Best of .*signed quotes/);
   assert.match(html, /1 BIT = 100 sats/);
   assert.match(html, /No wallets connected · No real funds/);
-  assert.match(html, /One bridge · Two roles/i);
+  assert.match(html, /One swap\. Three steps/i);
   assert.match(html, /There is no shared public liquidity pool/i);
-  assert.match(html, /What must be true before real funds/i);
+  assert.match(html, /Four checks block launch/i);
   assert.match(html, /application\/ld\+json/i);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton|Your site is taking shape/i);
 });
