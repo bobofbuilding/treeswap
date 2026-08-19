@@ -7,6 +7,7 @@ import test from "node:test";
 import { id, sha256 } from "ethers";
 import { LightningActionJournal } from "../lib/lightning-action-journal.mjs";
 import { LightningAdapterRuntime } from "../lib/lightning-adapter-runtime.mjs";
+import { LightningChainProgressStore } from "../lib/lightning-chain-progress.mjs";
 import { signLightningAuthorizationEnvelope } from "../lib/lightning-authorization-envelope.mjs";
 import { invoiceDigest, LndRestError } from "../lib/lnd-rest-client.mjs";
 
@@ -104,12 +105,22 @@ function authorization(method, operation, overrides = {}) {
   }, privateKey);
 }
 
-async function runtime(role, lnd = new MockLnd(), now = () => NOW + 1, policyOverrides = {}) {
-  const directory = await mkdtemp(join(tmpdir(), "treeswap-runtime-"));
+async function runtime(role, lnd = new MockLnd(), now = () => NOW + 1, policyOverrides = {}, options = {}) {
+  const directory = options.directory ?? await mkdtemp(join(tmpdir(), "treeswap-runtime-"));
   const journal = await LightningActionJournal.open(join(directory, "actions.jsonl"));
+  const chainProgress = await LightningChainProgressStore.open(join(directory, "chain-progress.json"));
+  if (options.seedChainProgress !== false) {
+    await chainProgress.observe({
+      blockHeight: Number(lnd.info.block_height) - 1,
+      bestHeaderTimestamp: Number(lnd.info.best_header_timestamp),
+      observedAt: NOW,
+    });
+  }
   return {
+    directory,
     lnd,
     journal,
+    chainProgress,
     adapter: new LightningAdapterRuntime({
       role,
       credential: {
@@ -124,6 +135,7 @@ async function runtime(role, lnd = new MockLnd(), now = () => NOW + 1, policyOve
       keyId: "coordinator-regtest-1",
       lnd,
       journal,
+      chainProgress,
       policy: { ...policy, ...policyOverrides },
       now,
     }),
@@ -242,4 +254,41 @@ test("rejects a header beyond the configured future-skew limit", async () => {
   }, { requestId: id("future-header-payment").toLowerCase() });
   await assert.rejects(() => adapter.execute(envelope), /too far in the future/);
   assert.equal(lnd.calls.some(([name]) => name === "send"), false);
+});
+
+test("persists an uninitialized chain baseline across restart until a higher block is observed", async () => {
+  let observedAt = NOW + 1;
+  const lnd = new MockLnd();
+  const first = await runtime("payer", lnd, () => observedAt, {}, { seedChainProgress: false });
+  const firstEnvelope = authorization("/routerrpc.Router/SendPaymentV2", {
+    paymentRequest: PAYMENT_REQUEST,
+    timeoutSeconds: 10,
+    feeLimitSats: "10",
+  }, { requestId: id("stateless-first-payment").toLowerCase() });
+  await assert.rejects(() => first.adapter.execute(firstEnvelope), /baseline is not initialized/);
+  assert.equal(lnd.calls.some(([name]) => name === "send"), false);
+
+  observedAt += 1;
+  const restarted = await runtime("payer", lnd, () => observedAt, {}, {
+    directory: first.directory,
+    seedChainProgress: false,
+  });
+  const restartEnvelope = authorization("/routerrpc.Router/SendPaymentV2", {
+    paymentRequest: PAYMENT_REQUEST,
+    timeoutSeconds: 10,
+    feeLimitSats: "10",
+  }, { requestId: id("stateless-restart-payment").toLowerCase() });
+  await assert.rejects(() => restarted.adapter.execute(restartEnvelope), /baseline is not initialized/);
+  assert.equal(lnd.calls.some(([name]) => name === "send"), false);
+
+  observedAt += 1;
+  lnd.info = { ...lnd.info, block_height: 900_001 };
+  const progressedEnvelope = authorization("/routerrpc.Router/SendPaymentV2", {
+    paymentRequest: PAYMENT_REQUEST,
+    timeoutSeconds: 10,
+    feeLimitSats: "10",
+  }, { requestId: id("stateless-progressed-payment").toLowerCase() });
+  const result = await restarted.adapter.execute(progressedEnvelope);
+  assert.equal(result.result.status, "SUCCEEDED");
+  assert.equal(lnd.calls.filter(([name]) => name === "send").length, 1);
 });

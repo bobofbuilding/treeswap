@@ -218,6 +218,7 @@ services:
       COORDINATOR_PUBLIC_KEY_PATH: /run/treeswap/credentials/coordinator-public.pem
       COORDINATOR_KEY_ID: regtest-coordinator-1
       ADAPTER_JOURNAL_PATH: /data/actions.jsonl
+      CHAIN_PROGRESS_PATH: /data/chain-progress.json
       CREDENTIAL_ID: alice-payer-regtest
       CREDENTIAL_ROOT_KEY_ID: "103"
       CREDENTIAL_ISSUED_AT: ${ADAPTER_CREDENTIAL_ISSUED_AT}
@@ -240,6 +241,7 @@ services:
       COORDINATOR_PUBLIC_KEY_PATH: /run/treeswap/credentials/coordinator-public.pem
       COORDINATOR_KEY_ID: regtest-coordinator-1
       ADAPTER_JOURNAL_PATH: /data/actions.jsonl
+      CHAIN_PROGRESS_PATH: /data/chain-progress.json
       CREDENTIAL_ID: bob-invoice-regtest
       CREDENTIAL_ROOT_KEY_ID: "102"
       CREDENTIAL_ISSUED_AT: ${ADAPTER_CREDENTIAL_ISSUED_AT}

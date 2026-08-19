@@ -25,6 +25,7 @@ npm run regtest:invoice-fault-smoke
 npm run regtest:policy-fault-smoke
 npm run regtest:directional-capacity-smoke
 npm run regtest:daily-cap-smoke
+npm run regtest:stateless-init-smoke
 npm run regtest:stale-chain-smoke
 npm run regtest:unsynced-chain-smoke
 npm run regtest:force-close-smoke
@@ -63,6 +64,8 @@ For all six node/role pairs, the bootstrap reads the baked macaroon back, requir
 
 `regtest:daily-cap-smoke` gives disposable payer and invoice adapters separate 10,000-sat daily limits and durable journals. Each adapter opens exactly 10,000 sats of real exposure, restarts against the same journal, and rejects a fresh one-sat exposure specifically because the daily cap is exhausted. Read-only tracking proves the rejected payment is absent, native lookup proves the rejected hold invoice is absent, the successful payment is rebalanced, and the successful hold invoice is canceled. Deterministic journal coverage separately proves that value usage resets at the exact UTC-day boundary after restart while request-ID and payment-hash replay protection remain permanent. Four consecutive live runs pass.
 
+`regtest:stateless-init-smoke` gives a disposable payer adapter a fresh, mode-`0600` chain-progress record. Startup's first real LND height/header observation establishes only an untrusted baseline, so an exact signed 10,000-sat payment must fail closed and read-only tracking must return `NOT_FOUND`. Restarting against the same record cannot make that baseline trusted. Only after Bitcoin regtest mines a genuinely higher block may the same exact exposure proceed, and native payment history must contain exactly one matching payment. The campaign rebalances the channel, removes its temporary state, and passes the initial run plus three consecutive warm-state repetitions.
+
 `regtest:stale-chain-smoke` reads the pinned LND node's real `wallet_synced`, height, and `best_header_timestamp`, then gives a disposable payer adapter a read-only baseline observation. After a deliberate no-block interval crosses its compressed one-second no-progress limit, the adapter must reject an exact signed payment specifically because the same header made no local progress; read-only tracking through the normally configured adapter must prove the payment was never dispatched. Reported past age, locally observed no-progress time, and future skew are independent limits, so the baseline remains valid even when the newest honest block is already several seconds old. The normal adapter uses 3,600-second age and no-progress ceilings, regtest separately allows its synthetic timestamp up to 7,200 seconds ahead, and the same invoice remains decodable there. Repeated stale → force-close → stale sequences pass without emitting invoices, hashes, macaroons, or preimages.
 
 `regtest:unsynced-chain-smoke` pauses the real Alice LND process, advances Bitcoin regtest by 500 blocks, and resumes Alice into a genuine catch-up state. The campaign observes `synced_to_chain=false` or `wallet_synced=false`, requires the adapter to reject an exact signed payment non-ambiguously, waits for both flags and the channel to recover, and uses read-only tracking to prove zero dispatch. The recovered adapter then decodes the same invoice. Three consecutive warm-state runs pass.
@@ -89,9 +92,9 @@ Published checkpoint `d17c058c148f218b6a47e8b6c063958f0c6b66f4` completed all 22
 
 - Standard-invoice success, genuine no-route failure, exact-request replay, same-hash duplicate exposure rejection, excessive-fee and amount rejection, no-dispatch tracking, and both payer/invoice lost-response reconciliations now pass.
 - Hold-invoice cancel, expiry, wrong preimage, late settle, signed-action replay, restart while accepted, and the 24-block HTLC cutoff under rapid block advancement now pass.
-- Stale capacity epoch and production-duration delay remain. Rapid blocks, genuine 500-block unsynced-node catch-up, full force-close/CSV-sweep/channel-replacement recovery, compressed-threshold stale-header rejection with zero dispatch, accepted-state LND restart, channel-offline rejection/recovery, live directional exhaustion/rebalancing, and live in-flight-cap saturation now pass.
+- Stale capacity epoch and production-duration delay remain. Rapid blocks, genuine 500-block unsynced-node catch-up, full force-close/CSV-sweep/channel-replacement recovery, compressed-threshold stale-header rejection with zero dispatch, durable stateless initialization, accepted-state LND restart, channel-offline rejection/recovery, live directional exhaustion/rebalancing, and live in-flight-cap saturation now pass.
 - Live payer/invoice daily-cap saturation and restart persistence pass, and deterministic journal coverage proves exact UTC rollover without weakening permanent replay protection.
-- Stateless initialization remains. Real certificate replacement and pin rollout, overlap credential rotation, deterministic old-root revocation, uninterrupted replacement service, TLS-pin mismatch, exact grant manifests, timeout enforcement, and representative forbidden-RPC categories now pass.
+- Stateless initialization, real certificate replacement and pin rollout, overlap credential rotation, deterministic old-root revocation, uninterrupted replacement service, TLS-pin mismatch, exact grant manifests, timeout enforcement, and representative forbidden-RPC categories now pass.
 - Promote a clean published-checkpoint qualification record into the reviewed release manifest. The secret-free generator and schema are implemented; a record from the final release commit remains required.
 
 This lab is local evidence, not permission to fund testnet or mainnet.

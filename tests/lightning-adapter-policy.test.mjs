@@ -37,6 +37,8 @@ const service = {
   walletSynced: true,
   headerAgeSeconds: 30,
   noProgressSeconds: 10,
+  chainProgressInitialized: true,
+  chainProgressConflicted: false,
   headerFutureSeconds: 0,
   capacityEpoch: 7,
   inFlightSats: 25_000n,
@@ -123,6 +125,12 @@ test("fails closed on TLS pin, private-network, health, or capacity changes", ()
   assert.match(stale.reasons.join("; "), /best chain header is stale/);
   const stalled = authorize({ service: { ...service, healthy: false, noProgressSeconds: 3_601 } });
   assert.equal(stalled.allowed, false);
+  const uninitialized = authorize({ service: { ...service, chainProgressInitialized: false } });
+  assert.equal(uninitialized.allowed, false);
+  assert.match(uninitialized.reasons.join("; "), /baseline is not initialized/);
+  const conflicted = authorize({ service: { ...service, chainProgressConflicted: true } });
+  assert.equal(conflicted.allowed, false);
+  assert.match(conflicted.reasons.join("; "), /observation conflicted/);
   assert.match(stalled.reasons.join("; "), /no observed progress/);
   const future = authorize({ service: { ...service, healthy: false, headerFutureSeconds: 301 } });
   assert.equal(future.allowed, false);

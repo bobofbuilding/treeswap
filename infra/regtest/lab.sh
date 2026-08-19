@@ -827,9 +827,9 @@ start_lab() {
   initialize_wallet alice
   initialize_wallet bob
   fund_private_channel
-  refresh_regtest_chain_header
   bake_credentials
   start_adapters
+  refresh_regtest_chain_header
   echo "TreeSwap regtest nodes, private channel, and isolated Lightning adapters are active."
 }
 
@@ -1756,6 +1756,111 @@ smoke_daily_cap() {
   echo "Daily-cap smoke passed: payer and invoice caps survived restart, rejected before dispatch, and exact UTC rollover remains deterministic in the journal tests."
 }
 
+smoke_stateless_chain_initialization() {
+  ensure_runtime_env
+  start_lab >/dev/null
+  local amount_sats=10000
+  local suffix payer_container payer_journal chain_progress
+  local invoice payment_request payment_hash invoice_digest intent_digest operation
+  local first_id first_result restart_id restart_result progressed_id progressed_result
+  local payment_count restore_request="" payer_paid=false
+
+  suffix=$(openssl rand -hex 8)
+  payer_container="treeswap-regtest-stateless-payer-$suffix"
+  payer_journal="/data/stateless-chain-$suffix.jsonl"
+  chain_progress="/data/stateless-chain-$suffix.json"
+  trap '[[ "${payer_paid:-false}" != true || -z "${restore_request:-}" ]] || \
+      compose exec -T bob lncli --network=regtest --macaroonpath=/root/.lnd/treeswap/payer.macaroon \
+        payinvoice --force --fee_limit=10 --timeout=30s "$restore_request" >/dev/null 2>&1 || true; \
+    docker rm -f "${payer_container:-missing}" >/dev/null 2>&1 || true; \
+    compose --profile adapter run --rm -T --no-deps --entrypoint /bin/sh payer-adapter \
+      -ec "rm -f '${payer_journal:-/invalid}' '${chain_progress:-/invalid}'" >/dev/null 2>&1 || true' EXIT
+
+  docker rm -f "$payer_container" >/dev/null 2>&1 || true
+  compose --profile adapter run --rm -d --name "$payer_container" \
+    -e ADAPTER_JOURNAL_PATH="$payer_journal" \
+    -e CHAIN_PROGRESS_PATH="$chain_progress" \
+    payer-adapter >/dev/null
+  wait_for_disposable_adapter "$payer_container"
+  docker exec "$payer_container" node -e \
+    'const {mode}=require("node:fs").statSync(process.argv[1]);if((mode&0o777)!==0o600)process.exit(1)' \
+    "$chain_progress"
+
+  invoice=$(compose exec -T bob lncli --network=regtest addinvoice \
+    --amt="$amount_sats" --memo=treeswap-stateless-chain --expiry=600 --private)
+  payment_request=$(jq -er '.payment_request' <<<$invoice)
+  payment_hash=$(compose exec -T alice lncli --network=regtest \
+    --macaroonpath=/root/.lnd/treeswap/payer.macaroon decodepayreq "$payment_request" |
+    jq -er '.payment_hash | ascii_downcase | "0x" + .')
+  invoice_digest="0x$(printf '%s' "$payment_request" | openssl dgst -sha256 -binary | xxd -p -c 256)"
+  intent_digest="0x$(openssl rand -hex 32)"
+  operation=$(jq -cn --arg paymentRequest "$payment_request" \
+    '{paymentRequest:$paymentRequest,timeoutSeconds:30,feeLimitSats:"10"}')
+
+  first_id="0x$(openssl rand -hex 32)"
+  if first_result=$(sign_adapter_authorization /routerrpc.Router/SendPaymentV2 \
+    "$first_id" "$intent_digest" "$payment_hash" "$invoice_digest" "$amount_sats" "$operation" |
+    docker exec -i "$payer_container" node /app/infra/lightning-adapter/client.mjs); then
+    echo "fresh chain-progress state opened Lightning exposure" >&2
+    return 1
+  fi
+  jq -e '.ambiguous == false and (.error | test("chain progress baseline is not initialized"))' \
+    <<<$first_result >/dev/null
+  assert_adapter_payment_not_found "$intent_digest" "$payment_hash" "$invoice_digest" "$amount_sats"
+  echo "Stateless-initialization stage passed: fresh state failed closed before dispatch."
+
+  docker rm -f "$payer_container" >/dev/null
+  compose --profile adapter run --rm -d --name "$payer_container" \
+    -e ADAPTER_JOURNAL_PATH="$payer_journal" \
+    -e CHAIN_PROGRESS_PATH="$chain_progress" \
+    payer-adapter >/dev/null
+  wait_for_disposable_adapter "$payer_container"
+
+  restart_id="0x$(openssl rand -hex 32)"
+  if restart_result=$(sign_adapter_authorization /routerrpc.Router/SendPaymentV2 \
+    "$restart_id" "$intent_digest" "$payment_hash" "$invoice_digest" "$amount_sats" "$operation" |
+    docker exec -i "$payer_container" node /app/infra/lightning-adapter/client.mjs); then
+    echo "adapter restart erased the uninitialized chain-progress gate" >&2
+    return 1
+  fi
+  jq -e '.ambiguous == false and (.error | test("chain progress baseline is not initialized"))' \
+    <<<$restart_result >/dev/null
+  assert_adapter_payment_not_found "$intent_digest" "$payment_hash" "$invoice_digest" "$amount_sats"
+  echo "Stateless-initialization stage passed: restart preserved the closed baseline."
+
+  refresh_regtest_chain_header
+  restore_request=$(compose exec -T alice lncli --network=regtest addinvoice \
+    --amt="$amount_sats" --memo=treeswap-stateless-chain-restore --expiry=600 --private |
+    jq -er '.payment_request')
+  progressed_id="0x$(openssl rand -hex 32)"
+  progressed_result=$(sign_adapter_authorization /routerrpc.Router/SendPaymentV2 \
+    "$progressed_id" "$intent_digest" "$payment_hash" "$invoice_digest" "$amount_sats" "$operation" |
+    docker exec -i "$payer_container" node /app/infra/lightning-adapter/client.mjs)
+  jq -e --arg paymentHash "$payment_hash" --arg amount "$amount_sats" \
+    '.result.status == "SUCCEEDED" and .result.paymentHash == $paymentHash and .result.amountSats == $amount' \
+    <<<$progressed_result >/dev/null
+  payer_paid=true
+  payment_count=$(compose exec -T alice lncli --network=regtest listpayments |
+    jq --arg paymentHash "${payment_hash#0x}" \
+      '[.payments[] | select((.payment_hash | ascii_downcase) == $paymentHash)] | length')
+  if (( payment_count != 1 )); then
+    echo "stateless-initialization campaign did not dispatch exactly one native payment" >&2
+    return 1
+  fi
+
+  compose exec -T bob lncli --network=regtest \
+    --macaroonpath=/root/.lnd/treeswap/payer.macaroon payinvoice \
+    --force --fee_limit=10 --timeout=30s "$restore_request" >/dev/null
+  payer_paid=false
+  restore_request=""
+  unset payment_request
+  docker exec "$payer_container" rm -f "$payer_journal" "$chain_progress"
+  docker rm -f "$payer_container" >/dev/null
+  trap - EXIT
+
+  echo "Stateless chain-initialization smoke passed: fresh state and restart failed closed, a higher real block unlocked exposure, and exactly one payment settled."
+}
+
 smoke_stale_chain_header() {
   ensure_runtime_env
   start_lab >/dev/null
@@ -2415,6 +2520,7 @@ case "${1:-}" in
   policy-fault-smoke) smoke_policy_faults ;;
   directional-capacity-smoke) smoke_directional_capacity ;;
   daily-cap-smoke) smoke_daily_cap ;;
+  stateless-init-smoke) smoke_stateless_chain_initialization ;;
   stale-chain-smoke) smoke_stale_chain_header ;;
   unsynced-chain-smoke) smoke_unsynced_chain_catchup ;;
   force-close-smoke) smoke_force_close_recovery ;;
@@ -2426,7 +2532,7 @@ case "${1:-}" in
   down) stop_lab ;;
   destroy) destroy_lab ;;
   *)
-    echo "Usage: $0 {up|smoke|adapter-smoke|credential-smoke|credential-rotation-smoke|tls-rotation-smoke|invoice-fault-smoke|policy-fault-smoke|directional-capacity-smoke|daily-cap-smoke|stale-chain-smoke|unsynced-chain-smoke|force-close-smoke|route-fault-smoke|htlc-cutoff-smoke|coordinator-smoke|coordinator-invoice-smoke|status|down|destroy}" >&2
+    echo "Usage: $0 {up|smoke|adapter-smoke|credential-smoke|credential-rotation-smoke|tls-rotation-smoke|invoice-fault-smoke|policy-fault-smoke|directional-capacity-smoke|daily-cap-smoke|stateless-init-smoke|stale-chain-smoke|unsynced-chain-smoke|force-close-smoke|route-fault-smoke|htlc-cutoff-smoke|coordinator-smoke|coordinator-invoice-smoke|status|down|destroy}" >&2
     exit 2
     ;;
 esac

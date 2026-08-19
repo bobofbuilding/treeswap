@@ -2,6 +2,7 @@ import { createPublicKey } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { LightningActionJournal } from "../../lib/lightning-action-journal.mjs";
+import { LightningChainProgressStore } from "../../lib/lightning-chain-progress.mjs";
 import { LightningAdapterRuntime } from "../../lib/lightning-adapter-runtime.mjs";
 import { LndRestClient, LndRestError } from "../../lib/lnd-rest-client.mjs";
 
@@ -55,6 +56,7 @@ const lnd = await LndRestClient.create({
   expectedCertificateFingerprint: required("LND_TLS_CERT_FINGERPRINT"),
 });
 const journal = await LightningActionJournal.open(required("ADAPTER_JOURNAL_PATH"));
+const chainProgress = await LightningChainProgressStore.open(required("CHAIN_PROGRESS_PATH"));
 const policy = Object.freeze({
   maxAuthorizationLifetimeSeconds: integer("MAX_AUTHORIZATION_LIFETIME_SECONDS", 300),
   maxCredentialAgeSeconds: integer("MAX_CREDENTIAL_AGE_SECONDS", 31_536_000),
@@ -94,8 +96,10 @@ const runtime = new LightningAdapterRuntime({
   keyId: required("COORDINATOR_KEY_ID"),
   lnd,
   journal,
+  chainProgress,
   policy,
 });
+await runtime.initializeChainProgress();
 
 const server = createServer(async (request, response) => {
   if (request.method === "GET" && request.url === "/healthz") {
