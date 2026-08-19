@@ -108,7 +108,8 @@ The public web application never receives a node macaroon, seed, preimage store,
 ## 7. Fees and units
 
 - The contract transfers exact BIT wei and performs no onchain par conversion.
-- Quotes use whole sats in v1 and reject incompatible dust.
+- [`UNITS_AND_ROUNDING.md`](UNITS_AND_ROUNDING.md) defines the only signable unit model: `uint96` BIT wei, whole `uint64` sats, exact millisatoshi divisibility, and integer basis points.
+- Quotes use whole sats in v1 and reject incompatible millisatoshi dust.
 - The protocol fee is denominated on the BIT leg in both directions.
 - BIT → Lightning carries the higher solver fee because it consumes outbound Lightning liquidity and routing certainty.
 - Every active swap fixes its exact fee; no later configuration can reprice it.

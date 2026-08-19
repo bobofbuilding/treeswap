@@ -120,9 +120,11 @@ The risk monitor pins the ERC-1967 implementation slot, proxy and implementation
 
 ### TS-H04 — Rounding and unit mismatch
 
+**Status:** Canonical integer units, explicit rounding order, exact-output minimality, and conservation tests implemented
+
 BIT uses 18 decimals, Lightning routes in millisatoshis, and the product quotes whole satoshis. At 100 sats per BIT, one sat equals `0.01 BIT`. Unsupported dust, inconsistent rounding, or fee order can leak value over many fills.
 
-Use integer arithmetic only, define canonical units, reject or escrow dust below one sat, round user output down and protocol fees in one explicitly documented direction, cap accumulated dust, and assert conservation after every state transition.
+`lib/units.mjs` is the canonical quote-unit boundary. It uses `bigint` only, accepts Lightning outputs as whole `uint64` sats, converts adapter millisatoshis only when divisible by 1,000, bounds escrow BIT to `uint96` wei, and fixes one reference sat at exactly `10^16` BIT wei. The BIT protocol fee rounds down. BIT → Lightning output rounds down to whole sats after the fee, routing is then subtracted, and the remaining sub-satoshi BIT wei is explicitly recorded on the solver leg rather than treated as protocol revenue. Exact-output quotes compute the smallest sufficient integer input. Conservation is asserted for every direction, boundary values, dust, and 10,000 small fills. UI decimal previews remain informational and cannot supply signed integer fields.
 
 ### TS-H05 — Fee denomination ambiguity
 
