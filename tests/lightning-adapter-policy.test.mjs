@@ -22,13 +22,22 @@ const policy = {
   maxPaymentSats: 100_000n,
   maxDailyValueSats: 500_000n,
   maxInFlightSats: 150_000n,
+  maxChainHeaderAgeSeconds: 3_600,
 };
 const transport = {
   tlsVerified: true,
   peerCertificateFingerprint: policy.pinnedCertificateFingerprint,
   privateNetwork: true,
 };
-const service = { healthy: true, syncedToChain: true, capacityEpoch: 7, inFlightSats: 25_000n, availableSats: 250_000n };
+const service = {
+  healthy: true,
+  syncedToChain: true,
+  walletSynced: true,
+  headerAgeSeconds: 30,
+  capacityEpoch: 7,
+  inFlightSats: 25_000n,
+  availableSats: 250_000n,
+};
 const usage = { dailyValueSats: 100_000n, requestIds: [] };
 
 function credential(role, overrides = {}) {
@@ -104,6 +113,10 @@ test("fails closed on TLS pin, private-network, health, or capacity changes", ()
   assert.equal(authorize({ transport: { ...transport, peerCertificateFingerprint: "changed" } }).allowed, false);
   assert.equal(authorize({ transport: { ...transport, privateNetwork: false } }).allowed, false);
   assert.equal(authorize({ service: { ...service, syncedToChain: false } }).allowed, false);
+  assert.equal(authorize({ service: { ...service, walletSynced: false } }).allowed, false);
+  const stale = authorize({ service: { ...service, healthy: false, headerAgeSeconds: 3_601 } });
+  assert.equal(stale.allowed, false);
+  assert.match(stale.reasons.join("; "), /best chain header is stale/);
   assert.equal(authorize({ service: { ...service, capacityEpoch: 8 } }).allowed, false);
 });
 

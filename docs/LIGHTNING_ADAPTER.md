@@ -24,7 +24,7 @@ Before every RPC, `authorizeLightningRpc` independently requires:
 
 1. an active, unexpired, non-browser credential for the exact service role and URI;
 2. verified private-network TLS with the pinned certificate;
-3. a healthy, chain-synced node, at least one active channel, enough direction-specific local or remote liquidity, and the current capacity epoch;
+3. a healthy node whose chain and wallet are synced and whose best-header timestamp is inside the configured age ceiling, with at least one active channel, enough direction-specific local or remote liquidity, and the current capacity epoch;
 4. an unused adapter request ID;
 5. the accepted intent's exact digest, payment hash, invoice digest, and whole-satoshi amount;
 6. per-payment, daily-value, and in-flight caps; and
@@ -44,6 +44,8 @@ The audit record contains hashes, integer amount, method, decision, and reason c
 
 `npm run regtest:policy-fault-smoke` proves excessive fee and per-payment requests never reach LND, saturates the node with two real held HTLCs and enforces the aggregate in-flight cap, rejects while the only channel is offline, recovers after the peer and channel return, and refuses to start a disposable adapter with a mismatched TLS pin. Each pre-dispatch rejection is followed by read-only `NOT_FOUND` tracking once the service is healthy.
 
+`npm run regtest:stale-chain-smoke` proves the adapter does not trust LND's chain-sync boolean alone. It bounds the real `best_header_timestamp`, requires `wallet_synced`, rejects an exact signed payment after a deliberate no-block interval at a compressed threshold, and proves through read-only tracking that no payment reached LND. The normally configured pinned adapter remains healthy on the same node.
+
 `npm run regtest:route-fault-smoke` pays a standard invoice from a synced third node with no channels. It requires one terminal `FAILED/NO_ROUTE` dispatch; read-only tracking may return the exact failed payment or non-ambiguous, hash-redacted `NOT_FOUND`, and neither result permits retry. The campaign then requires rejection of the exact authorization replay, rejection of a new authorization that reuses the payment hash, and exactly one matching LND payment record. It passes from empty regtest volumes and across five consecutive warm-state runs.
 
 `npm run regtest:htlc-cutoff-smoke` rapidly advances a real accepted HTLC to TreeSwap's 24-block settlement reserve. The adapter rejects the correct preimage at the exact boundary, then cancellation releases the original payer. The reserve is deliberately six blocks earlier than the 18-block LND auto-cancel boundary observed with the pinned release.
@@ -58,4 +60,4 @@ Bake each role from a dedicated root key, record issuance and expiry, rotate bef
 
 ## Deployment gate
 
-Before testnet funding, add live directional-balance exhaustion, daily-cap rollover, prolonged block delay, force-close, unsynced-node, real TLS-certificate rotation, and overlap-credential rotation campaigns; export a secret-free evidence bundle; and independently review the implementation and evidence. Exact grant manifests, credential timeout, root-key revocation, hold-invoice terminal faults, accepted-state LND restart, payer- and invoice-side lost-response recovery, rapid-block HTLC cutoff, fee/amount/in-flight caps, channel-offline recovery, and TLS-pin mismatch now pass locally.
+Before testnet funding, add live directional-balance exhaustion, daily-cap rollover, force-close, genuinely unsynced-node catch-up, real TLS-certificate rotation, overlap-credential rotation, and production-duration block-delay campaigns; export a secret-free evidence bundle; and independently review the implementation and evidence. Exact grant manifests, credential timeout, root-key revocation, hold-invoice terminal faults, accepted-state LND restart, payer- and invoice-side lost-response recovery, rapid-block HTLC cutoff, compressed-threshold stale-header rejection, fee/amount/in-flight caps, channel-offline recovery, and TLS-pin mismatch now pass locally.

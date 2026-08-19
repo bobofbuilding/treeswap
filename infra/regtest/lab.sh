@@ -201,6 +201,16 @@ fund_private_channel() {
   return 1
 }
 
+refresh_regtest_chain_header() {
+  local miner_address
+  miner_address=$(compose exec -T alice lncli --network=regtest newaddress p2tr | jq -er .address)
+  compose exec -T bitcoind bitcoin-cli -regtest \
+    -rpcuser="$BITCOIND_RPC_USER" -rpcpassword="$BITCOIND_RPC_PASSWORD" \
+    generatetoaddress 1 "$miner_address" >/dev/null
+  wait_for_chain_sync alice
+  wait_for_chain_sync bob
+}
+
 bake_node_credentials() {
   local node=$1
   compose exec -T "$node" mkdir -p /root/.lnd/treeswap
@@ -483,6 +493,7 @@ start_lab() {
   initialize_wallet alice
   initialize_wallet bob
   fund_private_channel
+  refresh_regtest_chain_header
   bake_credentials
   start_adapters
   echo "TreeSwap regtest nodes, private channel, and isolated Lightning adapters are active."
@@ -1098,6 +1109,91 @@ smoke_policy_faults() {
   echo "Policy fault smoke passed: fee, amount, in-flight, offline-channel, no-dispatch, recovery, and TLS-pin enforcement."
 }
 
+smoke_stale_chain_header() {
+  ensure_runtime_env
+  start_lab >/dev/null
+  local stale_container="treeswap-regtest-stale-payer"
+  local height_before height_after info best_header_timestamp header_age_seconds
+  local invoice payment_request payment_hash invoice_digest intent_digest request_id operation envelope result decode_result
+
+  trap 'docker rm -f "${stale_container:-treeswap-regtest-stale-payer}" >/dev/null 2>&1 || true' EXIT
+  docker rm -f "$stale_container" >/dev/null 2>&1 || true
+
+  info=$(compose exec -T alice lncli --network=regtest getinfo)
+  jq -e '.synced_to_chain == true and .wallet_synced == true and (.best_header_timestamp | tonumber) > 0' \
+    <<<"$info" >/dev/null
+  height_before=$(jq -er '.block_height | tonumber' <<<"$info")
+  sleep 3
+  info=$(compose exec -T alice lncli --network=regtest getinfo)
+  height_after=$(jq -er '.block_height | tonumber' <<<"$info")
+  if (( height_after != height_before )); then
+    echo "regtest advanced during the deliberate no-block interval" >&2
+    return 1
+  fi
+  best_header_timestamp=$(jq -er '.best_header_timestamp | tonumber' <<<"$info")
+  header_age_seconds=$(($(date +%s) - best_header_timestamp))
+  if (( header_age_seconds <= 1 )); then
+    echo "best header did not cross the disposable stale-header threshold" >&2
+    return 1
+  fi
+
+  compose --profile adapter run --rm -d --name "$stale_container" \
+    -e MAX_CHAIN_HEADER_AGE_SECONDS=1 \
+    -e ADAPTER_JOURNAL_PATH=/tmp/stale-actions.jsonl \
+    payer-adapter >/dev/null
+  for _ in $(seq 1 60); do
+    if docker exec "$stale_container" node -e \
+      'fetch("http://127.0.0.1:3000/healthz").then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))' \
+      >/dev/null 2>&1; then
+      break
+    fi
+    sleep 1
+  done
+  if ! docker exec "$stale_container" node -e \
+    'fetch("http://127.0.0.1:3000/healthz").then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))' \
+    >/dev/null 2>&1; then
+    echo "disposable stale-header adapter did not become ready" >&2
+    return 1
+  fi
+
+  invoice=$(compose exec -T bob lncli --network=regtest addinvoice \
+    --amt=10000 --memo=treeswap-stale-header --expiry=600 --private)
+  payment_request=$(jq -er '.payment_request' <<<"$invoice")
+  payment_hash=$(compose exec -T alice lncli --network=regtest \
+    --macaroonpath=/root/.lnd/treeswap/payer.macaroon decodepayreq "$payment_request" |
+    jq -er '.payment_hash | ascii_downcase | "0x" + .')
+  invoice_digest="0x$(printf '%s' "$payment_request" | openssl dgst -sha256 -binary | xxd -p -c 256)"
+  intent_digest="0x$(openssl rand -hex 32)"
+  request_id="0x$(openssl rand -hex 32)"
+  operation=$(jq -cn --arg paymentRequest "$payment_request" \
+    '{paymentRequest:$paymentRequest,timeoutSeconds:30,feeLimitSats:"10"}')
+  envelope=$(sign_adapter_authorization /routerrpc.Router/SendPaymentV2 \
+    "$request_id" "$intent_digest" "$payment_hash" "$invoice_digest" 10000 "$operation")
+  if result=$(printf '%s\n' "$envelope" |
+    docker exec -i "$stale_container" node /app/infra/lightning-adapter/client.mjs); then
+    echo "stale-header adapter dispatched a new payment" >&2
+    return 1
+  fi
+  if ! jq -e '.ambiguous == false and (.error | test("best chain header is stale"))' <<<"$result" >/dev/null; then
+    echo "stale-header adapter failed for an unexpected reason" >&2
+    jq -c '{error,errorCode,ambiguous}' <<<"$result" >&2
+    return 1
+  fi
+
+  assert_adapter_payment_not_found "$intent_digest" "$payment_hash" "$invoice_digest" 10000
+  request_id="0x$(openssl rand -hex 32)"
+  decode_result=$(call_adapter payer-adapter /lnrpc.Lightning/DecodePayReq \
+    "$request_id" "$intent_digest" "$payment_hash" "$invoice_digest" 10000 \
+    "$(jq -cn --arg paymentRequest "$payment_request" '{paymentRequest:$paymentRequest}')")
+  jq -e --arg paymentHash "$payment_hash" \
+    '.result.paymentHash == $paymentHash and .result.amountSats == "10000"' <<<"$decode_result" >/dev/null
+
+  docker rm -f "$stale_container" >/dev/null
+  unset payment_request envelope
+  trap - EXIT
+  echo "Stale-chain smoke passed: no blocks advanced, the bounded stale-header adapter rejected before dispatch, and the normal pinned adapter remained healthy."
+}
+
 smoke_route_and_duplicate_failure() {
   ensure_runtime_env
   start_lab >/dev/null
@@ -1480,6 +1576,7 @@ case "${1:-}" in
   credential-smoke) smoke_credential_lifecycle ;;
   invoice-fault-smoke) smoke_invoice_faults ;;
   policy-fault-smoke) smoke_policy_faults ;;
+  stale-chain-smoke) smoke_stale_chain_header ;;
   route-fault-smoke) smoke_route_and_duplicate_failure ;;
   htlc-cutoff-smoke) smoke_htlc_cutoff ;;
   coordinator-smoke) smoke_coordinator_reconciliation ;;
@@ -1488,7 +1585,7 @@ case "${1:-}" in
   down) stop_lab ;;
   destroy) destroy_lab ;;
   *)
-    echo "Usage: $0 {up|smoke|adapter-smoke|credential-smoke|invoice-fault-smoke|policy-fault-smoke|route-fault-smoke|htlc-cutoff-smoke|coordinator-smoke|coordinator-invoice-smoke|status|down|destroy}" >&2
+    echo "Usage: $0 {up|smoke|adapter-smoke|credential-smoke|invoice-fault-smoke|policy-fault-smoke|stale-chain-smoke|route-fault-smoke|htlc-cutoff-smoke|coordinator-smoke|coordinator-invoice-smoke|status|down|destroy}" >&2
     exit 2
     ;;
 esac

@@ -82,6 +82,7 @@ const campaigns = [
   ["lightning:adapter-hold", "npm", ["run", "regtest:adapter-smoke"]],
   ["lightning:invoice-faults", "npm", ["run", "regtest:invoice-fault-smoke"]],
   ["lightning:policy-faults", "npm", ["run", "regtest:policy-fault-smoke"]],
+  ["lightning:stale-chain-header", "npm", ["run", "regtest:stale-chain-smoke"]],
   ["lightning:route-and-duplicate-faults", "npm", ["run", "regtest:route-fault-smoke"]],
   ["lightning:htlc-cutoff", "npm", ["run", "regtest:htlc-cutoff-smoke"]],
   ["coordinator:payer-lost-response", "npm", ["run", "regtest:coordinator-smoke"]],

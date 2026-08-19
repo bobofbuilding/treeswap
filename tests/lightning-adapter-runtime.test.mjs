@@ -26,6 +26,7 @@ const policy = {
   capacityEpoch: 7,
   maxPendingChannels: 1,
   minimumActiveChannels: 1,
+  maxChainHeaderAgeSeconds: 3_600,
   healthTimeoutMs: 1_000,
   dispatchTimeoutMs: 2_000,
   minimumInvoiceExpirySeconds: 300,
@@ -44,8 +45,9 @@ class MockLnd {
   privateNetworkVerified = true;
   sendError = null;
   calls = [];
+  info = { synced_to_chain: true, wallet_synced: true, best_header_timestamp: String(NOW - 30), block_height: 900_000 };
 
-  async getInfo() { return { synced_to_chain: true, block_height: 900_000 }; }
+  async getInfo() { return this.info; }
   async listChannels() {
     return { channels: [{ active: true, local_balance: "500000", remote_balance: "500000", pending_htlcs: [] }] };
   }
@@ -176,4 +178,22 @@ test("rejects a changed invoice before dispatch", async () => {
   });
   await assert.rejects(() => adapter.execute(envelope), /invoice digest changed/);
   assert.equal(lnd.calls.some(([name]) => name === "send"), false);
+});
+
+test("rejects a stale best header or unsynced wallet before payment dispatch", async () => {
+  for (const info of [
+    { synced_to_chain: true, wallet_synced: true, best_header_timestamp: String(NOW - 3_601), block_height: 900_000 },
+    { synced_to_chain: true, wallet_synced: false, best_header_timestamp: String(NOW - 30), block_height: 900_000 },
+  ]) {
+    const lnd = new MockLnd();
+    lnd.info = info;
+    const { adapter } = await runtime("payer", lnd);
+    const envelope = authorization("/routerrpc.Router/SendPaymentV2", {
+      paymentRequest: PAYMENT_REQUEST,
+      timeoutSeconds: 10,
+      feeLimitSats: "10",
+    }, { requestId: id(`unhealthy-${info.best_header_timestamp}-${info.wallet_synced}`).toLowerCase() });
+    await assert.rejects(() => adapter.execute(envelope), /unhealthy or unsynced|best chain header is stale|wallet is unsynced/);
+    assert.equal(lnd.calls.some(([name]) => name === "send"), false);
+  }
 });

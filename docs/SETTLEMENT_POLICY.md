@@ -34,7 +34,7 @@ The Lightning adapter receives authorization only when all checks pass together:
 - Ethereum finality lag is healthy;
 - the BIT risk gate is open;
 - BIT and Lightning balances reconcile;
-- the Lightning node is synced; and
+- the Lightning node reports both chain and wallet sync and its best-header timestamp is inside the configured age ceiling; and
 - the adapter is healthy and still before `lastSafeClaimAt`.
 
 Any unknown or stale input rejects authorization. Observing a transaction is distinct from authorizing a Lightning payment.
@@ -43,4 +43,4 @@ Authorization is not a reusable boolean. `issueLightningAuthorization` creates a
 
 ## Required integration campaign
 
-The pure policy tests cover ordering, exact cutoffs, unsafe invoice expiry, insufficient final CLTV, held-HTLC boundaries, Ethereum finality, reorg detection, and fail-closed service state. A local Anvil campaign replaces blocks containing both direction-specific escrows before authorization, after authorization, and after claim; dispatch is denied on a changed canonical hash and an orphaned claim rolls back to `LOCKED` before one canonical beneficiary-bound recovery claim. Regtest proves rapid blocks reach the 24-block reserve while the HTLC remains accepted, the adapter rejects the correct preimage at the exact boundary, cancellation releases the payer, and no replacement payment is issued. Combined Ethereum/Lightning timing, live BIT-fork/public-testnet finality, prolonged block delay, mempool congestion, and force-close remain testnet launch gates.
+The pure policy tests cover ordering, exact cutoffs, unsafe invoice expiry, insufficient final CLTV, held-HTLC boundaries, Ethereum finality, reorg detection, and fail-closed service state. A local Anvil campaign replaces blocks containing both direction-specific escrows before authorization, after authorization, and after claim; dispatch is denied on a changed canonical hash and an orphaned claim rolls back to `LOCKED` before one canonical beneficiary-bound recovery claim. Regtest proves rapid blocks reach the 24-block reserve while the HTLC remains accepted, the adapter rejects the correct preimage at the exact boundary, cancellation releases the payer, and no replacement payment is issued. It also proves a real no-block interval crosses a compressed header-age ceiling and rejects payment before dispatch instead of trusting a chain-sync boolean alone. Combined Ethereum/Lightning timing, live BIT-fork/public-testnet finality, production-duration block delay, genuinely unsynced-node catch-up, mempool congestion, and force-close remain testnet launch gates.
