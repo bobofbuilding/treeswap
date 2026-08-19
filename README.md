@@ -15,7 +15,7 @@ The prototype assumes a business par value of **1 BIT = 100 sats**. This value i
 - EIP-4361 Sign-In with Ethereum using one-time server nonces and opaque sessions
 - Optional offchain email preferences for invoice notices and transaction receipts
 - Non-custodial direct sends: standard BIT transfers on Ethereum mainnet and exact BOLT 11 payments through a Lightning wallet
-- Immutable, segregated BIT vault prototype with user-signed quotes, beneficiary binding, price and exposure caps, ordered deadlines, and Foundry invariants
+- Immutable, direction-separated BIT escrow prototypes with signed quotes, beneficiary binding, price and exposure caps, ordered deadlines, and Foundry tests
 - Product and protocol specification in [`docs/PROTOCOL.md`](docs/PROTOCOL.md)
 - Liquidity operations plan in [`docs/LIQUIDITY_FUNDING.md`](docs/LIQUIDITY_FUNDING.md)
 - Fail-closed market, proxy, finality, and inventory policy in [`docs/RISK_POLICY.md`](docs/RISK_POLICY.md)
@@ -48,7 +48,7 @@ forge test
 ## Production work still required
 
 - Mainnet-fork testing of BIT upgrades, pauses, and balance behavior
-- Complementary user-funded BIT → Lightning escrow with direction-separated signatures
+- Mainnet-fork and cross-chain integration campaigns for both direction-separated escrows
 - Lightning hold-invoice coordinator
 - Solver daemon and quote transport
 - Bridge-escrow wallet integration with exact intent authorization and explicit approval boundaries

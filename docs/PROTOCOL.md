@@ -48,7 +48,7 @@ The user chooses among the solver quotes it actually receives, then signs one co
 
 ## 4. BIT inventory
 
-`contracts/src/TreeSwapBitVault.sol` is the first executable prototype for solver-owned BIT liquidity. It is immutable, has no administrator, and supports:
+`contracts/src/TreeSwapBitVault.sol` is the executable prototype for solver-owned BIT liquidity. It is immutable, has no administrator, and supports:
 
 - exact-balance deposits into a solver-specific account;
 - withdrawals of unreserved inventory only;
@@ -92,7 +92,7 @@ The public web application never receives a node macaroon, seed, preimage store,
 5. Anyone may relay the preimage, but BIT is paid only to the bound solver beneficiary.
 6. If payment never occurs, the user's exact-swap escrow refunds after the longer deadline.
 
-The current inventory vault models solver-funded BIT, so the complementary user-funded exact escrow remains a required contract before this direction is complete.
+`contracts/src/TreeSwapUserEscrow.sol` implements the complementary user-funded exact escrow. A direction-specific solver signature binds the user, solver beneficiary, gross BIT, BIT fee, Lightning output, invoice digest, payment hash, nonce, and deadlines before the user deposits. Anyone may relay a valid preimage, but only the bound solver beneficiary can receive the BIT payout. A timeout returns the complete deposit to the original user without an execution fee. Mainnet-fork and cross-chain integration tests remain required before testnet funding.
 
 ### Lightning → BIT
 
@@ -165,7 +165,7 @@ Direct sends do not inherit solver quotes, reference-par pricing, bridge fee log
 ## 12. Implementation order
 
 1. Exercise the current signed, capped BIT inventory vault against the mainnet-fork BIT proxy, including pause and implementation-change scenarios.
-2. Add the complementary user-funded exact BIT escrow for BIT → Lightning with a direction-separated EIP-712 type.
+2. Exercise the complementary user-funded BIT → Lightning escrow and its direction-separated EIP-712 type in mainnet-fork and cross-chain integration tests.
 3. Build the least-privilege Lightning regtest adapter and derive `lastSafeClaimAt` from validated BOLT 11 expiry, CLTV, Bitcoin height, and operating margins.
 4. Test reorgs and boundary races across both chain clocks, including delayed blocks, congestion, restart, and force-close cases.
 5. Add BIT proxy monitoring, reconciliation, quote shutdown, and an incident runbook without blocking existing claims or refunds.

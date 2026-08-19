@@ -42,7 +42,7 @@ Implemented now: the vault enforces an immutable reference-price band, maximum B
 ### TS-C02 — Unbound preimage claim
 
 **Severity:** Critical  
-**Status:** Implemented in the Lightning → BIT vault prototype
+**Status:** Implemented in both direction-specific escrow prototypes
 
 The preimage becomes public in a claim transaction and is known to a Lightning invoice creator. An escrow that pays `msg.sender` or allows the recipient to be chosen when the preimage is revealed can be stolen or front-run.
 
@@ -54,7 +54,7 @@ Safeguards:
 - make beneficiary changes impossible after payment authorization;
 - mark every payment hash consumed globally so it cannot be reused.
 
-The current vault binds the beneficiary in the user-signed quote before inventory is reserved. Anyone may relay the preimage, but the transfer target cannot change. The complementary BIT → Lightning escrow must implement the same property independently.
+The solver-funded vault binds the user's beneficiary in the user-signed Lightning → BIT quote before inventory is reserved. The user-funded escrow independently binds the solver beneficiary in a direction-specific, solver-signed BIT → Lightning quote before BIT is deposited. In both contracts anyone may relay the preimage, but the transfer target cannot change; payment hashes and direction-specific nonces are single-use, and the complete amount, fee, invoice digest, and deadlines are signed before Lightning authorization.
 
 ### TS-C03 — Timeout and finality race
 
@@ -256,7 +256,7 @@ A production escrow test suite should prove at least:
 
 - Mainnet-fork escrow campaign, including BIT proxy changes and pauses.
 - Regtest hold-invoice adapter and forced-timeout tests.
-- Complementary BIT → Lightning escrow and direction-replay tests.
+- Complementary BIT → Lightning escrow and direction-replay tests. **Repository harness complete; mainnet-fork and cross-chain integration remain.**
 - EIP-1271 SIWE support if contract wallets are accepted.
 - Verified email delivery, unsubscribe enforcement, retention limits, and abuse controls before sending mail.
 - Monitoring for BIT proxy upgrades and pauses.
