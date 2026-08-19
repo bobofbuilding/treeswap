@@ -15,6 +15,10 @@ interface ITreeSwapOpenGate {
     function isOpen() external view returns (bool);
 }
 
+interface ITreeSwapPaymentHashRegistry {
+    function consumePaymentHash(bytes32 paymentHash) external;
+}
+
 /// @notice Segregates solver-owned BIT inventory and locks exact amounts for
 ///         Lightning-to-BIT swaps. It is intentionally immutable and has no
 ///         administrator or upgrade path.
@@ -117,6 +121,7 @@ contract TreeSwapBitVault {
 
     IERC20Minimal public immutable BIT;
     ITreeSwapOpenGate public immutable openGate;
+    ITreeSwapPaymentHashRegistry public immutable paymentHashRegistry;
     address public immutable feeCollector;
     uint16 public immutable maxFeeBps;
     uint16 public immutable maxPriceDeviationBps;
@@ -170,10 +175,10 @@ contract TreeSwapBitVault {
         unlocked = 1;
     }
 
-    constructor(address bit, address collector, address gate, RiskConfig memory config) {
+    constructor(address bit, address collector, address gate, address hashRegistry, RiskConfig memory config) {
         if (
-            bit == address(0) || collector == address(0) || gate == address(0) || bit.code.length == 0
-                || gate.code.length == 0
+            bit == address(0) || collector == address(0) || gate == address(0) || hashRegistry == address(0)
+                || bit.code.length == 0 || gate.code.length == 0 || hashRegistry.code.length == 0
         ) revert InvalidAddress();
         if (
             config.maxFeeBps > ABSOLUTE_MAX_FEE_BPS || config.maxPriceDeviationBps > ABSOLUTE_MAX_PRICE_DEVIATION_BPS
@@ -186,6 +191,7 @@ contract TreeSwapBitVault {
 
         BIT = IERC20Minimal(bit);
         openGate = ITreeSwapOpenGate(gate);
+        paymentHashRegistry = ITreeSwapPaymentHashRegistry(hashRegistry);
         feeCollector = collector;
         maxFeeBps = config.maxFeeBps;
         maxPriceDeviationBps = config.maxPriceDeviationBps;
@@ -241,6 +247,7 @@ contract TreeSwapBitVault {
         uint256 nextEpochVolume = solverEpochVolume[quote.solver][epoch] + quote.amount;
         if (nextEpochVolume > maxEpochVolume) revert EpochVolumeExceedsCap();
 
+        paymentHashRegistry.consumePaymentHash(quote.paymentHash);
         availableBalance[quote.solver] -= quote.amount;
         totalAvailable -= quote.amount;
         totalLocked += quote.amount;

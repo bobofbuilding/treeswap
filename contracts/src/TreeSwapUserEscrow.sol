@@ -15,6 +15,10 @@ interface IUserEscrowOpenGate {
     function isOpen() external view returns (bool);
 }
 
+interface IUserEscrowPaymentHashRegistry {
+    function consumePaymentHash(bytes32 paymentHash) external;
+}
+
 /// @notice Locks user-funded BIT for an exact BIT-to-Lightning swap.
 /// @dev The solver signs a direction-specific EIP-712 quote before the user
 ///      deposits. Anyone may relay the Lightning preimage, but the BIT payout
@@ -112,6 +116,7 @@ contract TreeSwapUserEscrow {
 
     IBitEscrowToken public immutable BIT;
     IUserEscrowOpenGate public immutable openGate;
+    IUserEscrowPaymentHashRegistry public immutable paymentHashRegistry;
     address public immutable feeCollector;
     uint16 public immutable maxFeeBps;
     uint16 public immutable maxPriceDeviationBps;
@@ -159,10 +164,10 @@ contract TreeSwapUserEscrow {
         unlocked = 1;
     }
 
-    constructor(address bit, address collector, address gate, RiskConfig memory config) {
+    constructor(address bit, address collector, address gate, address hashRegistry, RiskConfig memory config) {
         if (
-            bit == address(0) || collector == address(0) || gate == address(0) || bit.code.length == 0
-                || gate.code.length == 0
+            bit == address(0) || collector == address(0) || gate == address(0) || hashRegistry == address(0)
+                || bit.code.length == 0 || gate.code.length == 0 || hashRegistry.code.length == 0
         ) revert InvalidAddress();
         if (
             config.maxFeeBps > ABSOLUTE_MAX_FEE_BPS || config.maxPriceDeviationBps > ABSOLUTE_MAX_PRICE_DEVIATION_BPS
@@ -175,6 +180,7 @@ contract TreeSwapUserEscrow {
 
         BIT = IBitEscrowToken(bit);
         openGate = IUserEscrowOpenGate(gate);
+        paymentHashRegistry = IUserEscrowPaymentHashRegistry(hashRegistry);
         feeCollector = collector;
         maxFeeBps = config.maxFeeBps;
         maxPriceDeviationBps = config.maxPriceDeviationBps;
@@ -200,6 +206,7 @@ contract TreeSwapUserEscrow {
         uint256 nextEpochVolume = solverEpochVolume[quote.solver][epoch] + quote.amount;
         if (nextEpochVolume > maxEpochVolume) revert EpochVolumeExceedsCap();
 
+        paymentHashRegistry.consumePaymentHash(quote.paymentHash);
         uint256 beforeBalance = BIT.balanceOf(address(this));
         _safeTransferFrom(msg.sender, address(this), quote.amount);
         uint256 afterBalance = BIT.balanceOf(address(this));

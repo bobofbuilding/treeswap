@@ -2,11 +2,12 @@
 pragma solidity 0.8.24;
 
 import {TreeSwapBitVault} from "../src/TreeSwapBitVault.sol";
-import {Mock1271Wallet, MockBit, MockOpenGate, TestBase} from "./helpers/TestBase.sol";
+import {Mock1271Wallet, MockBit, MockOpenGate, MockPaymentHashRegistry, TestBase} from "./helpers/TestBase.sol";
 
 contract TreeSwapBitVaultTest is TestBase {
     MockBit internal bit;
     MockOpenGate internal gate;
+    MockPaymentHashRegistry internal hashRegistry;
     TreeSwapBitVault internal vault;
 
     uint256 internal constant USER_PK = 0xA11CE;
@@ -26,7 +27,8 @@ contract TreeSwapBitVaultTest is TestBase {
         solver = vm.addr(SOLVER_PK);
         bit = new MockBit();
         gate = new MockOpenGate();
-        vault = new TreeSwapBitVault(address(bit), COLLECTOR, address(gate), _riskConfig());
+        hashRegistry = new MockPaymentHashRegistry();
+        vault = new TreeSwapBitVault(address(bit), COLLECTOR, address(gate), address(hashRegistry), _riskConfig());
         paymentHash = sha256(abi.encodePacked(PREIMAGE));
         bit.mint(solver, 10_000 ether);
         vm.prank(solver);
@@ -71,7 +73,9 @@ contract TreeSwapBitVaultTest is TestBase {
     }
 
     function testQuoteSignatureCannotReplayOnAnotherVault() public {
-        TreeSwapBitVault secondVault = new TreeSwapBitVault(address(bit), COLLECTOR, address(gate), _riskConfig());
+        MockPaymentHashRegistry secondRegistry = new MockPaymentHashRegistry();
+        TreeSwapBitVault secondVault =
+            new TreeSwapBitVault(address(bit), COLLECTOR, address(gate), address(secondRegistry), _riskConfig());
         vm.prank(solver);
         bit.approve(address(secondVault), type(uint256).max);
         _deposit(secondVault, 1_000 ether);

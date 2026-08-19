@@ -79,6 +79,17 @@ contract MockOpenGate {
     }
 }
 
+contract MockPaymentHashRegistry {
+    error PaymentHashAlreadyUsed();
+
+    mapping(bytes32 paymentHash => bool used) public paymentHashUsed;
+
+    function consumePaymentHash(bytes32 paymentHash) external {
+        if (paymentHashUsed[paymentHash]) revert PaymentHashAlreadyUsed();
+        paymentHashUsed[paymentHash] = true;
+    }
+}
+
 contract Mock1271Wallet {
     bytes4 internal constant MAGIC_VALUE = 0x1626ba7e;
     uint256 internal constant SECP256K1N_DIV_2 = 0x7fffffffffffffffffffffffffffffff5d576e7357a4501ddfe92f46681b20a0;

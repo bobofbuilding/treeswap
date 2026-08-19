@@ -61,7 +61,7 @@ The user chooses among the solver quotes it actually receives, then signs one co
 - an enforced ordering from quote expiry to last safe claim time to Ethereum refund;
 - permissionless preimage relay with payment only to the bound beneficiary;
 - timeout return to the original solver balance;
-- globally single-use payment hashes; and
+- globally single-use payment hashes through a sealed shared cross-direction registry; and
 - an immutable protocol-fee ceiling.
 
 The escrows accept canonical 65-byte EOA signatures, reject high-s signatures, and support ERC-1271 contract signatures through a shared static signature checker. Lightning → BIT reservations require the user and pre-funded solver to sign the same exact quote; only the named user can exercise it, so the solver has no transaction-time last-look after signing. Both escrows require a live, time-bounded authorization from the immutable `TreeSwapOpenGate` and reject an unexpected BIT pause or decimal setting at open. Gate expiry or emergency halt affects only new exposure; TreeSwap never calls it from withdrawal, claim, or refund.

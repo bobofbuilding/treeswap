@@ -2,11 +2,12 @@
 pragma solidity 0.8.24;
 
 import {TreeSwapUserEscrow} from "../src/TreeSwapUserEscrow.sol";
-import {Mock1271Wallet, MockBit, MockOpenGate, TestBase} from "./helpers/TestBase.sol";
+import {Mock1271Wallet, MockBit, MockOpenGate, MockPaymentHashRegistry, TestBase} from "./helpers/TestBase.sol";
 
 contract TreeSwapUserEscrowTest is TestBase {
     MockBit internal bit;
     MockOpenGate internal gate;
+    MockPaymentHashRegistry internal hashRegistry;
     TreeSwapUserEscrow internal escrow;
 
     uint256 internal constant SOLVER_PK = 0x5107E2;
@@ -24,7 +25,8 @@ contract TreeSwapUserEscrowTest is TestBase {
         solver = vm.addr(SOLVER_PK);
         bit = new MockBit();
         gate = new MockOpenGate();
-        escrow = new TreeSwapUserEscrow(address(bit), COLLECTOR, address(gate), _riskConfig());
+        hashRegistry = new MockPaymentHashRegistry();
+        escrow = new TreeSwapUserEscrow(address(bit), COLLECTOR, address(gate), address(hashRegistry), _riskConfig());
         paymentHash = sha256(abi.encodePacked(PREIMAGE));
         bit.mint(USER, 10_000 ether);
         vm.prank(USER);

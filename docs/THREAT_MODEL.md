@@ -150,7 +150,9 @@ An adapter that can create, settle, cancel, and inspect every invoice is a hot-w
 
 ### TS-H08 — Partial-fill hash reuse
 
-A Lightning invoice is not a divisible onchain order. Reusing its payment hash for multiple independent fills creates replay and over-claim risks. Split partial orders into child intents with unique hashes, amounts, recipients, nonces, and expiries before publication. Do not support AMP, keysend, amountless invoices, or BOLT 12 in v1.
+**Status:** Full-fill-only invoice policy and sealed cross-direction onchain payment-hash registry implemented; live LND decode/regtest integration remains a deployment gate
+
+A Lightning invoice is not a divisible onchain order. TreeSwap v1 now rejects partial and child intents rather than attempting to divide one invoice. `validateFullFillInvoice` accepts one exact, amount-bearing mainnet BOLT 11 invoice and rejects AMP, keysend, amountless invoices, BOLT 12, unsupported required features, duplicate singleton tags, and mismatched invoice kind. Basic MPP is allowed only as internal delivery of the single exact invoice total, never as separate TreeSwap fills. `TreeSwapPaymentHashRegistry` is configured with exactly the two reviewed direction contracts and irreversibly sealed; opening either direction consumes the hash globally, so the opposite escrow cannot reuse it. [`INVOICE_POLICY.md`](INVOICE_POLICY.md) defines the boundary. Live LND decoding and regtest integration remain required.
 
 ### TS-H09 — Reorg and payment authorization
 
