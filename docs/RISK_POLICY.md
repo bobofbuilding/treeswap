@@ -27,17 +27,21 @@ Each direction has its own starting fee. The BIT → Lightning fee starts higher
 
 The fee is a risk and allocation control, not a substitute for the market-price circuit breaker.
 
-## BIT proxy monitor
+## BIT proxy monitor and onchain gate
 
 The monitor reads the standardized ERC-1967 implementation slot:
 
 `0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc`
 
-It also pins both proxy and implementation bytecode hashes. An `Upgraded` event is an alert input, but each quote must re-read state rather than trusting that an event was observed. A detected mismatch stops new quotes and reservations. It must never disable withdrawals, claims, or refunds for existing positions.
+It also pins both proxy and implementation bytecode hashes. An `Upgraded` event is an alert input, but each quote must re-read state rather than trusting that an event was observed. `buildBitRiskAttestation` commits the reviewed chain, proxy, implementation, code hashes, decimals, pause flag, observation time, latest and finalized blocks, executable-price median/spread, and independent source set.
+
+`TreeSwapOpenGate` deploys closed. A controller stages that nonzero digest, waits the immutable resume delay, and opens only until the attestation's bounded expiry. A stale attestation closes automatically. The guardian or controller can halt new reservations immediately and cancel a pending reopen. Neither role is called by deposits, withdrawals, claims, or refunds, so TreeSwap governance cannot pause exits. Both escrows also read `decimals()` and `paused()` at the opening transition and fail closed on an unavailable or unexpected response.
 
 ## Recovery rule
 
-An automated halt is immediate. Resuming requires all inputs to be healthy, a written implementation and market review, and the configured multisig change process. No single web server or solver process may silently update the pinned implementation or loosen the reference band.
+An automated halt is immediate. Resuming requires all inputs to be healthy, a written implementation and market review, the immutable delay, and the configured multisig change process. No single web server or solver process may silently update the pinned implementation or loosen the reference band. The controller and guardian addresses, delay, maximum open duration, and escrow gate address are immutable deployment parameters.
+
+If BIT itself is paused, its token logic may temporarily make claims, refunds, or withdrawals revert even though TreeSwap does not block them. Do not authorize a Lightning action while paused. After an unpause, the same exits remain callable. An implementation change never resumes automatically: review the new code and storage behavior, update the pinned deployment manifest through a new reviewed deployment if required, and only then stage a new risk digest.
 
 ## Deployment gate
 

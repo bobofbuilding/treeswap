@@ -112,9 +112,11 @@ V1 has no public order reservation. `TreeSwapBitVault` now requires the user and
 
 ### TS-H03 — BIT proxy upgrade or pause
 
+**Status:** Fail-closed, time-bounded onchain open gate and runtime token checks implemented; live monitor, pinned mainnet values, multisig roles, and fork upgrade/pause tests remain deployment gates
+
 BIT is an ERC-1967 proxy and its current implementation is pausable and upgradeable. An implementation change could alter transfers, decimals, or trust assumptions; a pause can prevent escrow movement.
 
-TreeSwap must monitor the proxy implementation slot and pause new swaps on change, pin expected decimals and code assumptions, use balance-delta checks, and provide an emergency policy for already escrowed funds. A TreeSwap pause must never indefinitely block valid claims and refunds.
+The risk monitor pins the ERC-1967 implementation slot, proxy and implementation code hashes, decimals, pause state, finality, and executable-price inputs. `buildBitRiskAttestation` commits the exact healthy snapshot. The immutable `TreeSwapOpenGate` deploys closed, requires a delayed controller action to open, expires automatically, and lets a separate guardian halt immediately. Both escrows require that live gate and independently fail closed unless `decimals() == 18` and `paused() == false` at the opening transition. Exact sender and recipient balance deltas are enforced on token movement. The gate is never consulted by withdrawal, claim, or refund, so it cannot trap existing positions; BIT's own pause may still delay transfers until the token is unpaused. Production requires live pinned values, continuous monitoring, multisig-controlled roles, alerting, and mainnet-fork upgrade/pause tests before funding.
 
 ### TS-H04 — Rounding and unit mismatch
 

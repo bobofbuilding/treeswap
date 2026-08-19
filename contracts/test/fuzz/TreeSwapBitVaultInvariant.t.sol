@@ -2,7 +2,7 @@
 pragma solidity 0.8.24;
 
 import {TreeSwapBitVault} from "../../src/TreeSwapBitVault.sol";
-import {MockBit, TestBase, Vm} from "../helpers/TestBase.sol";
+import {MockBit, MockOpenGate, TestBase, Vm} from "../helpers/TestBase.sol";
 
 contract VaultHandler {
     Vm internal constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
@@ -139,15 +139,18 @@ contract TreeSwapBitVaultInvariantTest is TestBase {
     }
 
     MockBit internal bit;
+    MockOpenGate internal gate;
     TreeSwapBitVault internal vault;
     VaultHandler internal handler;
     address[] internal targets;
 
     function setUp() public {
         bit = new MockBit();
+        gate = new MockOpenGate();
         vault = new TreeSwapBitVault(
             address(bit),
             address(0xFEE),
+            address(gate),
             TreeSwapBitVault.RiskConfig({
                 maxFeeBps: 100,
                 maxPriceDeviationBps: 1_000,

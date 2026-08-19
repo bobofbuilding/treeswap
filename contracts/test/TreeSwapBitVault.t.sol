@@ -2,10 +2,11 @@
 pragma solidity 0.8.24;
 
 import {TreeSwapBitVault} from "../src/TreeSwapBitVault.sol";
-import {Mock1271Wallet, MockBit, TestBase} from "./helpers/TestBase.sol";
+import {Mock1271Wallet, MockBit, MockOpenGate, TestBase} from "./helpers/TestBase.sol";
 
 contract TreeSwapBitVaultTest is TestBase {
     MockBit internal bit;
+    MockOpenGate internal gate;
     TreeSwapBitVault internal vault;
 
     uint256 internal constant USER_PK = 0xA11CE;
@@ -24,7 +25,8 @@ contract TreeSwapBitVaultTest is TestBase {
         user = vm.addr(USER_PK);
         solver = vm.addr(SOLVER_PK);
         bit = new MockBit();
-        vault = new TreeSwapBitVault(address(bit), COLLECTOR, _riskConfig());
+        gate = new MockOpenGate();
+        vault = new TreeSwapBitVault(address(bit), COLLECTOR, address(gate), _riskConfig());
         paymentHash = sha256(abi.encodePacked(PREIMAGE));
         bit.mint(solver, 10_000 ether);
         vm.prank(solver);
@@ -69,7 +71,7 @@ contract TreeSwapBitVaultTest is TestBase {
     }
 
     function testQuoteSignatureCannotReplayOnAnotherVault() public {
-        TreeSwapBitVault secondVault = new TreeSwapBitVault(address(bit), COLLECTOR, _riskConfig());
+        TreeSwapBitVault secondVault = new TreeSwapBitVault(address(bit), COLLECTOR, address(gate), _riskConfig());
         vm.prank(solver);
         bit.approve(address(secondVault), type(uint256).max);
         _deposit(secondVault, 1_000 ether);
@@ -119,7 +121,9 @@ contract TreeSwapBitVaultTest is TestBase {
 
         vm.prank(address(wallet));
         vault.reserve(quote, signature, solverSignature);
-        assertEq(uint256(vault.swapState(quote.quoteId)), uint256(TreeSwapBitVault.SwapState.LOCKED), "1271 reserve failed");
+        assertEq(
+            uint256(vault.swapState(quote.quoteId)), uint256(TreeSwapBitVault.SwapState.LOCKED), "1271 reserve failed"
+        );
     }
 
     function testEip1271UserRejectsWrongOwnerSignature() public {
@@ -191,6 +195,52 @@ contract TreeSwapBitVaultTest is TestBase {
         vault.claim(first.quoteId, PREIMAGE);
         _submit(vault, second);
         assertEq(vault.activeUserReservations(user), 1, "active slot did not reopen");
+    }
+
+    function testGateHaltBlocksNewReservationsButNotExistingClaimOrWithdrawal() public {
+        _deposit(vault, 1_000 ether);
+        TreeSwapBitVault.SelectedQuote memory first =
+            _reserve(vault, keccak256("before-halt"), paymentHash, BENEFICIARY, 400 ether, 0);
+        gate.setOpen(false);
+
+        TreeSwapBitVault.SelectedQuote memory second = _quote(
+            keccak256("after-halt"),
+            sha256(abi.encodePacked(bytes32("after-halt"))),
+            BENEFICIARY,
+            400 ether,
+            0,
+            nextNonce++
+        );
+        _expectReserveRevert(vault, second, TreeSwapBitVault.OpensPaused.selector);
+
+        vault.claim(first.quoteId, PREIMAGE);
+        vm.prank(solver);
+        vault.withdraw(100 ether, solver);
+        assertEq(bit.balanceOf(BENEFICIARY), 400 ether, "halt blocked claim");
+    }
+
+    function testGateHaltDoesNotBlockExistingRefund() public {
+        _deposit(vault, 1_000 ether);
+        TreeSwapBitVault.SelectedQuote memory quote =
+            _reserve(vault, keccak256("refund-after-halt"), paymentHash, BENEFICIARY, 400 ether, 0);
+        gate.setOpen(false);
+        vm.warp(quote.refundAfter);
+        vault.refund(quote.quoteId);
+        assertEq(vault.availableBalance(solver), 1_000 ether, "halt blocked refund");
+    }
+
+    function testTokenPauseOrDecimalChangeFailsClosedForNewReservations() public {
+        _deposit(vault, 1_000 ether);
+        TreeSwapBitVault.SelectedQuote memory quote =
+            _quote(keccak256("runtime-token-check"), paymentHash, BENEFICIARY, 400 ether, 0, nextNonce++);
+
+        bit.setPaused(true);
+        _expectReserveRevert(vault, quote, TreeSwapBitVault.UnexpectedTokenConfiguration.selector);
+        bit.setPaused(false);
+        bit.setDecimals(8);
+        _expectReserveRevert(vault, quote, TreeSwapBitVault.UnexpectedTokenConfiguration.selector);
+        bit.setDecimals(18);
+        _submit(vault, quote);
     }
 
     function testUserNonceCannotBeReused() public {

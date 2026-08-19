@@ -5,8 +5,14 @@ import {TreeSwapSignatureChecker} from "./TreeSwapSignatureChecker.sol";
 
 interface IERC20Minimal {
     function balanceOf(address account) external view returns (uint256);
+    function decimals() external view returns (uint8);
+    function paused() external view returns (bool);
     function transfer(address to, uint256 amount) external returns (bool);
     function transferFrom(address from, address to, uint256 amount) external returns (bool);
+}
+
+interface ITreeSwapOpenGate {
+    function isOpen() external view returns (bool);
 }
 
 /// @notice Segregates solver-owned BIT inventory and locks exact amounts for
@@ -73,6 +79,8 @@ contract TreeSwapBitVault {
     error InvalidPaymentHash();
     error InvalidInvoiceDigest();
     error InvalidRiskConfig();
+    error OpensPaused();
+    error UnexpectedTokenConfiguration();
     error InvalidSignature();
     error InvalidDeadlineOrder();
     error QuoteExpired();
@@ -108,6 +116,7 @@ contract TreeSwapBitVault {
     bytes32 private constant VERSION_HASH = keccak256("1");
 
     IERC20Minimal public immutable BIT;
+    ITreeSwapOpenGate public immutable openGate;
     address public immutable feeCollector;
     uint16 public immutable maxFeeBps;
     uint16 public immutable maxPriceDeviationBps;
@@ -161,8 +170,11 @@ contract TreeSwapBitVault {
         unlocked = 1;
     }
 
-    constructor(address bit, address collector, RiskConfig memory config) {
-        if (bit == address(0) || collector == address(0) || bit.code.length == 0) revert InvalidAddress();
+    constructor(address bit, address collector, address gate, RiskConfig memory config) {
+        if (
+            bit == address(0) || collector == address(0) || gate == address(0) || bit.code.length == 0
+                || gate.code.length == 0
+        ) revert InvalidAddress();
         if (
             config.maxFeeBps > ABSOLUTE_MAX_FEE_BPS || config.maxPriceDeviationBps > ABSOLUTE_MAX_PRICE_DEVIATION_BPS
                 || config.referenceSatsPerBit == 0 || config.epochDuration == 0 || config.minSettlementWindow == 0
@@ -173,6 +185,7 @@ contract TreeSwapBitVault {
         ) revert InvalidRiskConfig();
 
         BIT = IERC20Minimal(bit);
+        openGate = ITreeSwapOpenGate(gate);
         feeCollector = collector;
         maxFeeBps = config.maxFeeBps;
         maxPriceDeviationBps = config.maxPriceDeviationBps;
@@ -217,11 +230,11 @@ contract TreeSwapBitVault {
     ///         against the solver's pre-funded inventory.
     /// @dev Both signatures share the chain- and vault-bound EIP-712 digest. A
     ///      relay cannot change a field, and only the named user can reserve.
-    function reserve(
-        SelectedQuote calldata quote,
-        bytes calldata userSignature,
-        bytes calldata solverSignature
-    ) external nonReentrant {
+    function reserve(SelectedQuote calldata quote, bytes calldata userSignature, bytes calldata solverSignature)
+        external
+        nonReentrant
+    {
+        _requireOpen();
         _validateQuote(quote, userSignature, solverSignature);
 
         uint256 epoch = block.timestamp / epochDuration;
@@ -355,11 +368,10 @@ contract TreeSwapBitVault {
         return totalAvailable + totalLocked;
     }
 
-    function _validateQuote(
-        SelectedQuote calldata quote,
-        bytes calldata userSignature,
-        bytes calldata solverSignature
-    ) internal view {
+    function _validateQuote(SelectedQuote calldata quote, bytes calldata userSignature, bytes calldata solverSignature)
+        internal
+        view
+    {
         if (msg.sender != quote.user) revert InvalidUser();
         if (quote.quoteId == bytes32(0)) revert InvalidAmount();
         if (quote.user == address(0) || quote.solver == address(0) || quote.beneficiary == address(0)) {
@@ -416,9 +428,27 @@ contract TreeSwapBitVault {
 
     function _safeTransferExact(address recipient, uint256 amount) internal {
         uint256 beforeBalance = BIT.balanceOf(address(this));
+        uint256 recipientBefore = BIT.balanceOf(recipient);
         (bool ok, bytes memory data) = address(BIT).call(abi.encodeCall(IERC20Minimal.transfer, (recipient, amount)));
         if (!ok || (data.length != 0 && !abi.decode(data, (bool)))) revert TokenTransferFailed();
         uint256 afterBalance = BIT.balanceOf(address(this));
-        if (beforeBalance - afterBalance != amount) revert UnexpectedTokenBalanceDelta();
+        uint256 recipientAfter = BIT.balanceOf(recipient);
+        if (beforeBalance - afterBalance != amount || recipientAfter - recipientBefore != amount) {
+            revert UnexpectedTokenBalanceDelta();
+        }
+    }
+
+    function _requireOpen() internal view {
+        (bool gateOk, bytes memory gateData) =
+            address(openGate).staticcall(abi.encodeCall(ITreeSwapOpenGate.isOpen, ()));
+        if (!gateOk || gateData.length != 32 || !abi.decode(gateData, (bool))) revert OpensPaused();
+
+        (bool decimalsOk, bytes memory decimalsData) =
+            address(BIT).staticcall(abi.encodeCall(IERC20Minimal.decimals, ()));
+        (bool pausedOk, bytes memory pausedData) = address(BIT).staticcall(abi.encodeCall(IERC20Minimal.paused, ()));
+        if (
+            !decimalsOk || decimalsData.length != 32 || abi.decode(decimalsData, (uint8)) != 18 || !pausedOk
+                || pausedData.length != 32 || abi.decode(pausedData, (bool))
+        ) revert UnexpectedTokenConfiguration();
     }
 }

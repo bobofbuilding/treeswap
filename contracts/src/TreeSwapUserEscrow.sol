@@ -5,8 +5,14 @@ import {TreeSwapSignatureChecker} from "./TreeSwapSignatureChecker.sol";
 
 interface IBitEscrowToken {
     function balanceOf(address account) external view returns (uint256);
+    function decimals() external view returns (uint8);
+    function paused() external view returns (bool);
     function transfer(address to, uint256 amount) external returns (bool);
     function transferFrom(address from, address to, uint256 amount) external returns (bool);
+}
+
+interface IUserEscrowOpenGate {
+    function isOpen() external view returns (bool);
 }
 
 /// @notice Locks user-funded BIT for an exact BIT-to-Lightning swap.
@@ -70,6 +76,8 @@ contract TreeSwapUserEscrow {
     error InvalidPaymentHash();
     error InvalidInvoiceDigest();
     error InvalidRiskConfig();
+    error OpensPaused();
+    error UnexpectedTokenConfiguration();
     error InvalidUser();
     error InvalidSignature();
     error InvalidDeadlineOrder();
@@ -103,6 +111,7 @@ contract TreeSwapUserEscrow {
     bytes32 private constant VERSION_HASH = keccak256("1");
 
     IBitEscrowToken public immutable BIT;
+    IUserEscrowOpenGate public immutable openGate;
     address public immutable feeCollector;
     uint16 public immutable maxFeeBps;
     uint16 public immutable maxPriceDeviationBps;
@@ -150,8 +159,11 @@ contract TreeSwapUserEscrow {
         unlocked = 1;
     }
 
-    constructor(address bit, address collector, RiskConfig memory config) {
-        if (bit == address(0) || collector == address(0) || bit.code.length == 0) revert InvalidAddress();
+    constructor(address bit, address collector, address gate, RiskConfig memory config) {
+        if (
+            bit == address(0) || collector == address(0) || gate == address(0) || bit.code.length == 0
+                || gate.code.length == 0
+        ) revert InvalidAddress();
         if (
             config.maxFeeBps > ABSOLUTE_MAX_FEE_BPS || config.maxPriceDeviationBps > ABSOLUTE_MAX_PRICE_DEVIATION_BPS
                 || config.referenceSatsPerBit == 0 || config.epochDuration == 0 || config.minSettlementWindow == 0
@@ -162,6 +174,7 @@ contract TreeSwapUserEscrow {
         ) revert InvalidRiskConfig();
 
         BIT = IBitEscrowToken(bit);
+        openGate = IUserEscrowOpenGate(gate);
         feeCollector = collector;
         maxFeeBps = config.maxFeeBps;
         maxPriceDeviationBps = config.maxPriceDeviationBps;
@@ -180,6 +193,7 @@ contract TreeSwapUserEscrow {
     /// @dev The user must submit the transaction; a relay cannot pull BIT from
     ///      an approved wallet or change any signed destination or amount.
     function open(SolverQuote calldata quote, bytes calldata solverSignature) external nonReentrant {
+        _requireOpen();
         _validateQuote(quote, solverSignature);
 
         uint256 epoch = block.timestamp / epochDuration;
@@ -360,5 +374,19 @@ contract TreeSwapUserEscrow {
         if (vaultBefore - vaultAfter != amount || recipientAfter - recipientBefore != amount) {
             revert UnexpectedTokenBalanceDelta();
         }
+    }
+
+    function _requireOpen() internal view {
+        (bool gateOk, bytes memory gateData) =
+            address(openGate).staticcall(abi.encodeCall(IUserEscrowOpenGate.isOpen, ()));
+        if (!gateOk || gateData.length != 32 || !abi.decode(gateData, (bool))) revert OpensPaused();
+
+        (bool decimalsOk, bytes memory decimalsData) =
+            address(BIT).staticcall(abi.encodeCall(IBitEscrowToken.decimals, ()));
+        (bool pausedOk, bytes memory pausedData) = address(BIT).staticcall(abi.encodeCall(IBitEscrowToken.paused, ()));
+        if (
+            !decimalsOk || decimalsData.length != 32 || abi.decode(decimalsData, (uint8)) != 18 || !pausedOk
+                || pausedData.length != 32 || abi.decode(pausedData, (bool))
+        ) revert UnexpectedTokenConfiguration();
     }
 }

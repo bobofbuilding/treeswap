@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { evaluateBitRisk } from "../lib/risk-policy.mjs";
+import { buildBitRiskAttestation, evaluateBitRisk } from "../lib/risk-policy.mjs";
 
 const NOW = 2_000_000_000;
 const BIT = 10n ** 18n;
@@ -9,8 +9,8 @@ const policy = {
   chainId: 1,
   proxyAddress: "0x57A447E4d5e18A9423408C365963A73F08B9d18C",
   expectedImplementation: "0x1111111111111111111111111111111111111111",
-  expectedProxyCodeHash: "0xproxy",
-  expectedImplementationCodeHash: "0ximpl",
+  expectedProxyCodeHash: `0x${"aa".repeat(32)}`,
+  expectedImplementationCodeHash: `0x${"bb".repeat(32)}`,
   decimals: 18,
   referenceSatsPerBit: 100,
   maxSnapshotAgeSeconds: 30,
@@ -120,4 +120,21 @@ test("keeps the higher base fee for BIT to Lightning", () => {
   });
   assert.equal(result.enabled, true);
   assert.equal(result.feeBps, 72);
+});
+
+test("commits the exact healthy proxy, finality, market, and source set", () => {
+  const evaluation = evaluateBitRisk({ policy, snapshot, priceSignals, request });
+  const first = buildBitRiskAttestation({ policy, snapshot, evaluation });
+  const reordered = buildBitRiskAttestation({
+    policy,
+    snapshot,
+    evaluation: { ...evaluation, qualifiedPriceSources: [...evaluation.qualifiedPriceSources].reverse() },
+  });
+  assert.equal(first.riskDigest, reordered.riskDigest);
+  assert.match(first.riskDigest, /^0x[0-9a-f]{64}$/);
+
+  assert.throws(
+    () => buildBitRiskAttestation({ policy, snapshot, evaluation: { ...evaluation, enabled: false } }),
+    /unsafe BIT state/,
+  );
 });

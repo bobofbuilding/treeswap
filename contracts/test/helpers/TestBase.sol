@@ -29,13 +29,22 @@ abstract contract TestBase {
 contract MockBit {
     string public constant name = "Mock BIT";
     string public constant symbol = "BIT";
-    uint8 public constant decimals = 18;
+    uint8 public decimals = 18;
+    bool public paused;
 
     mapping(address => uint256) public balanceOf;
     mapping(address => mapping(address => uint256)) public allowance;
 
     function mint(address recipient, uint256 amount) external {
         balanceOf[recipient] += amount;
+    }
+
+    function setDecimals(uint8 value) external {
+        decimals = value;
+    }
+
+    function setPaused(bool value) external {
+        paused = value;
     }
 
     function approve(address spender, uint256 amount) external returns (bool) {
@@ -58,10 +67,21 @@ contract MockBit {
     }
 }
 
+contract MockOpenGate {
+    bool public open = true;
+
+    function setOpen(bool value) external {
+        open = value;
+    }
+
+    function isOpen() external view returns (bool) {
+        return open;
+    }
+}
+
 contract Mock1271Wallet {
     bytes4 internal constant MAGIC_VALUE = 0x1626ba7e;
-    uint256 internal constant SECP256K1N_DIV_2 =
-        0x7fffffffffffffffffffffffffffffff5d576e7357a4501ddfe92f46681b20a0;
+    uint256 internal constant SECP256K1N_DIV_2 = 0x7fffffffffffffffffffffffffffffff5d576e7357a4501ddfe92f46681b20a0;
 
     address public immutable owner;
 

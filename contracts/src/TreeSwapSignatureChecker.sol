@@ -8,8 +8,7 @@ interface IERC1271 {
 /// @notice Canonical EOA and ERC-1271 signature verification for TreeSwap.
 library TreeSwapSignatureChecker {
     bytes4 internal constant ERC1271_MAGIC_VALUE = 0x1626ba7e;
-    uint256 private constant SECP256K1N_DIV_2 =
-        0x7fffffffffffffffffffffffffffffff5d576e7357a4501ddfe92f46681b20a0;
+    uint256 private constant SECP256K1N_DIV_2 = 0x7fffffffffffffffffffffffffffffff5d576e7357a4501ddfe92f46681b20a0;
 
     function isValidSignatureNow(address signer, bytes32 digest, bytes calldata signature)
         internal
@@ -18,9 +17,8 @@ library TreeSwapSignatureChecker {
     {
         if (signer.code.length == 0) return _recover(digest, signature) == signer;
 
-        (bool ok, bytes memory result) = signer.staticcall(
-            abi.encodeCall(IERC1271.isValidSignature, (digest, signature))
-        );
+        (bool ok, bytes memory result) =
+            signer.staticcall(abi.encodeCall(IERC1271.isValidSignature, (digest, signature)));
         return ok && result.length >= 32 && abi.decode(result, (bytes4)) == ERC1271_MAGIC_VALUE;
     }
 

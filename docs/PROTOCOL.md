@@ -54,7 +54,7 @@ The user chooses among the solver quotes it actually receives, then signs one co
 
 - exact-balance deposits into a solver-specific account;
 - withdrawals of unreserved inventory only;
-- solver-created full-fill reservations accepted by the user's EIP-712 signature;
+- user-exercised full-fill reservations signed by both the user and pre-funded solver;
 - immutable beneficiary, payment hash, invoice digest, amounts, fee, nonce, and three deadlines;
 - chain- and vault-domain replay protection, plus single-use user nonces;
 - an immutable reference-price band, per-swap cap, and per-solver epoch cap;
@@ -64,7 +64,7 @@ The user chooses among the solver quotes it actually receives, then signs one co
 - globally single-use payment hashes; and
 - an immutable protocol-fee ceiling.
 
-The escrows accept canonical 65-byte EOA signatures, reject high-s signatures, and support ERC-1271 contract signatures through a shared static signature checker. Lightning → BIT reservations require the user and pre-funded solver to sign the same exact quote; only the named user can exercise it, so the solver has no transaction-time last-look after signing. The price band and volume limits are immutable deployment parameters; they limit damage from a stale reference but do not establish an external fair price or monitor the upgradeable BIT token.
+The escrows accept canonical 65-byte EOA signatures, reject high-s signatures, and support ERC-1271 contract signatures through a shared static signature checker. Lightning → BIT reservations require the user and pre-funded solver to sign the same exact quote; only the named user can exercise it, so the solver has no transaction-time last-look after signing. Both escrows require a live, time-bounded authorization from the immutable `TreeSwapOpenGate` and reject an unexpected BIT pause or decimal setting at open. Gate expiry or emergency halt affects only new exposure; TreeSwap never calls it from withdrawal, claim, or refund.
 
 ## 5. Lightning inventory
 
@@ -99,8 +99,8 @@ The public web application never receives a node macaroon, seed, preimage store,
 ### Lightning → BIT
 
 1. Solvers return signed quotes; the user selects one.
-2. The selected solver creates a hold invoice and reserves exact BIT from its vault to the user's Ethereum address.
-3. The vault verifies the user's exact signed quote, price and exposure caps, and deadline ordering. The user then verifies the finalized reservation and every supported BOLT 11 field before paying.
+2. The selected solver creates a hold invoice and signs the exact selected quote against its pre-funded vault inventory.
+3. The user countersigns and exercises the quote. The vault verifies both signatures, the live-open gate, BIT runtime settings, price and exposure caps, and deadline ordering. The user then verifies the finalized reservation and every supported BOLT 11 field before paying.
 4. The solver settles the hold invoice with the preimage.
 5. The user or a relayer supplies the preimage to claim BIT.
 6. If the held payment expires, the BIT reservation returns to the solver after the Ethereum refund deadline.

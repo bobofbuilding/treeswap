@@ -2,10 +2,11 @@
 pragma solidity 0.8.24;
 
 import {TreeSwapUserEscrow} from "../src/TreeSwapUserEscrow.sol";
-import {Mock1271Wallet, MockBit, TestBase} from "./helpers/TestBase.sol";
+import {Mock1271Wallet, MockBit, MockOpenGate, TestBase} from "./helpers/TestBase.sol";
 
 contract TreeSwapUserEscrowTest is TestBase {
     MockBit internal bit;
+    MockOpenGate internal gate;
     TreeSwapUserEscrow internal escrow;
 
     uint256 internal constant SOLVER_PK = 0x5107E2;
@@ -22,7 +23,8 @@ contract TreeSwapUserEscrowTest is TestBase {
     function setUp() public {
         solver = vm.addr(SOLVER_PK);
         bit = new MockBit();
-        escrow = new TreeSwapUserEscrow(address(bit), COLLECTOR, _riskConfig());
+        gate = new MockOpenGate();
+        escrow = new TreeSwapUserEscrow(address(bit), COLLECTOR, address(gate), _riskConfig());
         paymentHash = sha256(abi.encodePacked(PREIMAGE));
         bit.mint(USER, 10_000 ether);
         vm.prank(USER);
@@ -30,9 +32,8 @@ contract TreeSwapUserEscrowTest is TestBase {
     }
 
     function testOpenAndClaimPaysOnlySignedSolverBeneficiary() public {
-        TreeSwapUserEscrow.SolverQuote memory quote = _open(
-            keccak256("reverse-1"), paymentHash, BENEFICIARY, 500 ether, 2 ether
-        );
+        TreeSwapUserEscrow.SolverQuote memory quote =
+            _open(keccak256("reverse-1"), paymentHash, BENEFICIARY, 500 ether, 2 ether);
 
         vm.prank(ATTACKER);
         escrow.claim(quote.quoteId, PREIMAGE);
@@ -71,7 +72,9 @@ contract TreeSwapUserEscrowTest is TestBase {
             _quote(keccak256("contract-solver"), paymentHash, BENEFICIARY, 500 ether, 0, nextNonce++);
         _submit(quote);
 
-        assertEq(uint256(escrow.swapState(quote.quoteId)), uint256(TreeSwapUserEscrow.SwapState.LOCKED), "1271 open failed");
+        assertEq(
+            uint256(escrow.swapState(quote.quoteId)), uint256(TreeSwapUserEscrow.SwapState.LOCKED), "1271 open failed"
+        );
     }
 
     function testEip1271SolverRejectsWrongOwnerSignature() public {
@@ -103,13 +106,17 @@ contract TreeSwapUserEscrowTest is TestBase {
             _quote(keccak256("reverse-replay-1"), paymentHash, BENEFICIARY, 300 ether, 0, nonce);
         _submit(first);
 
-        TreeSwapUserEscrow.SolverQuote memory reusedHash = _quote(
-            keccak256("reverse-replay-2"), paymentHash, BENEFICIARY, 300 ether, 0, nextNonce++
-        );
+        TreeSwapUserEscrow.SolverQuote memory reusedHash =
+            _quote(keccak256("reverse-replay-2"), paymentHash, BENEFICIARY, 300 ether, 0, nextNonce++);
         _expectOpenRevert(reusedHash, TreeSwapUserEscrow.PaymentHashAlreadyUsed.selector);
 
         TreeSwapUserEscrow.SolverQuote memory reusedNonce = _quote(
-            keccak256("reverse-replay-3"), sha256(abi.encodePacked(bytes32("new-hash"))), BENEFICIARY, 300 ether, 0, nonce
+            keccak256("reverse-replay-3"),
+            sha256(abi.encodePacked(bytes32("new-hash"))),
+            BENEFICIARY,
+            300 ether,
+            0,
+            nonce
         );
         _expectOpenRevert(reusedNonce, TreeSwapUserEscrow.NonceAlreadyUsed.selector);
     }
@@ -148,6 +155,45 @@ contract TreeSwapUserEscrowTest is TestBase {
         );
     }
 
+    function testGateHaltBlocksNewOpensButNotExistingClaim() public {
+        TreeSwapUserEscrow.SolverQuote memory first =
+            _open(keccak256("reverse-before-halt"), paymentHash, BENEFICIARY, 400 ether, 0);
+        gate.setOpen(false);
+
+        TreeSwapUserEscrow.SolverQuote memory second = _quote(
+            keccak256("reverse-after-halt"),
+            sha256(abi.encodePacked(bytes32("reverse-after-halt"))),
+            BENEFICIARY,
+            400 ether,
+            0,
+            nextNonce++
+        );
+        _expectOpenRevert(second, TreeSwapUserEscrow.OpensPaused.selector);
+        escrow.claim(first.quoteId, PREIMAGE);
+        assertEq(bit.balanceOf(BENEFICIARY), 400 ether, "halt blocked reverse claim");
+    }
+
+    function testGateHaltDoesNotBlockExistingUserRefund() public {
+        TreeSwapUserEscrow.SolverQuote memory quote =
+            _open(keccak256("reverse-refund-halt"), paymentHash, BENEFICIARY, 400 ether, 0);
+        gate.setOpen(false);
+        vm.warp(quote.refundAfter);
+        escrow.refund(quote.quoteId);
+        assertEq(bit.balanceOf(USER), 10_000 ether, "halt blocked reverse refund");
+    }
+
+    function testTokenPauseOrDecimalChangeFailsClosedForNewOpens() public {
+        TreeSwapUserEscrow.SolverQuote memory quote =
+            _quote(keccak256("reverse-runtime-token"), paymentHash, BENEFICIARY, 400 ether, 0, nextNonce++);
+        bit.setPaused(true);
+        _expectOpenRevert(quote, TreeSwapUserEscrow.UnexpectedTokenConfiguration.selector);
+        bit.setPaused(false);
+        bit.setDecimals(8);
+        _expectOpenRevert(quote, TreeSwapUserEscrow.UnexpectedTokenConfiguration.selector);
+        bit.setDecimals(18);
+        _submit(quote);
+    }
+
     function _riskConfig() internal pure returns (TreeSwapUserEscrow.RiskConfig memory) {
         return TreeSwapUserEscrow.RiskConfig({
             maxFeeBps: 100,
@@ -162,14 +208,11 @@ contract TreeSwapUserEscrowTest is TestBase {
         });
     }
 
-    function _quote(
-        bytes32 quoteId,
-        bytes32 hash,
-        address beneficiary,
-        uint96 amount,
-        uint96 fee,
-        uint256 nonce
-    ) internal view returns (TreeSwapUserEscrow.SolverQuote memory) {
+    function _quote(bytes32 quoteId, bytes32 hash, address beneficiary, uint96 amount, uint96 fee, uint256 nonce)
+        internal
+        view
+        returns (TreeSwapUserEscrow.SolverQuote memory)
+    {
         return TreeSwapUserEscrow.SolverQuote({
             quoteId: quoteId,
             user: USER,
