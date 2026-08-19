@@ -1,6 +1,6 @@
 # Durable coordinator boundary
 
-Status: the atomic settlement and RFQ/admission store, exact signed Lightning dispatcher, EVM claim outbox, restart recovery, payer- and invoice-side read-only reconciliation, aggregate metrics, live Lightning lost-response campaigns, and local execution-client claim/reorg campaigns are implemented. Both actual direction-specific escrows now pass block replacement before authorization, after authorization, and after claim. The full solver daemon, deployed authenticated capability transport, production backup/restore drill, alert delivery, live BIT/public-chain finality evidence, and independent review remain testnet gates.
+Status: the atomic settlement and RFQ/admission store, exact signed Lightning dispatcher, EVM claim outbox, restart recovery, verified backup/fresh-path restore, startup integrity refusal, aggregate metrics, live Lightning lost-response campaigns, and local execution-client claim/reorg campaigns are implemented. Both actual direction-specific escrows now pass block replacement before authorization, after authorization, and after claim. The full solver daemon, deployed authenticated capability transport, deployed-volume backup/restore and retention drill, alert delivery, live BIT/public-chain finality evidence, and independent review remain testnet gates.
 
 ## Separate trust domain
 
@@ -39,9 +39,9 @@ Schema v3 also persists RFQ/admission state in the same transaction boundary:
 
 Admission first expires stale requests and releases their exact commitments, then evaluates persisted usage inside `BEGIN IMMEDIATE`. A duplicate request or offer ID is idempotent only for the same committed terms. Cancellation sequences only advance. Two local database connections cannot exceed the active-request limit or reserve the same solver capacity concurrently. A filled offer exercises its RFQ and releases every competing commitment in the same transaction; user abandonment and expiry release capacity without harming solver reliability.
 
-Each transition and its secret-free event commit in one `BEGIN IMMEDIATE` transaction. Foreign keys, uniqueness constraints, strict tables, WAL journaling, `synchronous=FULL`, a five-second busy timeout, a mode-`0600` database, and a mode-`0700` parent directory are enforced. SQLite serializes independently opened local connections, and adversarial tests cover competing admission and capacity reservations. Multi-host or multi-replica operation is not supported by this version.
+Each transition and its secret-free event commit in one `BEGIN IMMEDIATE` transaction. Foreign keys, uniqueness constraints, strict tables, WAL journaling, `synchronous=FULL`, a five-second busy timeout, a mode-`0600` database, and a mode-`0700` parent directory are enforced. Startup runs a fail-closed quick integrity and foreign-key check before accepting work, refuses an unknown schema before adding or migrating tables, and exposes a full integrity check for backup and recovery workflows. SQLite serializes independently opened local connections, and adversarial tests cover competing admission and capacity reservations. Multi-host or multi-replica operation is not supported by this version.
 
-The pinned runtime is Node `22.22.0`. Its built-in SQLite API remains experimental in that release even though the underlying database and the exact API surface used here are pinned. Before funded beta, either qualify that exact image through backup, restore, corruption, disk-full, power-loss, and version-upgrade drills or move the same schema and transaction tests to a stable reviewed driver.
+The pinned runtime is Node `22.22.0`. Its built-in SQLite API remains experimental in that release even though the underlying database and the exact API surface used here are pinned. TreeSwap uses Node's SQLite online-backup wrapper rather than copying a live database/WAL pair. A backup is written to a private temporary file, fully integrity- and foreign-key-checked, synced, copied without overwrite, mode-locked to `0600`, and synced with its directory. Restore verifies the source and writes only to a new path; it never replaces a live database. The exact pinned image now passes local schema-v3 parity, v2 migration, verified backup/restore, corruption refusal, SIGKILL/WAL recovery, and bounded-filesystem `SQLITE_FULL` rollback. Real volume failure, host power loss, off-site retention, restore objectives, and a reviewed stable driver remain production operations gates. See the [Node 22 SQLite API](https://nodejs.org/download/release/v22.18.0/docs/api/sqlite.html) and [SQLite online backup API](https://www.sqlite.org/backup.html).
 
 ## Dispatch and recovery
 
@@ -74,6 +74,7 @@ Run:
 ```sh
 npm run regtest:coordinator-smoke
 npm run regtest:coordinator-invoice-smoke
+npm run test:coordinator-runtime
 ```
 
 The payer campaign creates a real 10,000-sat standard regtest invoice, pays it through the signed payer adapter, deliberately discards the successful adapter response, proves the database contains `UNKNOWN`, closes and reopens the store, and recovers `SUCCEEDED` through a new read-only tracking authorization. It requires dispatch count `1` and scans the database to prove the BOLT 11 string was not persisted. Its deterministic evidence digest is `0x795152765a0312b638f56c6102f86dee26a27a5845d42a0e506d5ba70670dcf4`.
@@ -82,7 +83,9 @@ The invoice campaign accepts a real 10,000-sat hold payment, settles it through 
 
 Both campaigns use a simulated finalized-reservation record, so they are Lightning/coordinator evidence—not cross-chain finality evidence.
 
-`tests/admission-store.test.mjs` proves rolling quotas and cancellation sequences survive restart, backward time fails closed, stale or conflicting capacity epochs reject, early expiry rejects, fills and competing-offer release are atomic, attributable failures suspend while user abandonment does not, v2 migrates to v3, raw user identity is absent from SQLite files, and independent local connections cannot oversubscribe an identity or solver. Published checkpoint `e6ebaa72f6b746c38e29b350322d880b8a1d9f28` passed these tests inside all 24 local qualification campaigns, independently rebuilt to evidence digest `sha256:5f58472ed569fb40ee1abbe9e29c0ee2e1e0c11ee19cf9c7d43bfa6cfcc2bd8b`, and passed [hosted CI](https://github.com/bobofbuilding/treeswap/actions/runs/32304969494). These are local persistence tests on recorded Node `v25.5.0`, not qualification inside the pinned Node `22.22.0` image, deployed distributed enforcement, or solver-identity evidence.
+`tests/admission-store.test.mjs` proves rolling quotas and cancellation sequences survive restart, backward time fails closed, stale or conflicting capacity epochs reject, early expiry rejects, fills and competing-offer release are atomic, attributable failures suspend while user abandonment does not, v2 migrates to v3, raw user identity is absent from SQLite files, and independent local connections cannot oversubscribe an identity or solver. Published checkpoint `e6ebaa72f6b746c38e29b350322d880b8a1d9f28` passed these tests inside all 24 local qualification campaigns, independently rebuilt to evidence digest `sha256:5f58472ed569fb40ee1abbe9e29c0ee2e1e0c11ee19cf9c7d43bfa6cfcc2bd8b`, and passed [hosted CI](https://github.com/bobofbuilding/treeswap/actions/runs/32304969494).
+
+Published recovery checkpoint `dbc9f1daa205549a0af559bc024c40b347ca8ecd` directly runs the admission and coordinator suites inside the immutable Node `22.22.0-alpine` coordinator image. It proves a committed WAL transaction survives SIGKILL, the concurrent uncommitted transaction disappears, corrupted and unknown-schema databases refuse startup, a live verified backup restores identical commitments only to a fresh path, and a real 512 KiB filesystem exhaustion rolls back the failing transaction and restarts with full integrity. All 18 pinned-image persistence tests, the separate disk-full process, 165 application/security tests, both builds, 68 contract tests, and [hosted CI](https://github.com/bobofbuilding/treeswap/actions/runs/32311057995) passed. This is local single-host recovery evidence—not deployed-volume, host-power-loss, multi-replica, retention, or operator evidence.
 
 Run the separate local execution-client campaign:
 
@@ -98,7 +101,7 @@ Before funded testnet:
 
 1. prove finalized EVM claim success, reorgs before and after authorization/claim, dropped transactions, nonce contention, RPC disagreement, and relayer-key rotation against controlled forks and public testnet;
 2. connect the complete solver state machine and authenticated capability verifier to the implemented RFQ/admission ledger, then qualify it on the deployed stable persistence service;
-3. run disk-full, abrupt-kill, WAL recovery, backup/restore, corruption, and coordinator-key rotation drills;
+3. repeat storage exhaustion, abrupt-kill/WAL recovery, corruption, and backup/restore against the deployed persistent volume; add encrypted off-site retention, measured recovery objectives, host-power-loss and coordinator-key-rotation drills;
 4. deploy structured metrics, alert routing, and automatic new-exposure halt while preserving exits;
 5. operate against independent relays and at least two independently run testnet solvers; and
 6. obtain independent persistence, concurrency, signer, privacy, and recovery review.
