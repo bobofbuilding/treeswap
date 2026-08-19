@@ -164,7 +164,9 @@ Paying Lightning before the BIT escrow is sufficiently final can leave the payer
 
 ### TS-M01 — One-tick reward sniping (not applicable to v1)
 
-V1 has no order book or maker reward. If rewards are ever proposed, require a minimum meaningful tick, minimum top duration, time-weighted accrual, executable quantity, and delayed challengeable settlement.
+**Status:** Resolved by exclusion from the immutable v1 capability set
+
+`V1_CAPABILITIES` disables the public order book and maker rewards, and the product exposes neither an order-resting nor reward-claim path. The capability test fails if those flags are enabled. If rewards are ever proposed, require a new protocol version and review with a minimum meaningful tick, minimum top duration, time-weighted accrual, executable quantity, and delayed challengeable settlement; it cannot be added as configuration to v1.
 
 ### TS-M02 — Wash fills and sybil rewards (not applicable to v1)
 
