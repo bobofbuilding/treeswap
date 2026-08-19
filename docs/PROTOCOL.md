@@ -147,9 +147,9 @@ The three deadlines are derived by the fail-closed policy in [`SETTLEMENT_POLICY
 
 TreeSwap uses EIP-4361 Sign-In with Ethereum only for an offchain account session. This authentication signature is separate from the EIP-712 selected-quote signature and cannot approve BIT, reserve inventory, or authorize a swap.
 
-The server issues a random 128-bit, ten-minute nonce bound to the exact request domain and URI. Verification requires Ethereum mainnet, a matching domain and URI, an unexpired message, a valid wallet signature, and an unused nonce. A successful sign-in creates an opaque, `HttpOnly`, `SameSite=Strict`, seven-day session whose server-side record is bound to the wallet address.
+The server issues a random 128-bit, ten-minute nonce bound to an allowlisted request origin, exact domain and URI. Verification requires Ethereum mainnet, the exact no-transaction statement, matching message times, a valid wallet signature, and an unused nonce. A successful sign-in replaces prior sessions for the wallet and creates an opaque 24-hour session in a `Secure`, `HttpOnly`, `SameSite=Strict`, host-only cookie; only its hash is stored server-side.
 
-An authenticated user may separately attach one email and choose invoice notices, transaction receipts, or both. The email is stored offchain, omitted from wallet signatures and intents, and can be detached immediately. The current record remains `pending` and must not receive mail until an email ownership-verification flow, delivery provider, unsubscribe path, and retention policy are implemented.
+An authenticated user may separately attach one email and choose invoice notices, transaction receipts, or both. The email is stored offchain, omitted from wallet signatures and intents, detachable immediately, and automatically expires after 24 hours while unverified. Outbound delivery is hard-disabled. Enabling it requires ownership verification, enforced unsubscribe, rate limits, minimal retention, access auditing, and authenticated sender configuration.
 
 SIWE currently supports externally owned accounts. Contract-wallet authentication requires an EIP-1271-capable verifier and an Ethereum provider before it can be advertised.
 

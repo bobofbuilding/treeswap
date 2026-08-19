@@ -38,4 +38,5 @@ export const notificationPreferences = sqliteTable("notification_preferences", {
     .default("pending"),
   verifiedAt: text("verified_at"),
   updatedAt: text("updated_at").notNull(),
+  retentionExpiresAt: text("retention_expires_at").notNull(),
 });

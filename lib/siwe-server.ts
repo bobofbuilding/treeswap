@@ -1,4 +1,4 @@
-import { and, eq, gt } from "drizzle-orm";
+import { and, eq, gt, lt } from "drizzle-orm";
 import type { ReadonlyRequestCookies } from "next/dist/server/web/spec-extension/adapters/request-cookies";
 import { getDb } from "@/db";
 import { authSessions, notificationPreferences } from "@/db/schema";
@@ -18,6 +18,7 @@ export type TreeSwapSession = {
     invoiceEmails: boolean;
     receiptEmails: boolean;
     verificationStatus: "pending" | "verified";
+    retentionExpiresAt: string;
   } | null;
 };
 
@@ -83,6 +84,7 @@ export async function getCurrentSession(cookies: ReadonlyRequestCookies): Promis
   if (!token || !/^[0-9a-f]{64}$/.test(token)) return null;
 
   const db = getDb();
+  await db.delete(notificationPreferences).where(lt(notificationPreferences.retentionExpiresAt, new Date().toISOString()));
   const [session] = await db
     .select()
     .from(authSessions)
@@ -112,6 +114,7 @@ export async function getCurrentSession(cookies: ReadonlyRequestCookies): Promis
           invoiceEmails: preferences.invoiceEmails,
           receiptEmails: preferences.receiptEmails,
           verificationStatus: preferences.verificationStatus,
+          retentionExpiresAt: preferences.retentionExpiresAt,
         }
       : null,
   };

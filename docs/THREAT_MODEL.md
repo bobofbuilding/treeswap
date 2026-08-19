@@ -232,9 +232,11 @@ TreeSwap uses the EIP-4361 plaintext format with an exact no-transaction stateme
 
 ### TS-M11 — Email correlation, spoofing, and unwanted delivery
 
+**Status:** Risk contained by hard-disabled delivery, immediate detach, and 24-hour pending retention; verified delivery is excluded from this release
+
 Attaching email creates a durable correlation between an Ethereum address and an offchain identity. Accepting an unverified address can also send unwanted messages to a third party.
 
-Email is optional, omitted from SIWE and swap intents, stored separately, and detachable. Invoice and receipt consent are independent. Every new or changed address returns to `pending`; the prototype sends nothing. Delivery must remain disabled until ownership verification, unsubscribe enforcement, rate limits, minimal retention, access logging, and deletion procedures exist.
+Email is optional, omitted from SIWE and swap intents, stored separately, and immediately detachable. Invoice and receipt consent are independent. Every new or changed address returns to `pending`, receives an exact 24-hour deletion deadline, and is purged before account data is returned after expiry. There is no mail provider or send path, and the policy hard-denies delivery even if a caller presents nominal future controls. A reviewed code change must add and jointly enforce ownership verification, unsubscribe, per-wallet and per-address rate limits, minimal retention, access auditing, and authenticated sending before delivery can exist. Email is not a dependency for swaps or direct sends. See [Optional email boundary](./EMAIL.md).
 
 ### TS-M12 — Direct-send substitution or confused authorization
 

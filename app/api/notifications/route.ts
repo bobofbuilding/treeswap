@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import { getDb } from "@/db";
 import { notificationPreferences } from "@/db/schema";
 import { isValidNotificationEmail, normalizeNotificationEmail } from "@/lib/account.mjs";
+import { NOTIFICATION_DELIVERY_ENABLED, pendingEmailExpiresAt } from "@/lib/notification-policy.mjs";
 import {
   getCurrentSession,
   noStoreJson,
@@ -36,6 +37,7 @@ export async function PUT(request: Request) {
     }
 
     const now = new Date().toISOString();
+    const retentionExpiresAt = pendingEmailExpiresAt(now);
     const [preferences] = await getDb()
       .insert(notificationPreferences)
       .values({
@@ -46,6 +48,7 @@ export async function PUT(request: Request) {
         verificationStatus: "pending",
         verifiedAt: null,
         updatedAt: now,
+        retentionExpiresAt,
       })
       .onConflictDoUpdate({
         target: notificationPreferences.walletAddress,
@@ -56,6 +59,7 @@ export async function PUT(request: Request) {
           verificationStatus: "pending",
           verifiedAt: null,
           updatedAt: now,
+          retentionExpiresAt,
         },
       })
       .returning();
@@ -66,6 +70,8 @@ export async function PUT(request: Request) {
         invoiceEmails: preferences.invoiceEmails,
         receiptEmails: preferences.receiptEmails,
         verificationStatus: preferences.verificationStatus,
+        retentionExpiresAt: preferences.retentionExpiresAt,
+        deliveryEnabled: NOTIFICATION_DELIVERY_ENABLED,
       },
     });
   } catch (error) {

@@ -28,11 +28,11 @@ The bridge interface remains a swap simulation: it does not lock BIT, pay a swap
 
 Sign-In with Ethereum is an account login only. Its plaintext signature is never accepted as permission for a BIT transfer or Lightning payment.
 
-Email preferences are attached to the signed-in wallet account, never included in the SIWE message or an onchain intent, and can be detached at any time. Records remain pending and no email is delivered until an ownership-verification and delivery service is configured.
+Email preferences are attached to the signed-in wallet account, never included in the SIWE message or an onchain intent, and can be detached at any time. Unverified records expire after 24 hours and outbound delivery is hard-disabled in this build.
 
 ## Security status
 
-This repository is not audited and the bridge is not ready for real funds. The design removes the shared public pool, public order book, and rewards from v1. The current vault limits stale-reference exposure but does not prove a fair market price. Cross-network timeout derivation, BIT proxy behavior, the reverse-direction escrow, and Lightning operations remain release-blocking. Direct sends are ordinary wallet payments rather than bridge transactions, but they are irreversible and depend on the user's wallet, destination, token contract, and invoice validation.
+This repository is not audited and the bridge is not ready for real funds. The design removes the shared public pool, public order book, and rewards from v1. Immutable escrows, deterministic timeout policy, signed quote selection, and fail-closed risk gates are implemented, but the production BIT attestation, mainnet-fork/regtest campaigns, live Lightning adapter, deployed multisigs, monitoring, and independent review remain release-blocking. Direct sends are ordinary wallet payments rather than bridge transactions, but they are irreversible and depend on the user's wallet, destination, token contract, and invoice validation.
 
 ## Local preview
 

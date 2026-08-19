@@ -10,6 +10,7 @@ type NotificationPreferences = {
   invoiceEmails: boolean;
   receiptEmails: boolean;
   verificationStatus: "pending" | "verified";
+  retentionExpiresAt: string;
 };
 
 type Session = {
@@ -150,7 +151,7 @@ export default function WalletAccount() {
       });
       const { notifications } = await readJson<{ notifications: NotificationPreferences }>(response);
       setSession((current) => (current ? { ...current, notifications } : current));
-      setNotice("Email attached. Verification is required before delivery can begin.");
+      setNotice("Email attached for 24 hours. Delivery is disabled in this build.");
     } catch (cause) {
       setError(sanitizeDisplayText(cause instanceof Error ? cause.message : "Email preferences could not be saved.", { maxLength: 240 }));
     } finally {
@@ -264,7 +265,7 @@ export default function WalletAccount() {
                     <span><strong>Transaction receipts</strong><small>BIT reservation, claim, or refund</small></span>
                     <input type="checkbox" checked={receiptEmails} onChange={(event) => setReceiptEmails(event.target.checked)} />
                   </label>
-                  <p className="privacy-note">Email stays offchain and can be detached at any time. Delivery remains off until the address is verified; the current prototype does not send messages.</p>
+                  <p className="privacy-note">Email stays offchain and can be detached at any time. Delivery is disabled, and an unverified address is automatically deleted after 24 hours.</p>
                   <button type="button" className="primary-action" onClick={saveNotifications} disabled={working}>
                     {working ? "Saving…" : session.notifications ? "Update email preferences" : "Attach email"} <span>→</span>
                   </button>

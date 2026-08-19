@@ -104,7 +104,8 @@ test("keeps swaps non-production and direct sends explicitly wallet-authorized",
   assert.doesNotMatch(page, /dangerouslySetInnerHTML/);
   assert.match(account, /Sign in with Ethereum/);
   assert.match(account, /Attach email/);
-  assert.match(account, /current prototype does not send messages/i);
+  assert.match(account, /Delivery is disabled/i);
+  assert.match(account, /automatically deleted after 24 hours/i);
   assert.match(sendPanel, /DIRECT SEND · REAL FUNDS/);
   assert.match(sendPanel, /Send from your wallet/);
   assert.match(sendPanel, /Direct sends are irreversible/);
