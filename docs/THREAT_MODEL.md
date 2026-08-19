@@ -192,6 +192,12 @@ Attaching email creates a durable correlation between an Ethereum address and an
 
 Email is optional, omitted from SIWE and swap intents, stored separately, and detachable. Invoice and receipt consent are independent. Every new or changed address returns to `pending`; the prototype sends nothing. Delivery must remain disabled until ownership verification, unsubscribe enforcement, rate limits, minimal retention, access logging, and deletion procedures exist.
 
+### TS-M12 — Direct-send substitution or confused authorization
+
+A clipboard attacker, injected provider, stale tab, or last-second account/network change can substitute a BIT recipient or Lightning invoice. A user may also mistake a harmless SIWE login signature for payment authorization, or assume a direct payment has bridge escrow and refund protection.
+
+The direct-send client keeps authentication and payment authorization separate, freezes canonical destination and amount data in a dedicated real-funds review, and requires a second wallet action. BIT sends are restricted to Ethereum mainnet and the expected contract address, reject the zero address and self-send, recheck the connected account, token symbol, decimals, pause state, and balance immediately before use, simulate the exact `transfer`, and never request approval. Lightning sends accept only amount-bearing mainnet invoices with whole-satoshi amounts and pass the frozen invoice to the wallet for full validation; the fallback reports only that a wallet was opened, never that payment succeeded. The UI states that direct sends are irreversible and have no solver, bridge fee, escrow, or refund protection. Users must still verify the complete destination and amount in a trusted wallet because a web client cannot make a compromised provider safe.
+
 ## Contract invariants
 
 A production escrow test suite should prove at least:
@@ -230,6 +236,7 @@ A production escrow test suite should prove at least:
 - Replayed or mutated SIWE domain, URI, nonce, chain, issued time, and expiry.
 - Cross-origin session mutation, expired session use, and notification access from a different wallet.
 - Unverified-email delivery, preference bypass, unsubscribe failure, and wallet/email deletion.
+- BIT recipient or amount mutation between review and submission, account/network changes, paused or upgraded token behavior, failed transfer simulation, malformed invoices, WebLN rejection, and `lightning:` fallback falsely reported as paid.
 - BIT pause and implementation upgrade while escrows are open.
 - Fee rounding across dust, maximum values, and thousands of small fills.
 - Solver quote spam, cancellation, capacity exhaustion, and deliberate last-look failure.
@@ -240,7 +247,8 @@ A production escrow test suite should prove at least:
 
 ### Prototype publication
 
-- Clearly marked simulation; SIWE may sign a login message, but no approval or transaction is requested.
+- Clearly mark bridge flows as simulations and direct sends as real, irreversible wallet payments without bridge protection.
+- SIWE may sign a login message, but it cannot authorize a payment; BIT sends request no approval and require their own transaction confirmation.
 - Threat model and par-value caveat public.
 - MIT license and reproducible build.
 

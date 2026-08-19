@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import SendPanel from "@/app/components/SendPanel";
 import WalletAccount from "@/app/components/WalletAccount";
 import {
   calculateLiquidityPlan,
@@ -15,7 +16,7 @@ import {
 } from "@/lib/product.mjs";
 
 type Direction = "lightning-to-bit" | "bit-to-lightning";
-type View = "pay-invoice" | "get-bit" | "pool";
+type View = "pay-invoice" | "get-bit" | "send" | "pool";
 
 type Offer = {
   name: string;
@@ -135,7 +136,7 @@ export default function Home() {
     <main>
       <div className="prototype-strip">
         <span>Prototype</span>
-        <span>No swaps execute · No real funds</span>
+        <span>Swap prototype · Sends use your wallet</span>
       </div>
 
       <nav className="nav-shell" aria-label="Main navigation">
@@ -155,8 +156,8 @@ export default function Home() {
       <section className="trade-stage" id="trade">
         <header className="trade-intro">
           <p className="eyebrow">BITCOIN LIGHTNING ↔ BIT</p>
-          <h1>Swap through an invoice.</h1>
-          <p>Paste an invoice to pay with BIT, or create one to receive BIT.</p>
+          <h1>{view === "send" ? "Send from your wallet." : "Swap through an invoice."}</h1>
+          <p>{view === "send" ? "Send BIT to an Ethereum address or pay a Lightning invoice." : "Paste an invoice to pay with BIT, or create one to receive BIT."}</p>
         </header>
 
         <section
@@ -164,6 +165,8 @@ export default function Home() {
           aria-label={
             view === "pool"
               ? "Solver liquidity planner"
+              : view === "send"
+                ? "Send BIT or Lightning directly"
               : isPayInvoice
                 ? "Pay a Lightning invoice with BIT"
                 : "Create a Lightning invoice to receive BIT"
@@ -188,6 +191,14 @@ export default function Home() {
             </button>
             <button
               type="button"
+              aria-pressed={view === "send"}
+              className={view === "send" ? "active" : ""}
+              onClick={() => selectView("send")}
+            >
+              Send
+            </button>
+            <button
+              type="button"
               aria-pressed={view === "pool"}
               className={view === "pool" ? "active" : ""}
               onClick={() => selectView("pool")}
@@ -196,7 +207,9 @@ export default function Home() {
             </button>
           </div>
 
-          {view !== "pool" ? (
+          {view === "send" ? (
+            <SendPanel />
+          ) : view !== "pool" ? (
             <div className="swap-view">
               {isPayInvoice ? (
                 <>
@@ -423,8 +436,8 @@ export default function Home() {
         <div className="trade-trust" aria-label="Swap guarantees">
           <span><i>✓</i> Invoice-first</span>
           <span><i>✓</i> Best received quote</span>
-          <span><i>✓</i> Optional email receipts</span>
-          <span><i>✓</i> No real funds</span>
+          <span><i>✓</i> Swaps simulated</span>
+          <span><i>✓</i> Sends use your wallet</span>
         </div>
       </section>
 

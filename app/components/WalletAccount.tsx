@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { buildSiweMessage } from "@/lib/account.mjs";
+import type { EthereumProvider } from "@/types/wallets";
 
 type NotificationPreferences = {
   email: string;
@@ -16,16 +17,6 @@ type Session = {
   expiresAt: string;
   notifications: NotificationPreferences | null;
 };
-
-type EthereumProvider = {
-  request(args: { method: string; params?: unknown[] }): Promise<unknown>;
-};
-
-declare global {
-  interface Window {
-    ethereum?: EthereumProvider;
-  }
-}
 
 function shortAddress(address: string) {
   return `${address.slice(0, 6)}…${address.slice(-4)}`;
@@ -89,7 +80,7 @@ export default function WalletAccount() {
     setNotice("");
 
     try {
-      const wallet = window.ethereum;
+      const wallet = window.ethereum as EthereumProvider | undefined;
       if (!wallet) throw new Error("Install or open an Ethereum wallet to continue.");
 
       const accounts = (await wallet.request({ method: "eth_requestAccounts" })) as string[];

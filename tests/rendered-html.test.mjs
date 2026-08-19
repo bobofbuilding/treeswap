@@ -36,20 +36,23 @@ test("server-renders the TreeSwap prototype", async () => {
   assert.match(html, /Review invoice payment/);
   assert.match(html, /Best received of .*signed quotes/);
   assert.match(html, /1 BIT = 100 sats/);
-  assert.match(html, /No swaps execute · No real funds/);
+  assert.match(html, /Swap prototype · Sends use your wallet/);
+  assert.match(html, />Send</);
   assert.match(html, /Invoice in\. Quote out/i);
   assert.match(html, /There is no shared public liquidity pool/i);
   assert.match(html, /Reverse escrow pending/i);
-  assert.match(html, /Optional email receipts/i);
+  assert.match(html, /Swaps simulated/i);
   assert.match(html, />Safety</i);
   assert.doesNotMatch(html, /Four checks block launch|security-section/i);
   assert.match(html, /application\/ld\+json/i);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton|Your site is taking shape/i);
 });
 
-test("keeps the financial prototype explicitly non-production", async () => {
-  const [page, account, authServer, authVerify, layout, readme, protocol, threatModel, vault, license] = await Promise.all([
+test("keeps swaps non-production and direct sends explicitly wallet-authorized", async () => {
+  const [page, sendPanel, sendLogic, account, authServer, authVerify, layout, readme, protocol, threatModel, vault, license] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/components/SendPanel.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../lib/send.mjs", import.meta.url), "utf8"),
     readFile(new URL("../app/components/WalletAccount.tsx", import.meta.url), "utf8"),
     readFile(new URL("../lib/siwe-server.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/auth/verify/route.ts", import.meta.url), "utf8"),
@@ -61,7 +64,7 @@ test("keeps the financial prototype explicitly non-production", async () => {
     readFile(new URL("../LICENSE", import.meta.url), "utf8"),
   ]);
 
-  assert.match(page, /No real funds/);
+  assert.match(page, /Swap prototype/);
   assert.match(page, /Simulation only/);
   assert.match(page, /Amountless invoices are not supported/);
   assert.match(page, /checksum, signature, expiry/);
@@ -73,9 +76,19 @@ test("keeps the financial prototype explicitly non-production", async () => {
   assert.match(account, /Sign in with Ethereum/);
   assert.match(account, /Attach email/);
   assert.match(account, /current prototype does not send messages/i);
+  assert.match(sendPanel, /DIRECT SEND · REAL FUNDS/);
+  assert.match(sendPanel, /Send from your wallet/);
+  assert.match(sendPanel, /Direct sends are irreversible/);
+  assert.match(sendPanel, /Sign-in is not used to authorize this payment/i);
+  assert.match(sendPanel, /getFunction\("transfer"\)/);
+  assert.doesNotMatch(sendPanel, /approve\(/);
+  assert.match(sendPanel, /provider\.sendPayment\(checked\.invoice\)/);
+  assert.match(sendPanel, /The payment preimage was not stored/i);
+  assert.match(sendLogic, /parseUnits/);
+  assert.match(sendLogic, /zero address cannot receive BIT/i);
   assert.match(authVerify, /sameSite: "strict"/);
   assert.match(authServer, /SESSION_DURATION_SECONDS/);
-  assert.match(readme, /does not request token approvals/i);
+  assert.match(readme, /never request an allowance/i);
   assert.match(protocol, /not audited and not ready for real funds/i);
   assert.match(protocol, /1 BIT = 100 sats/);
   assert.match(protocol, /There is no central limit order book/i);

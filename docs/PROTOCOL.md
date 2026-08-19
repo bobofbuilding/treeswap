@@ -147,7 +147,22 @@ An authenticated user may separately attach one email and choose invoice notices
 
 SIWE currently supports externally owned accounts. Contract-wallet authentication requires an EIP-1271-capable verifier and an Ethereum provider before it can be advertised.
 
-## 11. Implementation order
+## 11. Direct send boundary
+
+The separate Send tool is a non-custodial convenience surface, not an intent, swap, or bridge settlement:
+
+- a BIT send requests an ordinary `transfer(recipient, amount)` from the verified BIT contract on Ethereum mainnet;
+- it never calls `approve`, creates an allowance, deposits into a TreeSwap contract, or charges a TreeSwap fee;
+- before review, the client canonicalizes the address and amount, rejects the zero address, checks the mainnet contract code, symbol, 18-decimal setting, pause state, and wallet balance;
+- before submission, it repeats the mutable contract and balance checks, simulates the exact transfer, estimates gas, and requires a separate wallet transaction confirmation;
+- a Lightning send accepts only a mainnet, amount-bearing BOLT 11 invoice that encodes a whole-satoshi amount;
+- an available WebLN provider receives the exact frozen invoice only after a second user action; otherwise the client opens the standard `lightning:` wallet link;
+- the Lightning wallet remains responsible for complete checksum, signature, expiry, feature, payee, and amount validation; and
+- TreeSwap does not store the Lightning preimage. An on-screen direct-send receipt is not an emailed receipt or bridge-settlement proof.
+
+Direct sends do not inherit solver quotes, reference-par pricing, bridge fee logic, escrow, refunds, or bridge timeout protection. Sign-In with Ethereum is optional and cannot authorize either asset movement.
+
+## 12. Implementation order
 
 1. Exercise the current signed, capped BIT inventory vault against the mainnet-fork BIT proxy, including pause and implementation-change scenarios.
 2. Add the complementary user-funded exact BIT escrow for BIT → Lightning with a direction-separated EIP-712 type.

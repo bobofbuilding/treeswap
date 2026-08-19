@@ -14,18 +14,21 @@ The prototype assumes a business par value of **1 BIT = 100 sats**. This value i
 - Two-sided solver inventory planner for Lightning and BIT
 - EIP-4361 Sign-In with Ethereum using one-time server nonces and opaque sessions
 - Optional offchain email preferences for invoice notices and transaction receipts
+- Non-custodial direct sends: standard BIT transfers on Ethereum mainnet and exact BOLT 11 payments through a Lightning wallet
 - Immutable, segregated BIT vault prototype with user-signed quotes, beneficiary binding, price and exposure caps, ordered deadlines, and Foundry invariants
 - Product and protocol specification in [`docs/PROTOCOL.md`](docs/PROTOCOL.md)
 - Liquidity operations plan in [`docs/LIQUIDITY_FUNDING.md`](docs/LIQUIDITY_FUNDING.md)
 - Adversarial design review and launch gates in [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md)
 
-The interface remains a swap simulation. It can connect an injected Ethereum wallet and request a standard sign-in message, but it does not request token approvals, submit transactions, create payable Lightning invoices, transfer BIT, or publish quotes. The Solidity vault is local and undeployed.
+The bridge interface remains a swap simulation: it does not lock BIT, pay a swap invoice, create a payable solver invoice, or publish quotes. The separate **Send** tool can move real funds only after a second review and explicit confirmation in the user's wallet. BIT sends call the token's standard `transfer` function directly and never request an allowance. Lightning sends pass an exact, amount-bearing mainnet BOLT 11 invoice to an available WebLN provider, with a `lightning:` wallet link as the fallback. These direct payments bypass TreeSwap solvers, liquidity, fees, and swap protections.
+
+Sign-In with Ethereum is an account login only. Its plaintext signature is never accepted as permission for a BIT transfer or Lightning payment.
 
 Email preferences are attached to the signed-in wallet account, never included in the SIWE message or an onchain intent, and can be detached at any time. Records remain pending and no email is delivered until an ownership-verification and delivery service is configured.
 
 ## Security status
 
-This repository is not audited and is not ready for real funds. The design removes the shared public pool, public order book, and rewards from v1. The current vault limits stale-reference exposure but does not prove a fair market price. Cross-network timeout derivation, BIT proxy behavior, the reverse-direction escrow, and Lightning operations remain release-blocking.
+This repository is not audited and the bridge is not ready for real funds. The design removes the shared public pool, public order book, and rewards from v1. The current vault limits stale-reference exposure but does not prove a fair market price. Cross-network timeout derivation, BIT proxy behavior, the reverse-direction escrow, and Lightning operations remain release-blocking. Direct sends are ordinary wallet payments rather than bridge transactions, but they are irreversible and depend on the user's wallet, destination, token contract, and invoice validation.
 
 ## Local preview
 
@@ -47,7 +50,7 @@ forge test
 - Complementary user-funded BIT → Lightning escrow with direction-separated signatures
 - Lightning hold-invoice coordinator
 - Solver daemon and quote transport
-- Transaction-capable wallet integration with explicit approval boundaries
+- Bridge-escrow wallet integration with exact intent authorization and explicit approval boundaries
 - Email ownership verification, delivery provider, unsubscribe handling, and retention policy
 - Reconciliation, proxy monitoring, incident controls, and external review
 - Testnet deployment before any mainnet liquidity

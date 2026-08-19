@@ -5,7 +5,7 @@ import "./globals.css";
 const siteUrl = "https://treeswap.vercel.app";
 const title = "TreeSwap | Pay Lightning Invoices with BIT";
 const description =
-  "Pay a Bitcoin Lightning invoice with Bittrees BIT, or create a Lightning invoice to receive BIT. Compare signed solver quotes in TreeSwap's safety-first prototype.";
+  "Swap between Bitcoin Lightning and Bittrees BIT through invoice-based intents, or send BIT and Lightning directly from your wallet.";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
