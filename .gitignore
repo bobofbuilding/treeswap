@@ -17,6 +17,8 @@
 /.next/
 /.vinext/
 /out/
+/contracts/cache/
+/contracts/out/
 
 # misc
 .DS_Store

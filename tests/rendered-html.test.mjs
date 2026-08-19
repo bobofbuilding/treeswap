@@ -31,12 +31,14 @@ test("server-renders the TreeSwap prototype", async () => {
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
 
   const html = await response.text();
-  assert.match(html, /<title>TreeSwap — Lightning ↔ BIT intents<\/title>/i);
-  assert.match(html, /Swap across the/);
+  assert.match(html, /<title>TreeSwap \| Bitcoin Lightning ↔ BIT Swaps<\/title>/i);
+  assert.match(html, /Swap Lightning sats/);
   assert.match(html, /1 BIT = 100 sats/);
   assert.match(html, /No wallets connected · No real funds/);
-  assert.match(html, /Price–time intent book/i);
-  assert.match(html, /Four launch gates before real funds/i);
+  assert.match(html, /One bridge · Two roles/i);
+  assert.match(html, /There is no shared public liquidity pool/i);
+  assert.match(html, /What must be true before real funds/i);
+  assert.match(html, /application\/ld\+json/i);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton|Your site is taking shape/i);
 });
 
@@ -52,14 +54,17 @@ test("keeps the financial prototype explicitly non-production", async () => {
 
   assert.match(page, /No real funds/);
   assert.match(page, /Simulation only/);
-  assert.match(page, /net output after every disclosed cost/i);
-  assert.match(layout, /local prototype/i);
+  assert.match(page, /short-lived, all-in prices/i);
+  assert.match(page, /No shared LP pool/i);
+  assert.match(layout, /metadataBase/);
+  assert.match(layout, /canonical/);
+  assert.match(layout, /og\.png/);
   assert.match(readme, /does not connect wallets/i);
   assert.match(protocol, /not audited and not ready for real funds/i);
   assert.match(protocol, /1 BIT = 100 sats/);
-  assert.match(protocol, /DeepState's price-first, time-second/i);
+  assert.match(protocol, /There is no central limit order book/i);
   assert.match(threatModel, /TS-C01 — Fixed-par inventory drain/);
-  assert.match(threatModel, /TS-C04 — Coordinator can misstate the best quote/);
+  assert.match(threatModel, /TS-C04 — Relay can suppress or reorder quotes/);
   assert.match(license, /MIT License/);
   await assert.rejects(access(new URL("../app/_sites-preview", import.meta.url)));
   await access(new URL("docs/PROTOCOL.md", projectRoot));

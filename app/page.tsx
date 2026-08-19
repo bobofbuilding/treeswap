@@ -1,13 +1,14 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 
 type Direction = "lightning-to-bit" | "bit-to-lightning";
 type View = "swap" | "pool";
 
 type Offer = {
   name: string;
-  kind: "Counter-intent" | "Solver";
+  kind: "Solver";
   feeBps: number;
   routeFee: number;
   speed: string;
@@ -20,68 +21,61 @@ const PAR_SATS = 100;
 const offerBook: Record<Direction, Offer[]> = {
   "lightning-to-bit": [
     {
-      name: "Open intent #842",
-      kind: "Counter-intent",
-      feeBps: 18,
-      routeFee: 0,
-      speed: "direct match",
-      color: "mint",
-    },
-    {
       name: "Rootline",
       kind: "Solver",
-      feeBps: 28,
+      feeBps: 18,
       routeFee: 0,
       speed: "~12 sec",
-      color: "orange",
+      color: "mint",
     },
     {
       name: "Arbor Nine",
       kind: "Solver",
-      feeBps: 34,
+      feeBps: 28,
       routeFee: 0,
       speed: "~18 sec",
-      color: "violet",
-    },
-  ],
-  "bit-to-lightning": [
-    {
-      name: "Open intent #839",
-      kind: "Counter-intent",
-      feeBps: 72,
-      routeFee: 6,
-      speed: "direct match",
-      color: "mint",
-    },
-    {
-      name: "Rootline",
-      kind: "Solver",
-      feeBps: 85,
-      routeFee: 12,
-      speed: "~9 sec",
       color: "orange",
     },
     {
       name: "Canopy Labs",
       kind: "Solver",
+      feeBps: 34,
+      routeFee: 0,
+      speed: "~21 sec",
+      color: "violet",
+    },
+  ],
+  "bit-to-lightning": [
+    {
+      name: "Rootline",
+      kind: "Solver",
+      feeBps: 72,
+      routeFee: 6,
+      speed: "~9 sec",
+      color: "mint",
+    },
+    {
+      name: "Canopy Labs",
+      kind: "Solver",
+      feeBps: 85,
+      routeFee: 12,
+      speed: "~15 sec",
+      color: "orange",
+    },
+    {
+      name: "Arbor Nine",
+      kind: "Solver",
       feeBps: 97,
       routeFee: 8,
-      speed: "~15 sec",
+      speed: "~19 sec",
       color: "blue",
     },
   ],
 };
 
-const activity = [
-  { pair: "BIT → LN", amount: "84,200 sats", solver: "Rootline", age: "4s" },
-  { pair: "LN → BIT", amount: "1,248 BIT", solver: "Intent #842", age: "19s" },
-  { pair: "LN → BIT", amount: "412 BIT", solver: "Arbor Nine", age: "37s" },
-  { pair: "BIT → LN", amount: "220,800 sats", solver: "Canopy", age: "1m" },
-];
-
 const intentSteps = [
-  { title: "Intent signed", note: "Terms and expiry are fixed" },
-  { title: "Best offer reserved", note: "Counter-intent #842 wins" },
+  { title: "Swap terms signed", note: "Amounts, fees, recipient, and expiry are fixed" },
+  { title: "Selected quote locked", note: "One solver is bound to the terms" },
   { title: "Payment hash matched", note: "Both legs share one secret" },
   { title: "Assets released", note: "Preimage settles the swap" },
 ];
@@ -103,8 +97,8 @@ export default function Home() {
   const [selectedOffer, setSelectedOffer] = useState(0);
   const [intentOpen, setIntentOpen] = useState(false);
   const [intentPhase, setIntentPhase] = useState(0);
-  const [poolAsset, setPoolAsset] = useState<"Lightning" | "BIT">("Lightning");
-  const [poolAmount, setPoolAmount] = useState("500000");
+  const [lightningLiquidity, setLightningLiquidity] = useState("5000000");
+  const [bitLiquidity, setBitLiquidity] = useState("50000");
   const [poolReceipt, setPoolReceipt] = useState(false);
 
   const offers = offerBook[direction];
@@ -115,6 +109,13 @@ export default function Home() {
   const intentFee = (parOutput * activeOffer.feeBps) / 10_000;
   const outputAmount = Math.max(parOutput - intentFee - activeOffer.routeFee, 0);
   const feeLabel = `${(activeOffer.feeBps / 100).toFixed(2)}%`;
+
+  const lightningReserve = Number(lightningLiquidity) || 0;
+  const bitReserve = Number(bitLiquidity) || 0;
+  const usableLightning = Math.floor(lightningReserve * 0.75);
+  const usableBit = bitReserve * 0.75;
+  const balancedCapacity = Math.min(usableLightning, usableBit * PAR_SATS);
+  const fillCap = Math.floor(balancedCapacity * 0.05);
 
   const quoteExpiry = "00:24";
 
@@ -148,18 +149,18 @@ export default function Home() {
   return (
     <main>
       <div className="prototype-strip">
-        <span>Local prototype</span>
+        <span>Open prototype</span>
         <span>No wallets connected · No real funds</span>
       </div>
 
       <nav className="nav-shell" aria-label="Main navigation">
-        <a href="#top" className="brand" aria-label="TreeSwap home">
+        <Link href="/" className="brand" aria-label="TreeSwap home">
           <span className="brand-mark" aria-hidden="true">
             <i />
             <b>ϟ</b>
           </span>
           <span>treeswap</span>
-        </a>
+        </Link>
         <div className="nav-links">
           <button
             className={view === "swap" ? "active" : ""}
@@ -171,39 +172,42 @@ export default function Home() {
             className={view === "pool" ? "active" : ""}
             onClick={() => setView("pool")}
           >
-            Fund the pool
+            Solver liquidity
           </button>
           <a href="#mechanism">How it works</a>
+          <a href="https://github.com/bobofbuilding/treeswap" target="_blank" rel="noreferrer">GitHub</a>
         </div>
-        <button className="network-pill" type="button">
-          <span /> Ethereum + Lightning
-        </button>
+        <a className="network-pill" href="#security"><span /> Safety-first prototype</a>
       </nav>
 
       <section className="hero" id="top">
         <div className="hero-copy">
-          <p className="eyebrow">THE INTENT MARKET FOR BIT</p>
+          <p className="eyebrow">BITCOIN LIGHTNING ↔ BIT</p>
           <h1>
-            Swap across the
+            Swap Lightning sats
             <br />
-            <em>canopy.</em>
+            and <em>BIT.</em>
           </h1>
           <p className="hero-deck">
-            Trade Lightning sats and Bittrees BIT at a transparent par value.
-            Opposite intents match first; independent solvers compete for the rest.
+            Tell TreeSwap what you want to receive. Independent solvers return
+            signed quotes, you choose one, and a shared payment secret settles both sides.
           </p>
+          <div className="hero-actions">
+            <a href="#top" onClick={() => setView("swap")}>Explore a swap</a>
+            <a href="#top" className="secondary" onClick={() => setView("pool")}>Plan solver liquidity</a>
+          </div>
           <div className="hero-stats" aria-label="Market summary">
             <div>
-              <span>Par value</span>
+              <span>Reference value</span>
               <strong>1 BIT = 100 sats</strong>
             </div>
             <div>
-              <span>Settlement</span>
-              <strong>Hash-locked</strong>
+              <span>Liquidity</span>
+              <strong>Independent solvers</strong>
             </div>
             <div>
-              <span>Best quote</span>
-              <strong>Wins automatically</strong>
+              <span>Settlement</span>
+              <strong>One payment hash</strong>
             </div>
           </div>
         </div>
@@ -216,10 +220,10 @@ export default function Home() {
             <section className="swap-card" aria-label="TreeSwap quote builder">
               <div className="card-heading">
                 <div>
-                  <p>CREATE AN INTENT</p>
-                  <h2>Swap at par</h2>
+                  <p>SWAP PREVIEW</p>
+                  <h2>Compare solver quotes</h2>
                 </div>
-                <span className="live-badge"><i /> auction live</span>
+                <span className="live-badge"><i /> 3 signed quotes</span>
               </div>
 
               <div className="amount-panel">
@@ -259,11 +263,11 @@ export default function Home() {
                     {inputIsSats ? "BIT" : "sats"}
                   </span>
                 </div>
-                <span className="balance-line">Best of {offers.length} executable offers</span>
+                <span className="balance-line">Selected from {offers.length} solver quotes</span>
               </div>
 
               <div className="auction-head">
-                <span>Competing offers</span>
+                <span>Solver quotes</span>
                 <span>Quote expires {quoteExpiry}</span>
               </div>
               <div className="offer-list">
@@ -290,17 +294,17 @@ export default function Home() {
                         <strong>{numberFormat(offerOutput, inputIsSats ? 2 : 0)}</strong>
                         <small>{(offer.feeBps / 100).toFixed(2)}% fee</small>
                       </span>
-                      {index === 0 && <span className="best-tag">BEST</span>}
+                      {index === 0 && <span className="best-tag">LOWEST HERE</span>}
                     </button>
                   );
                 })}
               </div>
 
               <div className="quote-details">
-                <div><span>Par conversion</span><strong>{numberFormat(parOutput, inputIsSats ? 2 : 0)} {inputIsSats ? "BIT" : "sats"}</strong></div>
+                <div><span>Reference conversion</span><strong>{numberFormat(parOutput, inputIsSats ? 2 : 0)} {inputIsSats ? "BIT" : "sats"}</strong></div>
                 <div><span>Intent + solver fee</span><strong>{feeLabel}</strong></div>
                 {!inputIsSats && <div><span>Estimated routing</span><strong>{activeOffer.routeFee} sats</strong></div>}
-                <div><span>Price protection</span><strong>100 sats / BIT</strong></div>
+                <div><span>Reference, not a peg</span><strong>100 sats / BIT</strong></div>
               </div>
 
               <button
@@ -308,148 +312,130 @@ export default function Home() {
                 onClick={beginIntent}
                 disabled={inputAmount <= 0}
               >
-                Preview this intent <span>→</span>
+                Preview this swap <span>→</span>
               </button>
               <p className="microcopy">Simulation only. No wallet signature or payment will be requested.</p>
             </section>
           ) : (
-            <section className="swap-card pool-card" aria-label="Liquidity pool simulator">
+            <section className="swap-card pool-card" aria-label="Solver liquidity planner">
               <div className="card-heading">
                 <div>
-                  <p>PROVIDE LIQUIDITY</p>
-                  <h2>Fund either side</h2>
+                  <p>SOLVER INVENTORY</p>
+                  <h2>Plan both reserves</h2>
                 </div>
-                <span className="live-badge"><i /> fee earning</span>
+                <span className="live-badge"><i /> self-custodied</span>
               </div>
 
               <div className="pool-balance">
                 <div>
-                  <span>Lightning reserve</span>
-                  <strong>18.4M sats</strong>
-                  <small>49.0% of par value</small>
+                  <span>Usable Lightning</span>
+                  <strong>{numberFormat(usableLightning)} sats</strong>
+                  <small>For BIT → Lightning fills</small>
                 </div>
                 <div>
-                  <span>BIT reserve</span>
-                  <strong>191,800 BIT</strong>
-                  <small>51.0% of par value</small>
+                  <span>Usable BIT</span>
+                  <strong>{numberFormat(usableBit, 2)} BIT</strong>
+                  <small>For Lightning → BIT fills</small>
                 </div>
                 <span className="pool-balance-bar"><i /></span>
               </div>
 
-              <div className="asset-selector" aria-label="Select liquidity asset">
-                <button
-                  className={poolAsset === "Lightning" ? "selected" : ""}
-                  onClick={() => { setPoolAsset("Lightning"); setPoolAmount("500000"); setPoolReceipt(false); }}
-                >
-                  <span className="asset-icon btc">₿</span>
-                  <span><strong>Lightning BTC</strong><small>Fund outgoing sats</small></span>
-                </button>
-                <button
-                  className={poolAsset === "BIT" ? "selected" : ""}
-                  onClick={() => { setPoolAsset("BIT"); setPoolAmount("5000"); setPoolReceipt(false); }}
-                >
-                  <span className="asset-icon bit">B</span>
-                  <span><strong>Bittrees BIT</strong><small>Fund outgoing BIT</small></span>
-                </button>
+              <div className="funding-notice">
+                <strong>No shared LP pool</strong>
+                <span>Each solver keeps a separate vault account and its own Lightning node.</span>
               </div>
 
-              <div className="amount-panel pool-input">
-                <label htmlFor="pool-amount">Deposit amount</label>
-                <div className="amount-row">
-                  <input
-                    id="pool-amount"
-                    inputMode="decimal"
-                    value={poolAmount}
-                    onChange={(event) => setPoolAmount(event.target.value.replace(/[^0-9.]/g, ""))}
-                  />
-                  <span className={`asset-chip ${poolAsset === "Lightning" ? "btc" : "bit"}`}>
-                    <i>{poolAsset === "Lightning" ? "₿" : "B"}</i>
-                    {poolAsset === "Lightning" ? "sats" : "BIT"}
-                  </span>
+              <div className="dual-funding-inputs">
+                <div className="amount-panel pool-input">
+                  <label htmlFor="lightning-liquidity">Lightning node budget</label>
+                  <div className="amount-row">
+                    <input
+                      id="lightning-liquidity"
+                      inputMode="numeric"
+                      value={lightningLiquidity}
+                      onChange={(event) => { setLightningLiquidity(event.target.value.replace(/[^0-9]/g, "")); setPoolReceipt(false); }}
+                    />
+                    <span className="asset-chip btc"><i>₿</i>sats</span>
+                  </div>
+                  <span className="balance-line">Declared capacity · funds stay on your node</span>
+                </div>
+
+                <div className="amount-panel pool-input">
+                  <label htmlFor="bit-liquidity">BIT vault inventory</label>
+                  <div className="amount-row">
+                    <input
+                      id="bit-liquidity"
+                      inputMode="decimal"
+                      value={bitLiquidity}
+                      onChange={(event) => { setBitLiquidity(event.target.value.replace(/[^0-9.]/g, "")); setPoolReceipt(false); }}
+                    />
+                    <span className="asset-chip bit"><i>B</i>BIT</span>
+                  </div>
+                  <span className="balance-line">Segregated onchain balance · exact reservations only</span>
                 </div>
               </div>
 
               <div className="yield-card">
-                <span>Illustrative share</span>
-                <strong>{poolAsset === "Lightning" ? "2.64%" : "2.54%"}</strong>
-                <small>Earns fees only when your side fills an intent. Not an APY promise.</small>
+                <span>Symmetric usable capacity</span>
+                <strong>{numberFormat(balancedCapacity)} sats</strong>
+                <small>25% remains unquoted on each side. This is an operating limit, not a yield estimate.</small>
               </div>
 
               <div className="quote-details">
-                <div><span>Withdrawal window</span><strong>24 hours</strong></div>
-                <div><span>Maximum fee share</span><strong>80%</strong></div>
-                <div><span>Pool accounting</span><strong>Separate per side</strong></div>
+                <div><span>Suggested first-fill cap</span><strong>{numberFormat(fillCap)} sats</strong></div>
+                <div><span>Lightning custody</span><strong>Solver node</strong></div>
+                <div><span>BIT accounting</span><strong>Segregated by solver</strong></div>
               </div>
 
               <button
                 className="primary-action"
+                disabled={lightningReserve <= 0 || bitReserve <= 0}
                 onClick={() => setPoolReceipt(true)}
               >
-                Simulate deposit <span>→</span>
+                Create guarded funding plan <span>→</span>
               </button>
               {poolReceipt && (
-                <p className="receipt" role="status">✓ Draft liquidity receipt created. Nothing was deposited.</p>
+                <div className="funding-receipt" role="status">
+                  <span><b>1</b> Verify node identity and capped Lightning budget</span>
+                  <span><b>2</b> Approve and deposit BIT into your solver vault account</span>
+                  <span><b>3</b> Activate quotes only after both balances reconcile</span>
+                  <small>Funding plan created. No wallet or node action occurred.</small>
+                </div>
               )}
             </section>
           )}
         </div>
       </section>
 
-      <section className="market-tape" aria-label="Recent prototype settlements">
-        <div className="tape-label"><i /> PROTOTYPE MARKET</div>
-        {activity.map((item) => (
-          <div className="tape-item" key={`${item.pair}-${item.age}`}>
-            <strong>{item.pair}</strong>
-            <span>{item.amount}</span>
-            <small>via {item.solver} · {item.age}</small>
-          </div>
-        ))}
+      <section className="principles-strip" aria-label="TreeSwap design principles">
+        <span><b>01</b> Compare signed quotes</span>
+        <span><b>02</b> Keep solver funds separate</span>
+        <span><b>03</b> See every fee before signing</span>
+        <span><b>04</b> Settle full swaps only</span>
       </section>
 
-      <section className="book-section" aria-labelledby="book-title">
-        <div className="book-intro">
-          <p className="eyebrow">PRICE–TIME INTENT BOOK</p>
-          <h2 id="book-title">The best executable edge leads.</h2>
+      <section className="audience-section" aria-labelledby="audience-title">
+        <div className="audience-heading">
+          <p className="eyebrow">ONE BRIDGE · TWO ROLES</p>
+          <h2 id="audience-title">Swap, or help swaps happen.</h2>
           <p>
-            Inspired by DeepState’s top-of-book mechanism, TreeSwap ranks each
-            side by net output after every disclosed cost. Arrival time breaks
-            ties. Only the leading executable bid and ask earn maker fee share.
+            TreeSwap is intentionally small: one quote request, one selected solver,
+            and one full settlement. There is no shared public liquidity pool.
           </p>
-          <div className="book-rules">
-            <span><b>1</b> Net price first</span>
-            <span><b>2</b> Time breaks ties</span>
-            <span><b>3</b> Collateral must stay live</span>
-          </div>
         </div>
-
-        <div className="order-book" aria-label="Prototype TreeSwap intent book">
-          <div className="book-topline">
-            <div><span>Best bid</span><strong>99.82</strong><small>sats / BIT</small></div>
-            <div><span>Best ask</span><strong>100.72</strong><small>sats / BIT</small></div>
-            <div><span>Net spread</span><strong>0.90%</strong><small>after quoted costs</small></div>
-          </div>
-          <div className="book-columns">
-            <div className="book-side bids">
-              <div className="book-side-title"><span>Lightning → BIT</span><small>BIDS · BUY BIT</small></div>
-              <div className="book-row head"><span>Net price</span><span>Quantity</span><span>Age</span></div>
-              <div className="book-row leader"><span>99.82</span><span>1,248 BIT</span><span>00:41</span><b>LEADS + EARNS</b></div>
-              <div className="book-row"><span>99.72</span><span>4,800 BIT</span><span>01:07</span></div>
-              <div className="book-row"><span>99.66</span><span>2,100 BIT</span><span>02:12</span></div>
-              <div className="book-row"><span>99.58</span><span>8,400 BIT</span><span>03:44</span></div>
-            </div>
-            <div className="book-side asks">
-              <div className="book-side-title"><span>BIT → Lightning</span><small>ASKS · SELL BIT</small></div>
-              <div className="book-row head"><span>Net price</span><span>Quantity</span><span>Age</span></div>
-              <div className="book-row leader"><span>100.72</span><span>842 BIT</span><span>00:18</span><b>LEADS + EARNS</b></div>
-              <div className="book-row"><span>100.85</span><span>2,208 BIT</span><span>00:56</span></div>
-              <div className="book-row"><span>100.97</span><span>930 BIT</span><span>01:49</span></div>
-              <div className="book-row"><span>101.12</span><span>5,000 BIT</span><span>04:21</span></div>
-            </div>
-          </div>
-          <div className="book-footer">
-            <span><i /> Executable collateral checked 3s ago</span>
-            <span>12 resting intents · 3 independent solvers</span>
-          </div>
+        <div className="audience-grid">
+          <article>
+            <span className="audience-label">FOR SWAPPERS</span>
+            <h3>Choose the quote you trust.</h3>
+            <p>Compare exact output, total fees, solver identity, and expiry before you approve anything.</p>
+            <a href="#top" onClick={() => setView("swap")}>Preview a swap <b>→</b></a>
+          </article>
+          <article>
+            <span className="audience-label">FOR SOLVERS</span>
+            <h3>Bring your own liquidity.</h3>
+            <p>Keep Lightning on your node and BIT in a segregated vault account. Quote only within your limits.</p>
+            <a href="#top" onClick={() => setView("pool")}>Plan liquidity <b>→</b></a>
+          </article>
         </div>
       </section>
 
@@ -458,29 +444,28 @@ export default function Home() {
           <p className="eyebrow">THE CLEARING MECHANISM</p>
           <h2>Two sides. One secret.</h2>
           <p>
-            TreeSwap uses the same payment hash on Lightning and Ethereum. The
-            revealed preimage is the receipt that releases BIT—without asking
-            either participant to trust the other.
+            The selected Lightning payment and BIT escrow use the same payment
+            hash. Revealing its secret releases BIT to the address fixed in advance.
           </p>
         </div>
         <div className="mechanism-grid">
           <article>
             <span className="step-number">01</span>
             <div className="mechanism-icon intent-icon"><i /><b /></div>
-            <h3>Publish the outcome</h3>
-            <p>A maker signs an intent: asset in, minimum asset out, recipient, expiry, and fee ceiling.</p>
+            <h3>Request the outcome</h3>
+            <p>Enter the asset, amount, recipient, expiry, and maximum fee you will accept.</p>
           </article>
           <article>
             <span className="step-number">02</span>
             <div className="mechanism-icon auction-icon"><i /><b /><em /></div>
-            <h3>Compete to fill</h3>
-            <p>Opposite user intents and independent solvers submit executable offers. Best net output wins.</p>
+            <h3>Compare signed quotes</h3>
+            <p>Independent solvers return short-lived, all-in prices. You select one signed quote.</p>
           </article>
           <article>
             <span className="step-number">03</span>
             <div className="mechanism-icon settle-icon"><i /></div>
             <h3>Settle atomically</h3>
-            <p>The Lightning preimage unlocks the reserved BIT escrow. If time expires, funds return.</p>
+            <p>BIT is locked to one beneficiary. The Lightning payment secret releases it—or timeout returns it.</p>
           </article>
         </div>
       </section>
@@ -488,10 +473,10 @@ export default function Home() {
       <section className="rules-section">
         <div className="rules-card fee-card">
           <p className="eyebrow">DIRECTIONAL FEES</p>
-          <h2>Liquidity has a direction.</h2>
+          <h2>Outgoing Lightning costs more.</h2>
           <p>
-            BIT → Lightning carries a higher fee because the fulfiller must source
-            outbound Lightning liquidity and absorb routing uncertainty.
+            BIT → Lightning carries a higher quote because the solver pays the
+            Lightning invoice and absorbs routing and outbound-capacity costs.
           </p>
           <div className="fee-comparison">
             <div>
@@ -505,16 +490,16 @@ export default function Home() {
               <small>Routing estimate included</small>
             </div>
           </div>
-          <span className="rule-note">Fee caps are signed into every intent. Governance can adjust defaults, never an active quote.</span>
+          <span className="rule-note">Fee caps are signed into every intent. An immutable vault ceiling limits every active reservation.</span>
           <span className="rule-note">V1 protocol fees settle on the BIT leg; Lightning routing and solver spread are locked into the net-sats quote.</span>
         </div>
 
         <div className="rules-card contract-card">
           <p className="eyebrow">SETTLEMENT ASSET</p>
-          <h2>BIT stays BIT.</h2>
+          <h2>No wrapped token.</h2>
           <p>
-            TreeSwap does not mint or redeem BIT. It moves the existing ERC-20
-            through an isolated escrow and leaves BNote backing to the BIT protocol.
+            TreeSwap does not mint a substitute asset. The design moves existing
+            BIT through an isolated escrow and leaves backing to the BIT protocol.
           </p>
           <a
             href={`https://etherscan.io/token/${BIT_CONTRACT}#code`}
@@ -532,13 +517,13 @@ export default function Home() {
         </div>
       </section>
 
-      <section className="security-section" aria-labelledby="security-title">
+      <section className="security-section" id="security" aria-labelledby="security-title">
         <div className="security-heading">
           <p className="eyebrow">ADVERSARIAL BY DESIGN</p>
-          <h2 id="security-title">Four launch gates before real funds.</h2>
+          <h2 id="security-title">What must be true before real funds.</h2>
           <p>
-            Hash locks are only one piece. TreeSwap must also defend the par,
-            bind the recipient, order both clocks safely, and make quote priority verifiable.
+            Hash locks are only one piece. TreeSwap must limit price exposure,
+            bind the recipient, order both clocks safely, and verify every selected quote.
           </p>
           <a href="https://github.com/lightning/bolts/blob/master/11-payment-encoding.md" target="_blank" rel="noreferrer">
             Review basis: BOLT 11 + EIP-712 <span>↗</span>
@@ -547,8 +532,8 @@ export default function Home() {
         <div className="security-grid">
           <article>
             <span>01 · ECONOMIC</span>
-            <h3>Par circuit breaker</h3>
-            <p>Caps and inventory-aware fees stop a stale 100-sat reference from draining one side.</p>
+            <h3>Reference limits</h3>
+            <p>100 sats is a reference, not a guarantee. Exposure caps stop one-sided inventory drain.</p>
             <b>REQUIRED</b>
           </article>
           <article>
@@ -565,20 +550,20 @@ export default function Home() {
           </article>
           <article>
             <span>04 · MARKET</span>
-            <h3>Verifiable priority</h3>
-            <p>Signed, sequenced quotes let anyone reproduce price-time order before rewards activate.</p>
+            <h3>Exact signed quote</h3>
+            <p>The selected amounts, fees, recipient, hash, and expiry must be independently verifiable.</p>
             <b>REQUIRED</b>
           </article>
         </div>
       </section>
 
       <footer>
-        <a href="#top" className="brand footer-brand">
+        <Link href="/" className="brand footer-brand">
           <span className="brand-mark" aria-hidden="true"><i /><b>ϟ</b></span>
           <span>treeswap</span>
-        </a>
-        <p>Intent-based swaps between Bitcoin Lightning and Bittrees BIT.</p>
-        <span>Prototype specification · August 2026</span>
+        </Link>
+        <p>Competitive swaps between Bitcoin Lightning and Bittrees BIT.</p>
+        <span><a href="https://github.com/bobofbuilding/treeswap" target="_blank" rel="noreferrer">Open-source prototype</a> · MIT</span>
       </footer>
 
       {intentOpen && (

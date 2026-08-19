@@ -1,202 +1,144 @@
 # TreeSwap protocol sketch
 
-Status: local prototype specification, not audited and not ready for real funds.
+Status: prototype specification and local contract harness; not audited and not ready for real funds.
 
-## 1. Product invariant
+## 1. Product boundary
 
-TreeSwap clears swaps between:
+TreeSwap coordinates full-fill swaps between Lightning sats and BIT on Ethereum at contract `0x57A447E4d5e18A9423408C365963A73F08B9d18C`.
 
-- Bitcoin on the Lightning Network, measured in satoshis; and
-- BIT on Ethereum mainnet, contract `0x57A447E4d5e18A9423408C365963A73F08B9d18C`.
+The product displays `1 BIT = 100 sats` as a project reference value. The BIT contract does not enforce that price. TreeSwap never promises unconditional redemption at par; users accept exact integer amounts from short-lived solver quotes.
 
-The prototype uses a par value of:
+## 2. Minimal participants
 
-```text
-1 BIT = 100 sats
-```
-
-The verified BIT implementation is an upgradeable, pausable, 18-decimal ERC-20 vault token. Users mint BIT by depositing BNote ERC-1155 assets and redeem BNotes by burning BIT plus a configurable premium. TreeSwap does not call those mint or redeem paths. It only transfers existing BIT into and out of an isolated swap escrow.
-
-The 100-sat par value is a TreeSwap economic rule supplied by the project owner. It is not an invariant in the BIT contract. Every swap therefore carries an explicit limit and minimum output; the interface must never imply the peg is guaranteed by the token contract.
-
-## 2. Participants
-
-| Participant | Role |
+| Participant | Responsibility |
 | --- | --- |
-| Maker | Publishes a signed desired outcome with a limit, quantity, recipient, expiry, and fee ceiling. |
-| Counter-maker | Publishes an intent in the opposite direction and can directly clear a compatible maker. |
-| Solver | Quotes and fills unmatched or residual flow using its own Lightning and BIT inventory. |
-| Coordinator | Relays intents, checks executability, reserves matches, and indexes state. It must not be able to steal escrowed assets. |
-| Escrow contract | Holds BIT against a payment hash, reserved recipient, and timeout. |
-| Lightning adapter | Creates or validates invoices and watches settlement/preimage state. |
-| Liquidity provider | Funds one asset side and receives only that side's allocated fee share. |
+| User | Requests a quote, validates the invoice or escrow, and selects one signed solver quote. |
+| Solver | Maintains its own BIT inventory and Lightning node, signs firm quotes, and completes accepted swaps. |
+| RFQ relay | Delivers requests and quotes. It cannot select a beneficiary or move funds. The client may contact multiple relays or solvers. |
+| BIT vault | Segregates solver balances and locks exact BIT amounts to one beneficiary and payment hash. |
+| Lightning adapter | Runs beside the solver node with least-privilege credentials and enforces invoice, amount, hash, and capacity policy. |
 
-## 3. Intent shape
+There is no central limit order book, shared LP pool, market-making reward, partial fill, or permissionless solver admission in v1.
 
-An intent is an EIP-712 signed message plus direction-specific settlement data.
+## 3. Selected-quote intent
+
+The selected terms use EIP-712 typed data with a domain containing protocol name, version, chain ID, and verifying vault. The message binds:
 
 ```ts
-type TreeSwapIntent = {
-  maker: `0x${string}` | `ln:${string}`;
+type SelectedQuote = {
+  quoteId: `0x${string}`;
   direction: "LIGHTNING_TO_BIT" | "BIT_TO_LIGHTNING";
-  inputAmount: bigint;
-  minimumOutput: bigint;
-  parSatsPerBit: 100;
-  destination: `0x${string}` | string;
+  user: `0x${string}`;
+  solver: `0x${string}`;
+  bitAmountWei: bigint;
+  lightningAmountSats: bigint;
+  protocolFeeBitWei: bigint;
   paymentHash: `0x${string}`;
-  maxProtocolFeeBps: number;
-  maxSolverFeeBps: number;
-  maxRoutingFeeSats: bigint;
-  allowPartial: boolean;
+  invoiceDigest: `0x${string}`;
   nonce: bigint;
-  expiry: number;
+  expiresAt: number;
+  refundAfter: number;
 };
 ```
 
-BIT does not expose native EIP-2612 permit in its verified ABI. A production flow therefore needs either a prior escrow allowance, a separate approval transaction, or a carefully reviewed Permit2 integration.
+The user chooses among the signed quotes it actually receives. TreeSwap may label the largest net output as “best received,” but never claims a globally best price.
 
-## 4. One book, two kinds of liquidity
+## 4. BIT inventory
 
-Opposite user intents and solver quotes enter the same executable order book.
+`contracts/src/TreeSwapBitVault.sol` is the first executable prototype for solver-owned BIT liquidity. It is immutable, has no administrator, and supports:
 
-1. A Lightning → BIT intent is a bid to buy BIT with sats.
-2. A BIT → Lightning intent is an ask to sell BIT for sats.
-3. A solver quote is treated as a short-lived, fully collateralized order on the appropriate side.
-4. Compatible opposite user intents match before the system requests inventory from a solver, when their net outcomes are at least as good as the best solver quote.
-5. Solvers fill unmatched sizes and residual amounts.
+- exact-balance deposits into a solver-specific account;
+- withdrawals of unreserved inventory only;
+- solver-created full-fill reservations;
+- immutable beneficiary, payment hash, amount, fee, and refund deadline;
+- permissionless preimage relay with payment only to the bound beneficiary;
+- timeout return to the original solver balance;
+- globally single-use payment hashes; and
+- an immutable protocol-fee ceiling.
 
-The MVP uses all-or-nothing Lightning invoices. Partial fills require splitting a maker quantity into independently hashed child intents before publication; a single invoice/payment hash must not be reused across independent fills.
+The prototype does not yet verify the full EIP-712 quote onchain. The solver creates a reservation from its own inventory, and the user must compare the resulting event to the selected quote before authorizing Lightning. Signature enforcement is required before a public testnet.
 
-## 5. Ranking and rewards
+## 5. Lightning inventory
 
-TreeSwap borrows DeepState's price-first, time-second order-book rule, with an important change: it ranks **net executable output**, not an unadjusted headline price.
+Lightning liquidity remains on each solver's node. TreeSwap records only a short-lived, conservative capacity declaration.
 
-For each offer, the coordinator computes:
+For BIT → Lightning, the solver needs outbound Lightning capacity to pay the user's invoice. For Lightning → BIT, it needs sufficient inbound capacity to accept the user's held payment plus BIT inventory to deliver.
 
-```text
-net output = par output
-           - protocol fee
-           - solver spread
-           - quoted Lightning routing allowance
-           - any disclosed interface fee
-```
-
-Ranking rules:
-
-1. Better net executable output wins.
-2. Greater executable quantity wins only when a user asks for more than the first offer can fill.
-3. Earlier verified arrival time breaks equal-output ties.
-4. An order loses its position when collateral, invoice, channel capacity, heartbeat, or expiry is no longer valid.
-5. The matching contract or signed execution receipt records the applied fee schedule so an active quote cannot be repriced.
-6. Equal-output ties use an authenticated append-only sequence; coordinator receipt time alone is not trustworthy.
-
-Only the current executable leader on each side accrues maker reward weight. Reward weight is proportional to time at the top and usable quantity, capped by the schedule. Rewards remain disabled until the ordering record is independently reproducible or challengeable. The prototype does not issue a reward token; the first implementation should use a bounded share of collected fees.
-
-This avoids treating a stale or unexecutable top quote as economically superior. Consumers should still display quantity, expected gas, routing allowance, protocol fee, solver fee, and quote expiry.
-
-## 6. Direct counter-intent settlement
-
-### BIT → Lightning maker matched by Lightning → BIT taker
-
-This is the cleanest direct match:
-
-1. Alice creates a Lightning invoice for the sats she wants. Its payment hash is `H`.
-2. Alice escrows BIT on Ethereum against `H`, a timeout, and the future taker's reserved Ethereum address.
-3. Bob's opposite intent accepts the net price and the coordinator reserves the escrow to Bob.
-4. Bob pays Alice's Lightning invoice.
-5. Successful Lightning settlement reveals preimage `R` to Bob, where `sha256(R) = H`.
-6. Bob submits `R` to the Ethereum escrow and receives Alice's BIT.
-7. If the invoice is not paid before the reservation expires, Alice can unreserve and eventually refund her BIT.
-
-The solver version is identical: the winning solver pays the invoice and claims the reserved BIT with the preimage.
-
-### Lightning → BIT maker matched by BIT → Lightning taker
-
-1. The BIT seller creates or controls a Lightning hold invoice with payment hash `H` and preimage `R`.
-2. The seller escrows BIT to the buyer's Ethereum address against `H`.
-3. The Lightning buyer pays the hold invoice.
-4. The seller settles the invoice with `R` and irrevocably receives the sats.
-5. The buyer learns `R` from the settled Lightning payment and claims the BIT escrow.
-6. If the Lightning HTLC expires, the seller refunds the BIT after the longer Ethereum timeout.
-
-Timeouts must be ordered so the party revealing a preimage always has enough time to claim the other leg. Exact values require review against the chosen Lightning implementation and Ethereum confirmation policy.
-
-## 7. Escrow state machine
+The solver adapter computes usable capacity as the minimum of:
 
 ```text
-DRAFT
-  → OPEN          BIT deposited; hash and limits fixed
-  → RESERVED      winning taker address and reservation deadline fixed
-  → CLAIMED       valid preimage supplied; BIT released to reserved taker
-
-OPEN or RESERVED
-  → CANCELLED     only if no irreversible opposite-leg payment exists
-  → REFUNDED      absolute timeout passed; BIT returned to depositor
+operator budget
+node-reported spendable or receivable capacity
+daily risk limit remaining
+available inventory after accepted in-flight swaps
 ```
 
-Required protections include replay-safe nonces, reentrancy guards, token balance accounting, reservation expiry, explicit recipient binding, pause controls, bounded fees, and emergency actions that cannot redirect user escrow.
+The public web application never receives a node macaroon, seed, preimage store, or unrestricted RPC endpoint.
 
-## 8. Directional fees
+## 6. Settlement flows
 
-Recommended prototype defaults:
+### BIT → Lightning
 
-| Direction | Protocol default | Solver/routing treatment |
-| --- | ---: | --- |
-| Lightning → BIT | 10 bps | Sender pays normal Lightning routing; solver bids compete above the protocol fee. |
-| BIT → Lightning | 35 bps | Solver quote adds outbound-liquidity spread and a capped routing allowance. |
+1. The user creates an exact BOLT 11 invoice and requests quotes.
+2. The user selects one solver quote and deposits or reserves the quoted BIT to the solver-bound escrow.
+3. The solver waits for the configured Ethereum finality threshold and validates the invoice.
+4. The solver pays the invoice and receives the preimage.
+5. Anyone may relay the preimage, but BIT is paid only to the bound solver beneficiary.
+6. If payment never occurs, the user's exact-swap escrow refunds after the longer deadline.
 
-The displayed prototype book shows total indicative costs starting around 18 bps and 72 bps respectively because the solver or counter-intent component is included.
+The current inventory vault models solver-funded BIT, so the complementary user-funded exact escrow remains a required contract before this direction is complete.
 
-Fee governance rules:
+### Lightning → BIT
 
-- Separate configurable defaults and hard caps per direction.
-- Every intent signs maximum protocol, solver, routing, and interface fees.
-- A governance change affects only new intents.
-- In v1, the protocol fee is settled from the BIT leg in either direction; the solver's Lightning spread and routing allowance are embedded in the signed net-sats quote.
-- Protocol fees apply only to successfully matched value, never unmatched collateral.
-- Failed or expired intents pay no protocol execution fee, though users may still incur Ethereum gas or Lightning probing costs.
-- A multisig and timelock should govern production changes before any broader onchain governance is considered.
+1. Solvers return signed quotes; the user selects one.
+2. The selected solver creates a hold invoice and reserves exact BIT from its vault to the user's Ethereum address.
+3. The user verifies the finalized reservation and every supported BOLT 11 field before paying.
+4. The solver settles the hold invoice with the preimage.
+5. The user or a relayer supplies the preimage to claim BIT.
+6. If the held payment expires, the BIT reservation returns to the solver after the Ethereum refund deadline.
 
-## 9. Either-side liquidity pools
+## 7. Fees and units
 
-Lightning and BIT liquidity are accounted for separately.
+- The contract transfers exact BIT wei and performs no onchain par conversion.
+- Quotes use whole sats in v1 and reject incompatible dust.
+- The protocol fee is denominated on the BIT leg in both directions.
+- BIT → Lightning carries the higher solver fee because it consumes outbound Lightning liquidity and routing certainty.
+- Every active swap fixes its exact fee; no later configuration can reprice it.
+- No protocol execution fee is charged on refund.
 
-- A Lightning LP funds solver-controlled Lightning capacity or a clearly disclosed custodial pool. It earns a share of fees from fills that consume outgoing sats.
-- A BIT LP deposits into an audited vault with share accounting. It earns a share of fills that consume outgoing BIT.
-- Depositing one side must not create an undisclosed claim on the other side.
-- Inventory rebalancing is performed by solver trades, not by silently repricing LP shares away from the 100-sat project par.
-- Withdrawals use a queue so funds committed to an accepted intent cannot be withdrawn mid-settlement.
+## 8. Funding model
 
-Permissionless pooled Lightning custody is the highest-risk part of the design. The recommended MVP starts with solver-owned Lightning balances and a capped BIT vault, then adds public Lightning funding only after custody, channel, accounting, and insolvency behavior are specified and audited.
+“Fund liquidity” means configuring a solver, not buying a transferable LP share:
 
-## 10. Mandatory safety invariants
+- the solver deposits BIT into its segregated vault account;
+- the solver assigns a capped Lightning budget to its own node adapter;
+- 25% is left unquoted by the current product prototype as an operational buffer;
+- every accepted quote reduces available capacity immediately;
+- withdrawals cannot consume reserved BIT or Lightning committed to an in-flight payment; and
+- quotes stop automatically if reconciliation, node health, BIT proxy monitoring, or circuit breakers fail.
 
-- The Ethereum beneficiary is immutably bound before Lightning payment authorization.
-- Payment hashes and maker nonces are single-use.
-- Claim and refund are mutually exclusive terminal states.
-- Claim/refund exits remain available when new intents are paused.
-- Ethereum refund time is later than the final safe Lightning settlement time plus confirmation and congestion buffers.
-- Every fee is included in the signed cap and cannot change after acceptance.
-- BIT proxy implementation changes or pauses stop new reservations pending review.
-- The 100-sat reference is protected by inventory caps, imbalance fees, and circuit breakers; it is not an unconditional redemption promise.
-- Rewards remain off until price-time ordering can be independently verified.
-- Partial fills use unique child hashes; a Lightning invoice hash is never reused.
+See [`LIQUIDITY_FUNDING.md`](LIQUIDITY_FUNDING.md) for the operational sequence.
 
-See [`THREAT_MODEL.md`](THREAT_MODEL.md) for the complete adversarial review, findings, required properties, and launch gates.
+## 9. Mandatory invariants
 
-## 11. Prototype boundaries and next milestones
+- Vault BIT balance equals available solver inventory plus locked inventory.
+- A solver can withdraw only its own unreserved inventory.
+- A claim pays only the beneficiary bound before Lightning authorization.
+- `CLAIMED` and `REFUNDED` are mutually exclusive.
+- Payment hashes and quote nonces are globally single-use.
+- Ethereum refund is later than the final safe Lightning settlement time plus finality and congestion buffers.
+- Every fee is exact, signed, and under an immutable cap.
+- BIT implementation changes or pauses stop new quotes and reservations.
+- Real swaps remain disabled when balances or Lightning capacity cannot be reconciled.
 
-Current prototype:
+## 10. Implementation order
 
-- demonstrates the product, quote ranking, price-time book, directional fees, settlement sequence, and LP concept;
-- uses fabricated balances, offers, and settlement events;
-- creates no external state and handles no real funds.
+1. Complete the BIT inventory vault and stateful campaign on a mainnet fork.
+2. Add the complementary user-funded exact BIT escrow for BIT → Lightning.
+3. Enforce the selected EIP-712 solver quote onchain.
+4. Build the least-privilege Lightning regtest adapter and hold-invoice lifecycle.
+5. Formally parameterize timeout ordering and test both chain clocks.
+6. Run two or three independent solvers on testnet with tiny limits and no public deposits.
+7. Obtain independent contract, Lightning, and operational review before any mainnet funding.
 
-Recommended implementation order:
-
-1. Solidity escrow contract and Foundry tests on a local Ethereum fork.
-2. Regtest Lightning adapter with hold invoices and preimage lifecycle tests.
-3. Signed intent and solver-quote schemas plus a deterministic matching library.
-4. Adversarial tests for expiry races, preimage leakage, stale offers, griefing, partial fills, and fee rounding.
-5. Capped testnet deployment with one operator and multiple independent solver processes.
-6. Independent security review before any mainnet or public LP funds.
+See [`THREAT_MODEL.md`](THREAT_MODEL.md) for the adversarial review and launch gates.
