@@ -34,12 +34,17 @@ The command refuses to overwrite an existing file and never records the RPC URL.
 
 ## Gate 2 — prove the Lightning boundary
 
-- [ ] Build an isolated LND regtest adapter using distinct invoice, payer, and observer credentials.
-- [ ] Bake exact URI permissions and prove every forbidden RPC fails.
+- [x] Build a pinned, internal two-node Bitcoin/LND regtest with balanced private-channel liquidity.
+- [x] Bake distinct exact-URI invoice, payer, and observer credentials and prove representative forbidden RPCs fail.
+- [x] Complete a real 10,000-sat hold-invoice create, decode, pay, accept, settle, and success smoke across the nodes.
+- [ ] Connect the repository policy to a real isolated adapter process.
+- [ ] Prove the complete forbidden-RPC matrix and credential timeouts.
 - [ ] Test standard invoices and hold invoices through create, accept, settle, cancel, expire, and replay paths.
 - [ ] Inject delayed and fast Bitcoin blocks, LND restart, lost responses, idempotent retry, force close, unsynced state, TLS pin change, credential rotation, and credential revocation.
 - [ ] Prove that the computed Lightning cutoff always precedes the EVM refund boundary by the published margin.
 - [ ] Produce a secret-free evidence bundle containing versions, configuration hashes, test results, and timestamps—never macaroons, invoices, or preimages.
+
+The current lab and remaining fault matrix are documented in [Lightning regtest lab](./LIGHTNING_REGTEST.md).
 
 ## Gate 3 — build the durable automatic coordinator
 

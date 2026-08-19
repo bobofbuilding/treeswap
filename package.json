@@ -14,7 +14,11 @@
     "test": "npm run build && node --import ./tests/register-cloudflare-loader.mjs --test tests/*.test.mjs",
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "drizzle-kit generate",
-    "observe:bit": "node scripts/observe-bit-deployment.mjs"
+    "observe:bit": "node scripts/observe-bit-deployment.mjs",
+    "regtest:up": "bash infra/regtest/lab.sh up",
+    "regtest:smoke": "bash infra/regtest/lab.sh smoke",
+    "regtest:status": "bash infra/regtest/lab.sh status",
+    "regtest:down": "bash infra/regtest/lab.sh down"
   },
   "dependencies": {
     "drizzle-orm": "0.45.2",

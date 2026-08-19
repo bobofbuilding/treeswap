@@ -19,6 +19,8 @@ No repository checkbox can substitute for deployed evidence. A gate becomes comp
   - [ ] Capture matching observations from two independent authenticated RPC providers, verify source/bytecode, and promote them through review.
 - [ ] Run the full escrow suite against a controlled Ethereum mainnet fork: proxy implementation change, pause/unpause while locked, reorg before and after open/claim, nonstandard transfer behavior, and finality rollback.
 - [ ] Run an isolated Bitcoin/LND regtest adapter: standard and hold invoices, exact BOLT 11 decode, delayed/fast blocks, accepted-HTLC cutoff, timeout, LND restart, force close, credential rotation/revocation, and negative macaroon permissions.
+  - [x] Reproducible two-node regtest, balanced private channel, distinct exact-URI credentials, negative authority checks, and accepted-to-settled hold-invoice smoke implemented.
+  - [ ] Complete the remaining fault matrix and connect the real adapter process.
 - [ ] Deploy the gate, registry, and both escrows from the reviewed source commit. Seal the registry to exactly those escrows and prove every constructor immutable and runtime code hash.
 - [ ] Deploy distinct 2-of-3-or-stronger controller, guardian, and fee-recipient contract wallets; record owners, thresholds, hardware-key custody, and recovery contacts.
 - [ ] Operate atomic persistent RFQ quotas, cancellation sequence, capacity epochs, solver reliability, idempotent Lightning requests, and one-shot payment authorization.
