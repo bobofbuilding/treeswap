@@ -10,4 +10,3 @@ export default function robots(): MetadataRoute.Robots {
     host: "https://treeswap.vercel.app",
   };
 }
-

@@ -79,4 +79,3 @@ Stopping new quotes must not disable valid claim, refund, or solver withdrawal p
 - [ ] Reconciliation service and signed capacity heartbeats
 - [ ] Two independent solver deployments
 - [ ] External review and tiny testnet limits
-
