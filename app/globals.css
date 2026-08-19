@@ -69,8 +69,7 @@ summary::-webkit-details-marker {
 }
 
 #trade,
-#mechanism,
-#security {
+#mechanism {
   scroll-margin-top: 78px;
 }
 
@@ -997,87 +996,6 @@ summary::-webkit-details-marker {
   font-size: 20px;
 }
 
-.security-section {
-  padding: 100px 5vw;
-  display: grid;
-  grid-template-columns: minmax(280px, 0.72fr) minmax(520px, 1.28fr);
-  align-items: center;
-  gap: 7vw;
-  color: white;
-  background: var(--forest-950);
-}
-
-.security-heading .eyebrow {
-  color: var(--leaf);
-}
-
-.security-heading h2 {
-  margin: 13px 0 16px;
-  font: 400 clamp(38px, 4.4vw, 58px)/1 Georgia, serif;
-  letter-spacing: -0.055em;
-}
-
-.security-heading > p {
-  margin: 0;
-  color: #a9bdb0;
-  font-size: 13px;
-  line-height: 1.65;
-}
-
-.security-heading > a {
-  margin-top: 24px;
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  color: white;
-  font-size: 10px;
-  font-weight: 700;
-}
-
-.security-heading > a span {
-  color: var(--leaf);
-}
-
-.security-grid {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
-}
-
-.security-grid article {
-  min-height: 145px;
-  border: 1px solid rgba(255, 255, 255, 0.13);
-  border-radius: 16px;
-  padding: 20px;
-  display: flex;
-  gap: 15px;
-  background: rgba(255, 255, 255, 0.035);
-}
-
-.security-grid article > span {
-  width: 28px;
-  height: 28px;
-  flex: 0 0 auto;
-  display: grid;
-  place-items: center;
-  border-radius: 9px;
-  color: var(--forest-950);
-  background: var(--leaf);
-  font: 800 8px/1 var(--font-geist-mono), monospace;
-}
-
-.security-grid h3 {
-  margin: 3px 0 9px;
-  font-size: 13px;
-}
-
-.security-grid p {
-  margin: 0;
-  color: #90a698;
-  font-size: 10px;
-  line-height: 1.55;
-}
-
 footer {
   min-height: 110px;
   padding: 28px 5vw;
@@ -1332,8 +1250,7 @@ footer a:hover {
   }
 
   .mechanism-grid,
-  .facts-section,
-  .security-section {
+  .facts-section {
     grid-template-columns: 1fr;
   }
 
@@ -1349,10 +1266,6 @@ footer a:hover {
 
   .mechanism-grid h3 {
     margin-top: 25px;
-  }
-
-  .security-section {
-    gap: 42px;
   }
 
   footer {
@@ -1456,8 +1369,7 @@ footer a:hover {
   }
 
   .mechanism,
-  .facts-section,
-  .security-section {
+  .facts-section {
     padding-left: 15px;
     padding-right: 15px;
   }
@@ -1479,19 +1391,6 @@ footer a:hover {
   .fee-comparison {
     margin-top: 30px;
     grid-template-columns: 1fr;
-  }
-
-  .security-section {
-    padding-top: 78px;
-    padding-bottom: 78px;
-  }
-
-  .security-grid {
-    grid-template-columns: 1fr;
-  }
-
-  .security-grid article {
-    min-height: 0;
   }
 
   footer {

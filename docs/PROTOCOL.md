@@ -24,26 +24,27 @@ There is no central limit order book, shared LP pool, market-making reward, part
 
 ## 3. Selected-quote intent
 
-The selected terms use EIP-712 typed data with a domain containing protocol name, version, chain ID, and verifying vault. The message binds:
+For the implemented Lightning → BIT vault, the user accepts the exact selected terms with EIP-712 typed data. The domain binds protocol name, version, chain ID, and verifying vault. The message binds:
 
 ```ts
 type SelectedQuote = {
   quoteId: `0x${string}`;
-  direction: "LIGHTNING_TO_BIT" | "BIT_TO_LIGHTNING";
   user: `0x${string}`;
   solver: `0x${string}`;
-  bitAmountWei: bigint;
+  beneficiary: `0x${string}`;
+  amount: bigint; // gross BIT wei reserved
+  fee: bigint; // BIT wei
   lightningAmountSats: bigint;
-  protocolFeeBitWei: bigint;
   paymentHash: `0x${string}`;
   invoiceDigest: `0x${string}`;
   nonce: bigint;
-  expiresAt: number;
+  quoteExpiresAt: number;
+  lastSafeClaimAt: number;
   refundAfter: number;
 };
 ```
 
-The user chooses among the signed quotes it actually receives. TreeSwap may label the largest net output as “best received,” but never claims a globally best price.
+The user chooses among the solver quotes it actually receives, then signs one complete quote for onchain reservation. TreeSwap may label the largest net output as “best received,” but never claims a globally best price. A future BIT → Lightning escrow must use a separate direction-specific type hash or verifying contract so signatures cannot cross directions.
 
 ## 4. BIT inventory
 
@@ -51,14 +52,17 @@ The user chooses among the signed quotes it actually receives. TreeSwap may labe
 
 - exact-balance deposits into a solver-specific account;
 - withdrawals of unreserved inventory only;
-- solver-created full-fill reservations;
-- immutable beneficiary, payment hash, amount, fee, and refund deadline;
+- solver-created full-fill reservations accepted by the user's EIP-712 signature;
+- immutable beneficiary, payment hash, invoice digest, amounts, fee, nonce, and three deadlines;
+- chain- and vault-domain replay protection, plus single-use user nonces;
+- an immutable reference-price band, per-swap cap, and per-solver epoch cap;
+- an enforced ordering from quote expiry to last safe claim time to Ethereum refund;
 - permissionless preimage relay with payment only to the bound beneficiary;
 - timeout return to the original solver balance;
 - globally single-use payment hashes; and
 - an immutable protocol-fee ceiling.
 
-The prototype does not yet verify the full EIP-712 quote onchain. The solver creates a reservation from its own inventory, and the user must compare the resulting event to the selected quote before authorizing Lightning. Signature enforcement is required before a public testnet.
+The prototype accepts canonical 65-byte EOA signatures and rejects high-s signatures. EIP-1271 contract-wallet signatures are not yet supported. The price band and volume limits are immutable deployment parameters; they limit damage from a stale reference but do not establish an external fair price or monitor the upgradeable BIT token.
 
 ## 5. Lightning inventory
 
@@ -94,7 +98,7 @@ The current inventory vault models solver-funded BIT, so the complementary user-
 
 1. Solvers return signed quotes; the user selects one.
 2. The selected solver creates a hold invoice and reserves exact BIT from its vault to the user's Ethereum address.
-3. The user verifies the finalized reservation and every supported BOLT 11 field before paying.
+3. The vault verifies the user's exact signed quote, price and exposure caps, and deadline ordering. The user then verifies the finalized reservation and every supported BOLT 11 field before paying.
 4. The solver settles the hold invoice with the preimage.
 5. The user or a relayer supplies the preimage to claim BIT.
 6. If the held payment expires, the BIT reservation returns to the solver after the Ethereum refund deadline.
@@ -127,7 +131,7 @@ See [`LIQUIDITY_FUNDING.md`](LIQUIDITY_FUNDING.md) for the operational sequence.
 - A solver can withdraw only its own unreserved inventory.
 - A claim pays only the beneficiary bound before Lightning authorization.
 - `CLAIMED` and `REFUNDED` are mutually exclusive.
-- Payment hashes and quote nonces are globally single-use.
+- Payment hashes are single-use within the vault, and each user's quote nonce is single-use.
 - Ethereum refund is later than the final safe Lightning settlement time plus finality and congestion buffers.
 - Every fee is exact, signed, and under an immutable cap.
 - BIT implementation changes or pauses stop new quotes and reservations.
@@ -135,11 +139,11 @@ See [`LIQUIDITY_FUNDING.md`](LIQUIDITY_FUNDING.md) for the operational sequence.
 
 ## 10. Implementation order
 
-1. Complete the BIT inventory vault and stateful campaign on a mainnet fork.
-2. Add the complementary user-funded exact BIT escrow for BIT → Lightning.
-3. Enforce the selected EIP-712 solver quote onchain.
-4. Build the least-privilege Lightning regtest adapter and hold-invoice lifecycle.
-5. Formally parameterize timeout ordering and test both chain clocks.
+1. Exercise the current signed, capped BIT inventory vault against the mainnet-fork BIT proxy, including pause and implementation-change scenarios.
+2. Add the complementary user-funded exact BIT escrow for BIT → Lightning with a direction-separated EIP-712 type.
+3. Build the least-privilege Lightning regtest adapter and derive `lastSafeClaimAt` from validated BOLT 11 expiry, CLTV, Bitcoin height, and operating margins.
+4. Test reorgs and boundary races across both chain clocks, including delayed blocks, congestion, restart, and force-close cases.
+5. Add BIT proxy monitoring, reconciliation, quote shutdown, and an incident runbook without blocking existing claims or refunds.
 6. Run two or three independent solvers on testnet with tiny limits and no public deposits.
 7. Obtain independent contract, Lightning, and operational review before any mainnet funding.
 

@@ -145,10 +145,10 @@ export default function Home() {
         <div className="nav-links">
           <a className="active" href="#trade">Trade</a>
           <a href="#mechanism">How it works</a>
-          <a href="#security">Safety</a>
+          <a href="https://github.com/bobofbuilding/treeswap/blob/agent/simplify-marketing-seo/docs/THREAT_MODEL.md" target="_blank" rel="noreferrer">Safety</a>
           <a href="https://github.com/bobofbuilding/treeswap" target="_blank" rel="noreferrer">GitHub</a>
         </div>
-        <a className="network-pill" href="#security"><span /> Safety-first</a>
+        <a className="network-pill" href="https://github.com/bobofbuilding/treeswap/blob/agent/simplify-marketing-seo/docs/THREAT_MODEL.md" target="_blank" rel="noreferrer"><span /> Risk limits</a>
       </nav>
 
       <section className="trade-stage" id="trade">
@@ -337,6 +337,10 @@ export default function Home() {
                   <div><span>{isPayInvoice ? "BIT locked" : "BIT recipient"}</span><strong>{isPayInvoice ? `${numberFormat(displayInput, 6)} BIT` : receiveAddressHasShape ? shortAddress(receiveAddress) : "Required"}</strong></div>
                   <div><span>Solver fee</span><strong>{feeLabel}</strong></div>
                   {isPayInvoice && <div><span>Estimated Lightning routing</span><strong>{activeOffer.routeFee} sats</strong></div>}
+                  <div>
+                    <span>Settlement protection</span>
+                    <strong>{isPayInvoice ? "Reverse escrow pending" : "Signed · capped · time-bound"}</strong>
+                  </div>
                   <div><span>Invoice verification</span><strong>Required before live use</strong></div>
                 </div>
               </details>
@@ -454,21 +458,6 @@ export default function Home() {
             <span><i /> Ethereum mainnet</span><strong>{shortAddress(BIT_CONTRACT)}</strong><b>↗</b>
           </a>
         </article>
-      </section>
-
-      <section className="security-section" id="security" aria-labelledby="security-title">
-        <div className="security-heading">
-          <p className="eyebrow">BEFORE REAL FUNDS</p>
-          <h2 id="security-title">Four checks block launch.</h2>
-          <p>Price limits, recipient binding, safe deadlines, and independently verifiable quotes are required.</p>
-          <a href="https://github.com/bobofbuilding/treeswap/blob/agent/simplify-marketing-seo/docs/THREAT_MODEL.md" target="_blank" rel="noreferrer">Read the threat model <span>↗</span></a>
-        </div>
-        <div className="security-grid">
-          <article><span>01</span><div><h3>Bound the price</h3><p>Cap exposure around the 100-sat reference.</p></div></article>
-          <article><span>02</span><div><h3>Bind the recipient</h3><p>Fix the Ethereum beneficiary before payment.</p></div></article>
-          <article><span>03</span><div><h3>Order the clocks</h3><p>Keep a tested buffer between settle and refund.</p></div></article>
-          <article><span>04</span><div><h3>Verify the quote</h3><p>Make the selected terms reproducible.</p></div></article>
-        </div>
       </section>
 
       <footer>

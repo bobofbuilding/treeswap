@@ -39,18 +39,21 @@ test("server-renders the TreeSwap prototype", async () => {
   assert.match(html, /No wallets connected · No real funds/);
   assert.match(html, /Invoice in\. Quote out/i);
   assert.match(html, /There is no shared public liquidity pool/i);
-  assert.match(html, /Four checks block launch/i);
+  assert.match(html, /Reverse escrow pending/i);
+  assert.match(html, />Safety</i);
+  assert.doesNotMatch(html, /Four checks block launch|security-section/i);
   assert.match(html, /application\/ld\+json/i);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton|Your site is taking shape/i);
 });
 
 test("keeps the financial prototype explicitly non-production", async () => {
-  const [page, layout, readme, protocol, threatModel, license] = await Promise.all([
+  const [page, layout, readme, protocol, threatModel, vault, license] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
     readFile(new URL("../README.md", import.meta.url), "utf8"),
     readFile(new URL("../docs/PROTOCOL.md", import.meta.url), "utf8"),
     readFile(new URL("../docs/THREAT_MODEL.md", import.meta.url), "utf8"),
+    readFile(new URL("../contracts/src/TreeSwapBitVault.sol", import.meta.url), "utf8"),
     readFile(new URL("../LICENSE", import.meta.url), "utf8"),
   ]);
 
@@ -70,6 +73,11 @@ test("keeps the financial prototype explicitly non-production", async () => {
   assert.match(protocol, /Amountless invoices remain unsupported/i);
   assert.match(threatModel, /TS-C01 — Fixed-par inventory drain/);
   assert.match(threatModel, /TS-C04 — Relay can suppress or reorder quotes/);
+  assert.match(vault, /SELECTED_QUOTE_TYPEHASH/);
+  assert.match(vault, /maxPriceDeviationBps/);
+  assert.match(vault, /lastSafeClaimAt/);
+  assert.match(vault, /ClaimWindowClosed/);
+  assert.doesNotMatch(page, /security-section|Four checks block launch/i);
   assert.match(license, /MIT License/);
   await assert.rejects(access(new URL("../app/_sites-preview", import.meta.url)));
   await access(new URL("docs/PROTOCOL.md", projectRoot));

@@ -5,6 +5,9 @@ interface Vm {
     function prank(address sender) external;
     function warp(uint256 timestamp) external;
     function expectRevert(bytes4 selector) external;
+    function addr(uint256 privateKey) external returns (address);
+    function sign(uint256 privateKey, bytes32 digest) external returns (uint8 v, bytes32 r, bytes32 s);
+    function chainId(uint256 newChainId) external;
 }
 
 abstract contract TestBase {

@@ -6,15 +6,20 @@ import {MockBit, TestBase, Vm} from "../helpers/TestBase.sol";
 
 contract VaultHandler {
     Vm internal constant vm = Vm(address(uint160(uint256(keccak256("hevm cheat code")))));
+    uint256 internal constant USER_PK = 0xA11CE;
+
     MockBit internal immutable bit;
     TreeSwapBitVault internal immutable vault;
-    bytes32[] internal swapIds;
+    address internal immutable user;
+    bytes32[] internal quoteIds;
     bytes32[] internal preimages;
     uint256 internal sequence;
+    uint256 public maxObservedEpochVolume;
 
     constructor(MockBit bit_, TreeSwapBitVault vault_) {
         bit = bit_;
         vault = vault_;
+        user = vm.addr(USER_PK);
         bit.approve(address(vault), type(uint256).max);
     }
 
@@ -32,44 +37,79 @@ contract VaultHandler {
     }
 
     function reserve(uint96 rawAmount, uint16 rawFeeBps, uint64 rawDelay) external {
-        uint256 available = vault.availableBalance(address(this));
-        if (available < 2) return;
-
-        uint256 bounded = 2 + (uint256(rawAmount) % (available - 1));
-        if (bounded > type(uint96).max) bounded = type(uint96).max;
-        uint96 amount = uint96(bounded);
-        uint16 feeBps = uint16(uint256(rawFeeBps) % 101);
+        uint96 amount = _boundedReservationAmount(rawAmount);
+        if (amount == 0) return;
+        uint16 feeBps = uint16(uint256(rawFeeBps) % (uint256(vault.maxFeeBps()) + 1));
         uint96 fee = uint96((uint256(amount) * feeBps) / 10_000);
-        bytes32 preimage = keccak256(abi.encode(sequence, rawAmount, rawDelay));
+        uint256 nonce = sequence++;
+        bytes32 preimage = keccak256(abi.encode(nonce, rawAmount, rawDelay));
         bytes32 hash = sha256(abi.encodePacked(preimage));
-        bytes32 swapId = keccak256(abi.encode("treeswap", sequence++));
-        uint64 delay = uint64(1 + (uint256(rawDelay) % 30 days));
+        bytes32 quoteId = keccak256(abi.encode("treeswap", nonce));
+        uint64 settlementDelay = uint64(vault.minSettlementWindow()) + uint64(uint256(rawDelay) % 30 minutes);
 
-        vault.reserve(swapId, hash, address(0xBEEF), amount, fee, uint64(block.timestamp) + delay);
-        swapIds.push(swapId);
+        TreeSwapBitVault.SelectedQuote memory quote = TreeSwapBitVault.SelectedQuote({
+            quoteId: quoteId,
+            user: user,
+            solver: address(this),
+            beneficiary: address(0xBEEF),
+            amount: amount,
+            fee: fee,
+            lightningAmountSats: uint64((uint256(amount - fee) * vault.referenceSatsPerBit()) / 1 ether),
+            paymentHash: hash,
+            invoiceDigest: keccak256(abi.encode("invoice", quoteId)),
+            nonce: nonce,
+            quoteExpiresAt: uint64(block.timestamp + 5 minutes),
+            lastSafeClaimAt: uint64(block.timestamp) + settlementDelay,
+            refundAfter: uint64(block.timestamp) + settlementDelay + uint64(vault.minClaimBuffer())
+        });
+        _signAndReserve(quote);
+        quoteIds.push(quoteId);
         preimages.push(preimage);
+        _recordEpochVolume();
     }
 
     function claim(uint256 rawIndex) external {
-        if (swapIds.length == 0) return;
-        uint256 index = rawIndex % swapIds.length;
-        bytes32 swapId = swapIds[index];
-        (,,,,,, TreeSwapBitVault.SwapState state) = vault.swaps(swapId);
-        if (state != TreeSwapBitVault.SwapState.LOCKED) return;
-        vault.claim(swapId, preimages[index]);
+        if (quoteIds.length == 0) return;
+        uint256 index = rawIndex % quoteIds.length;
+        bytes32 quoteId = quoteIds[index];
+        if (vault.swapState(quoteId) != TreeSwapBitVault.SwapState.LOCKED) return;
+        if (block.timestamp >= vault.swapRefundAfter(quoteId)) return;
+        vault.claim(quoteId, preimages[index]);
     }
 
     function refund(uint256 rawIndex) external {
-        if (swapIds.length == 0) return;
-        bytes32 swapId = swapIds[rawIndex % swapIds.length];
-        (,,,, uint64 refundAfter,, TreeSwapBitVault.SwapState state) = vault.swaps(swapId);
-        if (state != TreeSwapBitVault.SwapState.LOCKED) return;
-        vm.warp(refundAfter);
-        vault.refund(swapId);
+        if (quoteIds.length == 0) return;
+        bytes32 quoteId = quoteIds[rawIndex % quoteIds.length];
+        if (vault.swapState(quoteId) != TreeSwapBitVault.SwapState.LOCKED) return;
+        uint64 refundAfter = vault.swapRefundAfter(quoteId);
+        if (block.timestamp < refundAfter) vm.warp(refundAfter);
+        vault.refund(quoteId);
     }
 
     function knownSwaps() external view returns (uint256) {
-        return swapIds.length;
+        return quoteIds.length;
+    }
+
+    function _boundedReservationAmount(uint96 rawAmount) internal view returns (uint96) {
+        uint256 epoch = block.timestamp / vault.epochDuration();
+        uint256 epochRemaining = vault.maxEpochVolume() - vault.solverEpochVolume(address(this), epoch);
+        uint256 limit = _min(vault.availableBalance(address(this)), _min(vault.maxSwapAmount(), epochRemaining));
+        if (limit < 1 ether) return 0;
+        return uint96(1 ether + (uint256(rawAmount) % (limit - 1 ether + 1)));
+    }
+
+    function _signAndReserve(TreeSwapBitVault.SelectedQuote memory quote) internal {
+        (uint8 v, bytes32 r, bytes32 s) = vm.sign(USER_PK, vault.hashSelectedQuote(quote));
+        vault.reserve(quote, abi.encodePacked(r, s, v));
+    }
+
+    function _recordEpochVolume() internal {
+        uint256 observed = vault.solverEpochVolume(address(this), block.timestamp / vault.epochDuration());
+        if (observed > maxObservedEpochVolume) maxObservedEpochVolume = observed;
+    }
+
+    function _min(uint256 a, uint256 b) internal pure returns (uint256) {
+        return a < b ? a : b;
     }
 }
 
@@ -96,7 +136,21 @@ contract TreeSwapBitVaultInvariantTest is TestBase {
 
     function setUp() public {
         bit = new MockBit();
-        vault = new TreeSwapBitVault(address(bit), address(0xFEE), 100);
+        vault = new TreeSwapBitVault(
+            address(bit),
+            address(0xFEE),
+            TreeSwapBitVault.RiskConfig({
+                maxFeeBps: 100,
+                maxPriceDeviationBps: 1_000,
+                referenceSatsPerBit: 100,
+                epochDuration: 1 days,
+                minSettlementWindow: 30 minutes,
+                minClaimBuffer: 15 minutes,
+                maxLockDuration: 2 days,
+                maxSwapAmount: 1_000 ether,
+                maxEpochVolume: 5_000 ether
+            })
+        );
         handler = new VaultHandler(bit, vault);
         targets.push(address(handler));
     }
@@ -129,5 +183,9 @@ contract TreeSwapBitVaultInvariantTest is TestBase {
             vault.totalAvailable(),
             "available inventory escaped solver account"
         );
+    }
+
+    function invariantEpochExposureNeverExceedsImmutableCap() public view {
+        assertTrue(handler.maxObservedEpochVolume() <= vault.maxEpochVolume(), "epoch volume exceeded immutable cap");
     }
 }
