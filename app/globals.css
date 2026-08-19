@@ -210,6 +210,11 @@ summary::-webkit-details-marker {
   background: rgba(255, 255, 255, 0.1);
 }
 
+.account-button:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
 .account-button > span {
   width: 7px;
   height: 7px;

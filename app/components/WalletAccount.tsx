@@ -41,6 +41,7 @@ export default function WalletAccount() {
   const [open, setOpen] = useState(false);
   const [session, setSession] = useState<Session | null>(null);
   const [loadingSession, setLoadingSession] = useState(true);
+  const [accountReady, setAccountReady] = useState(true);
   const [working, setWorking] = useState(false);
   const [email, setEmail] = useState("");
   const [invoiceEmails, setInvoiceEmails] = useState(true);
@@ -64,7 +65,7 @@ export default function WalletAccount() {
       .then(({ session: nextSession }) => {
         if (active) applySession(nextSession);
       })
-      .catch(() => undefined)
+      .catch(() => setAccountReady(false))
       .finally(() => {
         if (active) setLoadingSession(false);
       });
@@ -196,8 +197,14 @@ export default function WalletAccount() {
 
   return (
     <>
-      <button type="button" className="account-button" onClick={() => setOpen(true)}>
-        <span /> {loadingSession ? "Account" : session ? shortAddress(session.walletAddress) : "Sign in"}
+      <button
+        type="button"
+        className="account-button"
+        onClick={() => setOpen(true)}
+        disabled={!accountReady}
+        title={accountReady ? "Open TreeSwap account" : "Account storage is unavailable on this preview"}
+      >
+        <span /> {loadingSession ? "Account" : !accountReady ? "Account preview" : session ? shortAddress(session.walletAddress) : "Sign in"}
       </button>
 
       {open && (
