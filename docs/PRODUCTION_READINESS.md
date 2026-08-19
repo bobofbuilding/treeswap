@@ -72,14 +72,16 @@ The current adapter boundary, live lab, and remaining fault matrix are documente
 - [ ] Make every value-moving action idempotent and recoverable after a process crash or ambiguous response.
   - [x] Lightning actions use a durable one-dispatch outbox; process restart, transport loss, replay conflict, and malformed success enter `UNKNOWN` and block retries.
   - [x] A live regtest payment recovers from a deliberately lost success response through a fresh read-only tracking request with dispatch count one.
-  - [ ] Apply the same durable outbox, receipt reconciliation, and reorg handling to solver EVM transactions.
+  - [x] Bind EVM claims to one signed transaction hash before broadcast; persist no raw preimage; permit only byte-identical rebroadcasts; require a canonical finalized successful receipt and exact `Claimed` event.
+  - [x] A local Anvil campaign proves a real claim remains `UNKNOWN` after RPC acceptance, records its inclusion, and halts after the included transaction is removed by a snapshot reorg.
+  - [ ] Prove finalized success, dropped/replaced transaction handling, nonce contention, provider disagreement, relayer-key rotation, and reorgs before and after authorization/claim on controlled forks and public testnet.
 - [ ] Run at least two independent RFQ relays plus direct solver endpoints; a relay may deliver but never rewrite or select a quote.
 - [ ] Operate a solver daemon that quotes, reserves, waits for finality, performs the exact Lightning action, relays the preimage, reconciles, and halts on any mismatch.
 - [ ] Keep browser, web server, relay, coordinator, and Lightning credentials in separate trust domains.
   - [x] Repository containers separate the coordinator signing key/database from the adapters' public key and role macaroons; the public web database contains neither.
   - [ ] Reproduce that boundary with deployed service identities, networks, secret scopes, and independent backups.
 - [ ] Add structured metrics and alerts without logging invoices, preimages, wallet links, email, or unrestricted addresses.
-  - [x] The store exposes aggregate state counters and a secret-free event view; the live campaign proves the raw invoice is not persisted.
+  - [x] The store exposes aggregate state counters and a secret-free event view; live campaigns prove neither the raw invoice nor EVM claim preimage is persisted.
   - [ ] Deploy alert routing and prove it closes only new exposure.
 
 The coordinator state, crash semantics, live evidence, runtime qualification risk, and remaining work are documented in [Durable coordinator boundary](./COORDINATOR.md).

@@ -84,6 +84,7 @@ test("atomically binds one private settlement to its nonce, payment hash, quote 
     assert.deepEqual(store.metrics(), {
       settlementStates: { INTENT_ACCEPTED: 1 },
       actionStates: {},
+      evmTransactionStates: {},
       reconciliationRequired: 0,
     });
     assert.equal(store.secretFreeEvents().length, 1);

@@ -30,7 +30,7 @@ Reviewed surfaces:
 | TS-H06 | Public pool/shares/yield/rewards/partial fills disabled | Live solver reconciliation and failure drills |
 | TS-H07 | Least-privilege isolated regtest adapters, signed actions, durable replay journal, lost-response coordinator recovery, and secret-free audit implemented | Complete permission matrix, rotation, invoice-side reconciliation, and failure drills |
 | TS-H08 | Full-fill invoice policy and sealed shared hash registry implemented | Live LND decoding and regtest integration |
-| TS-H09 | Finality authorization and dispatch-time revalidation implemented | Controlled fork reorg campaign |
+| TS-H09 | Finality authorization, dispatch-time revalidation, exact EVM claim outbox, and local execution-client reorg halt implemented | Controlled mainnet-fork and public-testnet campaigns |
 | TS-M01 | Maker rewards excluded from v1 | None |
 | TS-M02 | Fill/reward incentives excluded from v1 | None |
 | TS-M03 | RFQ quotas, cancellation, work bounds, and capacity admission implemented | Atomic distributed enforcement |
@@ -191,9 +191,9 @@ A Lightning invoice is not a divisible onchain order. TreeSwap v1 now rejects pa
 
 ### TS-H09 — Reorg and payment authorization
 
-**Status:** Canonical/finalized escrow gate plus one-shot dispatch-time revalidation implemented; controlled fork reorg campaign remains a deployment gate
+**Status:** Canonical/finalized escrow gate, one-shot Lightning revalidation, exact EVM claim outbox, and local execution-client reorg halt implemented; controlled mainnet-fork and public-testnet campaigns remain deployment gates
 
-Paying Lightning before the BIT escrow is sufficiently final can leave the payer with a preimage but no durable escrow. `authorizeLightningAction` distinguishes an observed escrow from a matching canonical and finalized escrow, requires confirmation/finality thresholds, healthy finality lag, the exact intent digest, open risk gate, reconciled balances, and healthy synced adapter. Authorization then becomes a short-lived one-shot action bound to the escrow block and hash. Immediately before the LND RPC, dispatch re-reads canonicality, finality, intent, and service state; a post-authorization reorg, finality regression, state change, replay, or exact expiry rejects. Controlled fork reorgs before and after open/claim remain required before testnet funding.
+Paying Lightning before the BIT escrow is sufficiently final can leave the payer with a preimage but no durable escrow. `authorizeLightningAction` distinguishes an observed escrow from a matching canonical and finalized escrow, requires confirmation/finality thresholds, healthy finality lag, the exact intent digest, open risk gate, reconciled balances, and healthy synced adapter. Authorization then becomes a short-lived one-shot action bound to the escrow block and hash. Immediately before the LND RPC, dispatch re-reads canonicality, finality, intent, and service state; a post-authorization reorg, finality regression, state change, replay, or exact expiry rejects. The EVM claim runner separately binds one signed transaction hash before broadcast, treats every broadcast result as unknown, accepts only byte-identical rebroadcasts, and requires a canonical finalized successful receipt with the exact claim event. Its Anvil campaign proves a real observed inclusion that disappears produces a reorg halt. Controlled mainnet-fork and public-testnet reorgs before and after open/claim remain required before funding.
 
 ## Medium-severity findings
 
