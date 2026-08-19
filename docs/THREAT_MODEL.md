@@ -216,7 +216,11 @@ Quote discovery now has an explicit blind projection: an unlinkable pricing iden
 
 ### TS-M09 — Governance capture
 
+**Status:** Resolved in contract architecture and deployment policy; live multisig deployment and monitoring remain a launch gate
+
 An admin that can instantly change fees, upgrade escrow, redirect a treasury, or pause exits can steal or trap value. Prefer an immutable escrow; otherwise use a multisig, timelock, public change events, hard fee caps, and a pause that blocks only new opens/reservations.
+
+Both escrows are immutable, non-upgradeable, have constructor-fixed fee collectors and limits, and expose no administrator. The shared registry becomes irreversibly sealed to exactly two escrows. The open gate now rejects EOAs, a shared controller/guardian, reopen delays under 24 hours, and open windows over seven days. Its public events and automatic expiry cover every state transition, while halt affects new exposure only. A deployment manifest fails closed unless independent 2-of-3-or-stronger contract wallets, exact bytecode hashes, a reviewed commit, independent-review digest, registry seal, immutable escrow topology, BIT configuration, and fee caps all match. See [Governance and deployment boundary](./GOVERNANCE.md). Live wallets, signers, monitoring, and review evidence do not yet exist.
 
 ### TS-M10 — SIWE replay, phishing, or session theft
 

@@ -5,6 +5,9 @@ pragma solidity 0.8.24;
 /// @dev The immutable controller should be a timelocked multisig. The guardian
 ///      may halt immediately, but neither role can block escrow exits.
 contract TreeSwapOpenGate {
+    uint32 public constant MIN_RESUME_DELAY = 1 days;
+    uint32 public constant MAX_OPEN_DURATION_LIMIT = 7 days;
+
     struct PendingOpen {
         bytes32 riskDigest;
         uint64 executeAfter;
@@ -32,8 +35,13 @@ contract TreeSwapOpenGate {
     event Halted(address indexed caller, bytes32 indexed reason);
 
     constructor(address controller_, address guardian_, uint32 resumeDelay_, uint32 maxOpenDuration_) {
-        if (controller_ == address(0) || guardian_ == address(0)) revert InvalidAddress();
-        if (resumeDelay_ == 0 || maxOpenDuration_ == 0) revert InvalidConfig();
+        if (
+            controller_ == address(0) || guardian_ == address(0) || controller_ == guardian_
+                || controller_.code.length == 0 || guardian_.code.length == 0
+        ) revert InvalidAddress();
+        if (resumeDelay_ < MIN_RESUME_DELAY || maxOpenDuration_ == 0 || maxOpenDuration_ > MAX_OPEN_DURATION_LIMIT) {
+            revert InvalidConfig();
+        }
         controller = controller_;
         guardian = guardian_;
         resumeDelay = resumeDelay_;
