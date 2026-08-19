@@ -460,12 +460,12 @@ status_lab() {
 
 stop_lab() {
   ensure_runtime_env
-  compose down
+  compose --profile adapter down
 }
 
 destroy_lab() {
   ensure_runtime_env
-  compose down --volumes
+  compose --profile adapter --profile tools down --volumes
   echo "Regtest containers and Docker volumes removed. Runtime credentials remain in $ENV_FILE."
 }
 
