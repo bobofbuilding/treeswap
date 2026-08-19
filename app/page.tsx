@@ -366,7 +366,7 @@ export default function Home() {
                   {isPayInvoice && <div><span>Estimated Lightning routing</span><strong>{activeOffer.routeFee} sats</strong></div>}
                   <div>
                     <span>Settlement protection</span>
-                    <strong>{isPayInvoice ? "Reverse escrow pending" : "Signed · capped · time-bound"}</strong>
+                    <strong>{isPayInvoice ? "Escrow harness tested" : "Signed · capped · time-bound"}</strong>
                   </div>
                   <div><span>Invoice verification</span><strong>Required before live use</strong></div>
                 </div>

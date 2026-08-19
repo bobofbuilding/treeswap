@@ -44,7 +44,7 @@ test("server-renders the TreeSwap prototype", async () => {
   assert.match(html, /Sends use your wallet/);
   assert.match(html, /Invoice in\. Quote out/i);
   assert.match(html, /There is no shared public liquidity pool/i);
-  assert.match(html, /Reverse escrow pending/i);
+  assert.match(html, /Escrow harness tested/i);
   assert.match(html, /Swaps simulated/i);
   assert.match(html, />Safety</i);
   assert.doesNotMatch(html, /Four checks block launch|security-section/i);

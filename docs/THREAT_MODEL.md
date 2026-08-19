@@ -1,6 +1,6 @@
 # TreeSwap adversarial review
 
-Status: design review for the prototype. This is not a smart-contract audit, Lightning implementation audit, or assurance that the system is safe for real funds.
+Status: the repository hardening pass covers every listed finding, but funded operation remains blocked by the external evidence in the launch checklist. This is not a smart-contract audit, Lightning implementation audit, or assurance that the system is safe for real funds.
 
 Reviewed surfaces:
 
@@ -11,6 +11,40 @@ Reviewed surfaces:
 - fee and decimal accounting;
 - segregated solver-owned BIT and Lightning inventory;
 - coordinators, governance, keys, and operational recovery.
+
+## Resolution ledger
+
+“Repository resolved” means the control and local evidence exist. “External gate” means the repository fails closed but funded operation still needs deployed infrastructure, fork/regtest evidence, live values, or independent review.
+
+| Finding | Repository disposition | Remaining external gate |
+| --- | --- | --- |
+| TS-C01 | Risk, price, inventory, cap, fee, and attestation policy implemented | Live pinned BIT state, independent executable-price inputs, monitor, review |
+| TS-C02 | Both beneficiary-bound escrows implemented | Independent review |
+| TS-C03 | Ordered-deadline derivation and exact boundaries implemented | Bitcoin regtest, Ethereum fork, congestion/restart/force-close drills |
+| TS-C04 | Multi-solver signed received-set selection implemented | None; global-best availability is explicitly not claimed |
+| TS-H01 | Chain/contract/version/direction/nonce replay protection and ERC-1271 implemented | EOA-only SIWE remains an explicit account limitation |
+| TS-H02 | Dual-signed user exercise, admission, capacity, and last-look policy implemented | Persistent counters, reliability telemetry, objective bond decision |
+| TS-H03 | Closed expiring gate and token runtime checks implemented | Live proxy monitor, pinned hashes, deployed multisigs, fork campaign |
+| TS-H04 | Integer units, rounding, overflow, dust, and conservation implemented | None |
+| TS-H05 | BIT-only signed capped fee accounting implemented | Pin deployed collector and caps |
+| TS-H06 | Public pool/shares/yield/rewards/partial fills disabled | Live solver reconciliation and failure drills |
+| TS-H07 | Least-privilege adapter policy and secret-free audit implemented | Isolated regtest adapter, credentials, rotation and failure drills |
+| TS-H08 | Full-fill invoice policy and sealed shared hash registry implemented | Live LND decoding and regtest integration |
+| TS-H09 | Finality authorization and dispatch-time revalidation implemented | Controlled fork reorg campaign |
+| TS-M01 | Maker rewards excluded from v1 | None |
+| TS-M02 | Fill/reward incentives excluded from v1 | None |
+| TS-M03 | RFQ quotas, cancellation, work bounds, and capacity admission implemented | Atomic distributed enforcement |
+| TS-M04 | Signed routing cap and fresh directional capacity implemented | Live node capacity/reconciliation |
+| TS-M05 | Preimage relays cannot redirect either payout | Independent review |
+| TS-M06 | Full BOLT 11 field and invoice-digest validation implemented | Isolated live decoder integration |
+| TS-M07 | Canonical identifiers, text-only rendering, safe logs, and response headers implemented | Production header/log verification |
+| TS-M08 | Blind pricing, selected-solver disclosure, redaction, and deletion policy implemented | Storage-layer deletion evidence |
+| TS-M09 | Immutable escrows, constrained gate, sealed registry, and deployment policy implemented | Deployed role-separated multisigs and event monitoring |
+| TS-M10 | Strict EOA SIWE and short rotated sessions implemented | Durable atomic production account storage, or disable accounts |
+| TS-M11 | Email delivery hard-disabled; pending data expires in 24 hours | None for swaps; a new reviewed release is required to send mail |
+| TS-M12 | Frozen one-shot wallet dispatch and unknown-outcome handling implemented | Trusted wallet confirmation remains the user security boundary |
+
+The authoritative phase gates are in [Launch checklist](./LAUNCH_CHECKLIST.md). Today only the public-prototype phase passes.
 
 ## Executive conclusion
 

@@ -258,7 +258,7 @@ export default function SendPanel() {
       });
       setReview(null);
 
-      void transaction.wait(1).then((mined) => {
+      void transaction.wait(1).then((mined: { status: number | null; hash: string } | null) => {
         if (mined?.status === 1 && mined.hash === transactionHash) {
           setReceipt((current) =>
             current?.kind === "bit" && current.transactionHash === transactionHash

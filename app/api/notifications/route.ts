@@ -36,8 +36,9 @@ export async function PUT(request: Request) {
       return noStoreJson({ error: "Choose invoices, transaction receipts, or both." }, { status: 400 });
     }
 
-    const now = new Date().toISOString();
-    const retentionExpiresAt = pendingEmailExpiresAt(now);
+    const observedAt = new Date();
+    const now = observedAt.toISOString();
+    const retentionExpiresAt = pendingEmailExpiresAt(observedAt);
     const [preferences] = await getDb()
       .insert(notificationPreferences)
       .values({
