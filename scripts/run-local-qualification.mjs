@@ -82,6 +82,7 @@ const campaigns = [
   ["lightning:adapter-hold", "npm", ["run", "regtest:adapter-smoke"]],
   ["lightning:invoice-faults", "npm", ["run", "regtest:invoice-fault-smoke"]],
   ["lightning:policy-faults", "npm", ["run", "regtest:policy-fault-smoke"]],
+  ["lightning:directional-capacity", "npm", ["run", "regtest:directional-capacity-smoke"]],
   ["lightning:stale-chain-header", "npm", ["run", "regtest:stale-chain-smoke"]],
   ["lightning:unsynced-chain-catchup", "npm", ["run", "regtest:unsynced-chain-smoke"]],
   ["lightning:force-close-recovery", "npm", ["run", "regtest:force-close-smoke"]],

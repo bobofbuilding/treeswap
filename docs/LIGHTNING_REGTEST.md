@@ -21,6 +21,7 @@ npm run regtest:adapter-smoke
 npm run regtest:credential-smoke
 npm run regtest:invoice-fault-smoke
 npm run regtest:policy-fault-smoke
+npm run regtest:directional-capacity-smoke
 npm run regtest:stale-chain-smoke
 npm run regtest:unsynced-chain-smoke
 npm run regtest:force-close-smoke
@@ -51,6 +52,8 @@ For all six node/role pairs, the bootstrap reads the baked macaroon back, requir
 
 `regtest:policy-fault-smoke` submits valid invoices with an excessive fee limit and excessive amount, then requires adapter rejection and `NOT_FOUND` tracking proof that neither payment was dispatched. It also proves the tracking error contains neither the raw nor REST-encoded payment hash. It holds two real 80,000-sat HTLCs, reads at least 160,000 sats in flight from LND, rejects another exposure above the 150,000-sat cap, and cancels both probes. It then stops Bob, waits until Alice reports zero active channels, rejects a fresh payment, recovers and unlocks Bob, requires both channel views to become active, and again proves the rejected hash is unknown to LND. Finally, a disposable payer-adapter process must refuse a deliberately mismatched TLS pin while the unchanged pinned adapter still decodes the exact invoice. The campaign does not emit invoices, macaroons, or preimages.
 
+`regtest:directional-capacity-smoke` rebalances the live private channel until Alice has less than a 100,000-sat payment in local capacity and Bob has less than the same amount in remote capacity. The payer adapter must reject outgoing payment exposure and prove `NOT_FOUND`; the invoice adapter must reject incoming hold-invoice exposure and native lookup must prove no invoice exists. The campaign then rebalances the channel, requires that exact previously rejected payment to succeed once, creates and cancels the previously rejected hold invoice, and restores the transferred balance. Three consecutive warm-state runs pass.
+
 `regtest:stale-chain-smoke` reads the pinned LND node's real `wallet_synced`, height, and `best_header_timestamp`, then gives a disposable payer adapter a read-only baseline observation. After a deliberate no-block interval crosses its compressed one-second no-progress limit, the adapter must reject an exact signed payment specifically because the same header made no local progress; read-only tracking through the normally configured adapter must prove the payment was never dispatched. Reported past age, locally observed no-progress time, and future skew are independent limits, so the baseline remains valid even when the newest honest block is already several seconds old. The normal adapter uses 3,600-second age and no-progress ceilings, regtest separately allows its synthetic timestamp up to 7,200 seconds ahead, and the same invoice remains decodable there. Repeated stale → force-close → stale sequences pass without emitting invoices, hashes, macaroons, or preimages.
 
 `regtest:unsynced-chain-smoke` pauses the real Alice LND process, advances Bitcoin regtest by 500 blocks, and resumes Alice into a genuine catch-up state. The campaign observes `synced_to_chain=false` or `wallet_synced=false`, requires the adapter to reject an exact signed payment non-ambiguously, waits for both flags and the channel to recover, and uses read-only tracking to prove zero dispatch. The recovered adapter then decodes the same invoice. Three consecutive warm-state runs pass.
@@ -77,7 +80,7 @@ Published checkpoint `5a2bb62240e80938256f318f05c48cb20e809825` completed all 18
 
 - Standard-invoice success, genuine no-route failure, exact-request replay, same-hash duplicate exposure rejection, excessive-fee and amount rejection, no-dispatch tracking, and both payer/invoice lost-response reconciliations now pass.
 - Hold-invoice cancel, expiry, wrong preimage, late settle, signed-action replay, restart while accepted, and the 24-block HTLC cutoff under rapid block advancement now pass.
-- Stale capacity epoch and production-duration delay remain. Rapid blocks, genuine 500-block unsynced-node catch-up, full force-close/CSV-sweep/channel-replacement recovery, compressed-threshold stale-header rejection with zero dispatch, accepted-state LND restart, channel-offline rejection/recovery, and live in-flight-cap saturation now pass.
+- Stale capacity epoch and production-duration delay remain. Rapid blocks, genuine 500-block unsynced-node catch-up, full force-close/CSV-sweep/channel-replacement recovery, compressed-threshold stale-header rejection with zero dispatch, accepted-state LND restart, channel-offline rejection/recovery, live directional exhaustion/rebalancing, and live in-flight-cap saturation now pass.
 - Real certificate rotation, overlap credential rotation, and stateless initialization. TLS-pin mismatch, exact grant manifests, timeout enforcement, root-key revocation, and representative forbidden-RPC categories now pass.
 - Promote a clean published-checkpoint qualification record into the reviewed release manifest. The secret-free generator and schema are implemented; a record from the final release commit remains required.
 

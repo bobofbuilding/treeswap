@@ -1111,6 +1111,169 @@ smoke_policy_faults() {
   echo "Policy fault smoke passed: fee, amount, in-flight, offline-channel, no-dispatch, recovery, and TLS-pin enforcement."
 }
 
+smoke_directional_capacity() {
+  ensure_runtime_env
+  start_lab >/dev/null
+  local amount_sats=100000
+  local target_remaining_sats=75000
+  local alice_local normalize_amount normalize_invoice normalize_request
+  local drain_amount drain_invoice drain_request restore_invoice restore_request=""
+  local payer_invoice payer_request payer_hash payer_digest payer_intent payer_id payer_operation payer_result
+  local invoice_preimage invoice_hash invoice_intent invoice_id invoice_operation invoice_result invoice_digest
+  local cancel_id cancel_result zero_hash
+  local drained=false restored=false hold_created=false final_payer_paid=false final_restore_request=""
+  local current_alice_local current_bob_remote recovered=false
+
+  trap '[[ "${hold_created:-false}" != true || -z "${invoice_hash:-}" ]] || \
+      compose exec -T bob lncli --network=regtest cancelinvoice "${invoice_hash#0x}" >/dev/null 2>&1 || true; \
+    [[ "${final_payer_paid:-false}" != true || -z "${final_restore_request:-}" ]] || \
+      compose exec -T bob lncli --network=regtest --macaroonpath=/root/.lnd/treeswap/payer.macaroon \
+        payinvoice --force --fee_limit=10 --timeout=30s "$final_restore_request" >/dev/null 2>&1 || true; \
+    [[ "${drained:-false}" != true || "${restored:-false}" == true || -z "${restore_request:-}" ]] || \
+      compose exec -T bob lncli --network=regtest --macaroonpath=/root/.lnd/treeswap/payer.macaroon \
+        payinvoice --force --fee_limit=10 --timeout=30s "$restore_request" >/dev/null 2>&1 || true' EXIT
+
+  alice_local=$(compose exec -T alice lncli --network=regtest listchannels |
+    jq -er '[.channels[] | select(.active == true) | (.local_balance | tonumber)] | add')
+  if (( alice_local < 350000 )); then
+    normalize_amount=$((350000 - alice_local))
+    normalize_invoice=$(compose exec -T alice lncli --network=regtest addinvoice \
+      --amt="$normalize_amount" --memo=treeswap-capacity-normalize --expiry=600 --private)
+    normalize_request=$(jq -er '.payment_request' <<<"$normalize_invoice")
+    compose exec -T bob lncli --network=regtest \
+      --macaroonpath=/root/.lnd/treeswap/payer.macaroon payinvoice \
+      --force --fee_limit=10 --timeout=30s "$normalize_request" >/dev/null
+    alice_local=$(compose exec -T alice lncli --network=regtest listchannels |
+      jq -er '[.channels[] | select(.active == true) | (.local_balance | tonumber)] | add')
+  fi
+  if (( alice_local <= target_remaining_sats + amount_sats )); then
+    echo "regtest channel could not establish the directional-capacity baseline" >&2
+    return 1
+  fi
+
+  drain_amount=$((alice_local - target_remaining_sats))
+  drain_invoice=$(compose exec -T bob lncli --network=regtest addinvoice \
+    --amt="$drain_amount" --memo=treeswap-capacity-drain --expiry=600 --private)
+  drain_request=$(jq -er '.payment_request' <<<"$drain_invoice")
+  restore_invoice=$(compose exec -T alice lncli --network=regtest addinvoice \
+    --amt="$drain_amount" --memo=treeswap-capacity-restore --expiry=600 --private)
+  restore_request=$(jq -er '.payment_request' <<<"$restore_invoice")
+  compose exec -T alice lncli --network=regtest \
+    --macaroonpath=/root/.lnd/treeswap/payer.macaroon payinvoice \
+    --force --fee_limit=10 --timeout=30s "$drain_request" >/dev/null
+  drained=true
+
+  for _ in $(seq 1 30); do
+    current_alice_local=$(compose exec -T alice lncli --network=regtest listchannels |
+      jq -er '[.channels[] | select(.active == true) | (.local_balance | tonumber)] | add')
+    current_bob_remote=$(compose exec -T bob lncli --network=regtest listchannels |
+      jq -er '[.channels[] | select(.active == true) | (.remote_balance | tonumber)] | add')
+    if (( current_alice_local < amount_sats && current_bob_remote < amount_sats )); then
+      break
+    fi
+    sleep 1
+  done
+  if (( current_alice_local >= amount_sats || current_bob_remote >= amount_sats )); then
+    echo "regtest channel did not reach the directional-capacity boundary" >&2
+    return 1
+  fi
+
+  payer_invoice=$(compose exec -T bob lncli --network=regtest addinvoice \
+    --amt="$amount_sats" --memo=treeswap-outbound-capacity --expiry=600 --private)
+  payer_request=$(jq -er '.payment_request' <<<"$payer_invoice")
+  payer_hash=$(compose exec -T alice lncli --network=regtest \
+    --macaroonpath=/root/.lnd/treeswap/payer.macaroon decodepayreq "$payer_request" |
+    jq -er '.payment_hash | ascii_downcase | "0x" + .')
+  payer_digest="0x$(printf '%s' "$payer_request" | openssl dgst -sha256 -binary | xxd -p -c 256)"
+  payer_intent="0x$(openssl rand -hex 32)"
+  payer_id="0x$(openssl rand -hex 32)"
+  payer_operation=$(jq -cn --arg paymentRequest "$payer_request" \
+    '{paymentRequest:$paymentRequest,timeoutSeconds:30,feeLimitSats:"10"}')
+  if payer_result=$(call_adapter payer-adapter /routerrpc.Router/SendPaymentV2 \
+    "$payer_id" "$payer_intent" "$payer_hash" "$payer_digest" "$amount_sats" "$payer_operation"); then
+    echo "payer adapter dispatched without enough outbound liquidity" >&2
+    return 1
+  fi
+  jq -e '.ambiguous == false and (.error | test("directional Lightning liquidity is insufficient"))' \
+    <<<"$payer_result" >/dev/null
+  assert_adapter_payment_not_found "$payer_intent" "$payer_hash" "$payer_digest" "$amount_sats"
+
+  invoice_preimage="0x$(openssl rand -hex 32)"
+  invoice_hash="0x$(printf '%s' "${invoice_preimage#0x}" | xxd -r -p |
+    openssl dgst -sha256 -binary | xxd -p -c 256)"
+  invoice_intent="0x$(openssl rand -hex 32)"
+  invoice_id="0x$(openssl rand -hex 32)"
+  invoice_operation=$(jq -cn '{memo:"treeswap-inbound-capacity",expirySeconds:600,cltvExpiry:80,isPrivate:true}')
+  zero_hash="0x$(printf '00%.0s' {1..32})"
+  if invoice_result=$(call_adapter invoice-adapter /invoicesrpc.Invoices/AddHoldInvoice \
+    "$invoice_id" "$invoice_intent" "$invoice_hash" "$zero_hash" "$amount_sats" "$invoice_operation"); then
+    echo "invoice adapter opened exposure without enough inbound liquidity" >&2
+    return 1
+  fi
+  jq -e '.ambiguous == false and (.error | test("directional Lightning liquidity is insufficient"))' \
+    <<<"$invoice_result" >/dev/null
+  if compose exec -T bob lncli --network=regtest lookupinvoice "${invoice_hash#0x}" >/dev/null 2>&1; then
+    echo "inbound-capacity rejection still created a hold invoice" >&2
+    return 1
+  fi
+  echo "Directional-capacity stage passed: both exposure directions rejected before dispatch."
+
+  compose exec -T bob lncli --network=regtest \
+    --macaroonpath=/root/.lnd/treeswap/payer.macaroon payinvoice \
+    --force --fee_limit=10 --timeout=30s "$restore_request" >/dev/null
+  restored=true
+  restore_request=""
+  wait_for_active_channel alice
+  wait_for_active_channel bob
+  for _ in $(seq 1 30); do
+    current_alice_local=$(compose exec -T alice lncli --network=regtest listchannels |
+      jq -er '[.channels[] | select(.active == true) | (.local_balance | tonumber)] | add')
+    current_bob_remote=$(compose exec -T bob lncli --network=regtest listchannels |
+      jq -er '[.channels[] | select(.active == true) | (.remote_balance | tonumber)] | add')
+    if (( current_alice_local >= amount_sats && current_bob_remote >= amount_sats )); then
+      recovered=true
+      break
+    fi
+    sleep 1
+  done
+  if [[ "$recovered" != true ]]; then
+    echo "directional liquidity did not recover after rebalancing" >&2
+    return 1
+  fi
+
+  final_restore_request=$(compose exec -T alice lncli --network=regtest addinvoice \
+    --amt="$amount_sats" --memo=treeswap-capacity-final-restore --expiry=600 --private |
+    jq -er '.payment_request')
+  payer_id="0x$(openssl rand -hex 32)"
+  payer_result=$(call_adapter payer-adapter /routerrpc.Router/SendPaymentV2 \
+    "$payer_id" "$payer_intent" "$payer_hash" "$payer_digest" "$amount_sats" "$payer_operation")
+  jq -e --arg paymentHash "$payer_hash" --arg amount "$amount_sats" \
+    '.result.status == "SUCCEEDED" and .result.paymentHash == $paymentHash and .result.amountSats == $amount' \
+    <<<"$payer_result" >/dev/null
+  final_payer_paid=true
+  compose exec -T bob lncli --network=regtest \
+    --macaroonpath=/root/.lnd/treeswap/payer.macaroon payinvoice \
+    --force --fee_limit=10 --timeout=30s "$final_restore_request" >/dev/null
+  final_payer_paid=false
+  final_restore_request=""
+
+  invoice_id="0x$(openssl rand -hex 32)"
+  invoice_result=$(call_adapter invoice-adapter /invoicesrpc.Invoices/AddHoldInvoice \
+    "$invoice_id" "$invoice_intent" "$invoice_hash" "$zero_hash" "$amount_sats" "$invoice_operation")
+  invoice_digest=$(jq -er '.result.invoiceDigest' <<<"$invoice_result")
+  hold_created=true
+  cancel_id="0x$(openssl rand -hex 32)"
+  cancel_result=$(call_adapter invoice-adapter /invoicesrpc.Invoices/CancelInvoice \
+    "$cancel_id" "$invoice_intent" "$invoice_hash" "$invoice_digest" "$amount_sats" '{}')
+  jq -e '.result.state == "CANCELED"' <<<"$cancel_result" >/dev/null
+  hold_created=false
+  invoice_hash=""
+  unset payer_request invoice_preimage
+  trap - EXIT
+
+  echo "Directional-capacity smoke passed: outbound and inbound exposure failed closed at exhaustion, then both recovered after rebalancing."
+}
+
 smoke_stale_chain_header() {
   ensure_runtime_env
   start_lab >/dev/null
@@ -1766,6 +1929,7 @@ case "${1:-}" in
   credential-smoke) smoke_credential_lifecycle ;;
   invoice-fault-smoke) smoke_invoice_faults ;;
   policy-fault-smoke) smoke_policy_faults ;;
+  directional-capacity-smoke) smoke_directional_capacity ;;
   stale-chain-smoke) smoke_stale_chain_header ;;
   unsynced-chain-smoke) smoke_unsynced_chain_catchup ;;
   force-close-smoke) smoke_force_close_recovery ;;
@@ -1777,7 +1941,7 @@ case "${1:-}" in
   down) stop_lab ;;
   destroy) destroy_lab ;;
   *)
-    echo "Usage: $0 {up|smoke|adapter-smoke|credential-smoke|invoice-fault-smoke|policy-fault-smoke|stale-chain-smoke|unsynced-chain-smoke|force-close-smoke|route-fault-smoke|htlc-cutoff-smoke|coordinator-smoke|coordinator-invoice-smoke|status|down|destroy}" >&2
+    echo "Usage: $0 {up|smoke|adapter-smoke|credential-smoke|invoice-fault-smoke|policy-fault-smoke|directional-capacity-smoke|stale-chain-smoke|unsynced-chain-smoke|force-close-smoke|route-fault-smoke|htlc-cutoff-smoke|coordinator-smoke|coordinator-invoice-smoke|status|down|destroy}" >&2
     exit 2
     ;;
 esac
