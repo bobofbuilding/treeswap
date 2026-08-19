@@ -102,13 +102,15 @@ initialize_wallet() {
 
 wait_for_chain_sync() {
   local node=$1
+  local info
   for _ in $(seq 1 60); do
-    if [[ $(compose exec -T "$node" lncli --network=regtest getinfo 2>/dev/null | jq -r '.synced_to_chain // false') == "true" ]]; then
+    info=$(compose exec -T "$node" lncli --network=regtest getinfo 2>/dev/null || true)
+    if jq -e '.synced_to_chain == true and .wallet_synced == true' <<<"$info" >/dev/null 2>&1; then
       return 0
     fi
     sleep 1
   done
-  echo "$node did not synchronize to regtest" >&2
+  echo "$node did not synchronize its chain and wallet to regtest" >&2
   return 1
 }
 
@@ -1194,6 +1196,70 @@ smoke_stale_chain_header() {
   echo "Stale-chain smoke passed: no blocks advanced, the bounded stale-header adapter rejected before dispatch, and the normal pinned adapter remained healthy."
 }
 
+smoke_unsynced_chain_catchup() {
+  ensure_runtime_env
+  start_lab >/dev/null
+  local alice_container miner_address invoice payment_request payment_hash invoice_digest intent_digest
+  local request_id operation envelope unsynced_info unsynced_result decode_result
+
+  alice_container=$(compose ps -q alice)
+  if [[ -z "$alice_container" ]]; then
+    echo "Alice container is not running" >&2
+    return 1
+  fi
+  miner_address=$(compose exec -T bob lncli --network=regtest newaddress p2tr | jq -er .address)
+  invoice=$(compose exec -T bob lncli --network=regtest addinvoice \
+    --amt=10000 --memo=treeswap-unsynced-catchup --expiry=600 --private)
+  payment_request=$(jq -er '.payment_request' <<<"$invoice")
+  payment_hash=$(compose exec -T alice lncli --network=regtest \
+    --macaroonpath=/root/.lnd/treeswap/payer.macaroon decodepayreq "$payment_request" |
+    jq -er '.payment_hash | ascii_downcase | "0x" + .')
+  invoice_digest="0x$(printf '%s' "$payment_request" | openssl dgst -sha256 -binary | xxd -p -c 256)"
+  intent_digest="0x$(openssl rand -hex 32)"
+  request_id="0x$(openssl rand -hex 32)"
+  operation=$(jq -cn --arg paymentRequest "$payment_request" \
+    '{paymentRequest:$paymentRequest,timeoutSeconds:30,feeLimitSats:"10"}')
+  envelope=$(sign_adapter_authorization /routerrpc.Router/SendPaymentV2 \
+    "$request_id" "$intent_digest" "$payment_hash" "$invoice_digest" 10000 "$operation")
+
+  trap '[[ -z "${alice_container:-}" ]] || docker unpause "$alice_container" >/dev/null 2>&1 || true' EXIT
+  docker pause "$alice_container" >/dev/null
+  compose exec -T bitcoind bitcoin-cli -regtest \
+    -rpcuser="$BITCOIND_RPC_USER" -rpcpassword="$BITCOIND_RPC_PASSWORD" \
+    generatetoaddress 500 "$miner_address" >/dev/null
+  docker unpause "$alice_container" >/dev/null
+
+  unsynced_info=$(compose exec -T alice lncli --network=regtest getinfo)
+  if ! jq -e '.synced_to_chain == false or .wallet_synced == false' <<<"$unsynced_info" >/dev/null; then
+    echo "Alice did not enter a genuine unsynced catch-up state" >&2
+    return 1
+  fi
+  if unsynced_result=$(printf '%s\n' "$envelope" | call_signed_adapter payer-adapter); then
+    echo "payer adapter dispatched while LND was catching up" >&2
+    return 1
+  fi
+  if ! jq -e '.ambiguous == false and (.error | test("unhealthy or unsynced|wallet is unsynced"))' \
+    <<<"$unsynced_result" >/dev/null; then
+    echo "unsynced-node adapter rejection was unexpected" >&2
+    jq -c '{error,errorCode,ambiguous}' <<<"$unsynced_result" >&2
+    return 1
+  fi
+
+  wait_for_chain_sync alice
+  wait_for_active_channel alice
+  assert_adapter_payment_not_found "$intent_digest" "$payment_hash" "$invoice_digest" 10000
+  request_id="0x$(openssl rand -hex 32)"
+  decode_result=$(call_adapter payer-adapter /lnrpc.Lightning/DecodePayReq \
+    "$request_id" "$intent_digest" "$payment_hash" "$invoice_digest" 10000 \
+    "$(jq -cn --arg paymentRequest "$payment_request" '{paymentRequest:$paymentRequest}')")
+  jq -e --arg paymentHash "$payment_hash" \
+    '.result.paymentHash == $paymentHash and .result.amountSats == "10000"' <<<"$decode_result" >/dev/null
+
+  unset payment_request envelope
+  trap - EXIT
+  echo "Unsynced-node smoke passed: a real 500-block backlog forced catch-up rejection, zero dispatch, and healthy adapter recovery."
+}
+
 smoke_route_and_duplicate_failure() {
   ensure_runtime_env
   start_lab >/dev/null
@@ -1577,6 +1643,7 @@ case "${1:-}" in
   invoice-fault-smoke) smoke_invoice_faults ;;
   policy-fault-smoke) smoke_policy_faults ;;
   stale-chain-smoke) smoke_stale_chain_header ;;
+  unsynced-chain-smoke) smoke_unsynced_chain_catchup ;;
   route-fault-smoke) smoke_route_and_duplicate_failure ;;
   htlc-cutoff-smoke) smoke_htlc_cutoff ;;
   coordinator-smoke) smoke_coordinator_reconciliation ;;
@@ -1585,7 +1652,7 @@ case "${1:-}" in
   down) stop_lab ;;
   destroy) destroy_lab ;;
   *)
-    echo "Usage: $0 {up|smoke|adapter-smoke|credential-smoke|invoice-fault-smoke|policy-fault-smoke|stale-chain-smoke|route-fault-smoke|htlc-cutoff-smoke|coordinator-smoke|coordinator-invoice-smoke|status|down|destroy}" >&2
+    echo "Usage: $0 {up|smoke|adapter-smoke|credential-smoke|invoice-fault-smoke|policy-fault-smoke|stale-chain-smoke|unsynced-chain-smoke|route-fault-smoke|htlc-cutoff-smoke|coordinator-smoke|coordinator-invoice-smoke|status|down|destroy}" >&2
     exit 2
     ;;
 esac
