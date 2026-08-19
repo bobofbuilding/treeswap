@@ -32,7 +32,7 @@ Before every RPC, `authorizeLightningRpc` independently requires:
 
 Hold-invoice creation uses the all-zero digest only before an invoice exists. The adapter returns the SHA-256 digest of the exact generated BOLT 11 string, and every later decode, pay, lookup, settle, or cancel authorization binds that digest. Payment dispatch decodes the invoice again and checks the exact hash, whole-satoshi and millisatoshi values, expiry margin, and final CLTV. Settlement additionally requires an accepted exact-value HTLC outside the configured block-safety margin and the matching preimage.
 
-The audit record contains hashes, integer amount, method, decision, and reason codes. It excludes macaroons, preimages, and complete invoice text. An append-only journal is synced before dispatch; request IDs and exposure payment hashes cannot be reused. A lost response is recorded as `unknown` and is never automatically resent. The durable coordinator now recovers payer actions through a fresh signed `TrackPaymentV2` snapshot and invoice actions through `LookupInvoiceV2`; only a method-compatible exact terminal observation clears `UNKNOWN`.
+The audit record contains hashes, integer amount, method, decision, and reason codes. It excludes macaroons, preimages, and complete invoice text. Dynamic invoice/hash URL segments are redacted from transport errors. LND REST stream error frames are parsed before result validation: missing read-only tracking maps to non-ambiguous `NOT_FOUND`, while a value-moving send stream error remains ambiguous. An append-only journal is synced before dispatch; request IDs and exposure payment hashes cannot be reused. A lost response is recorded as `unknown` and is never automatically resent. The durable coordinator now recovers payer actions through a fresh signed `TrackPaymentV2` snapshot and invoice actions through `LookupInvoiceV2`; only a method-compatible exact terminal observation clears `UNKNOWN`.
 
 ## Regtest evidence
 
@@ -42,6 +42,8 @@ The audit record contains hashes, integer amount, method, decision, and reason c
 
 `npm run regtest:invoice-fault-smoke` proves hold-invoice expiry and late-settle rejection, wrong-preimage rejection without state mutation, explicit cancellation, cancellation replay rejection, and accepted-invoice persistence across an LND restart. The original in-flight payer request completes only after the recovered invoice is settled; the campaign never issues a replacement payment.
 
+`npm run regtest:policy-fault-smoke` proves excessive fee and per-payment requests never reach LND, saturates the node with two real held HTLCs and enforces the aggregate in-flight cap, rejects while the only channel is offline, recovers after the peer and channel return, and refuses to start a disposable adapter with a mismatched TLS pin. Each pre-dispatch rejection is followed by read-only `NOT_FOUND` tracking once the service is healthy.
+
 `npm run regtest:coordinator-smoke` pays a real 10,000-sat standard invoice, deliberately loses the successful response, reopens the coordinator database in `UNKNOWN`, and recovers success through read-only tracking without a second dispatch. See [Durable coordinator boundary](./COORDINATOR.md).
 
 ## Rotation and incident response
@@ -50,4 +52,4 @@ Bake each role from a dedicated root key, record issuance and expiry, rotate bef
 
 ## Deployment gate
 
-Before testnet funding, add live fee-limit, amount-limit, exhausted-liquidity, HTLC-cutoff, delayed/fast-block, force-close, TLS-pin, overlap-rotation, and invoice-side ambiguous-response campaigns; export a secret-free evidence bundle; and independently review the implementation and evidence. Exact grant manifests, credential timeout, root-key revocation, hold-invoice terminal faults, and accepted-state LND restart now pass locally.
+Before testnet funding, add live directional-balance exhaustion, daily-cap rollover, HTLC-cutoff, delayed/fast-block, force-close, unsynced-node, real TLS-certificate rotation, overlap-credential rotation, and invoice-side ambiguous-response campaigns; export a secret-free evidence bundle; and independently review the implementation and evidence. Exact grant manifests, credential timeout, root-key revocation, hold-invoice terminal faults, accepted-state LND restart, fee/amount/in-flight caps, channel-offline recovery, and TLS-pin mismatch now pass locally.

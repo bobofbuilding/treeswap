@@ -19,8 +19,8 @@ No repository checkbox can substitute for deployed evidence. A gate becomes comp
   - [ ] Capture matching observations from two independent authenticated RPC providers, verify source/bytecode, and promote them through review.
 - [ ] Run the full escrow suite against a controlled Ethereum mainnet fork: proxy implementation change, pause/unpause while locked, reorg before and after open/claim, nonstandard transfer behavior, and finality rollback.
 - [ ] Run an isolated Bitcoin/LND regtest adapter: standard and hold invoices, exact BOLT 11 decode, delayed/fast blocks, accepted-HTLC cutoff, timeout, LND restart, force close, credential rotation/revocation, and negative macaroon permissions.
-  - [x] Reproducible two-node regtest, balanced private channel, isolated real adapter processes, distinct expiring exact-URI credentials, authorization-specific negative checks, root-key revocation, hold-invoice terminal faults, and accepted-state LND restart implemented.
-  - [ ] Complete the remaining standard-invoice, Bitcoin-height, force-close, TLS-rotation, and capacity fault matrix.
+  - [x] Reproducible two-node regtest, balanced private channel, isolated real adapter processes, distinct expiring exact-URI credentials, authorization-specific negative checks, root-key revocation, hold-invoice terminal faults, accepted-state LND restart, fee/amount/in-flight caps, channel-offline recovery, and TLS-pin mismatch implemented.
+  - [ ] Complete the remaining route, Bitcoin-height, force-close, unsynced-node, real TLS/credential rotation, and directional-capacity fault matrix.
 - [ ] Deploy the gate, registry, and both escrows from the reviewed source commit. Seal the registry to exactly those escrows and prove every constructor immutable and runtime code hash.
 - [ ] Deploy distinct 2-of-3-or-stronger controller, guardian, and fee-recipient contract wallets; record owners, thresholds, hardware-key custody, and recovery contacts.
 - [ ] Operate atomic persistent RFQ quotas, cancellation sequence, capacity epochs, solver reliability, idempotent Lightning requests, and one-shot payment authorization.

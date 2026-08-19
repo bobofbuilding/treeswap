@@ -1,6 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { invoiceDigest, isPrivateLndHostname, LndRestError } from "../lib/lnd-rest-client.mjs";
+import {
+  invoiceDigest,
+  isPrivateLndHostname,
+  LndRestError,
+  unwrapLndStreamFrame,
+} from "../lib/lnd-rest-client.mjs";
 
 test("uses a deterministic secret-free digest for an exact BOLT 11 invoice", () => {
   assert.equal(
@@ -16,6 +21,34 @@ test("LND transport errors expose status metadata but no response or credential 
   assert.equal(error.grpcCode, 7);
   assert.equal(error.ambiguous, false);
   assert.equal(JSON.stringify(error).includes("macaroon"), false);
+});
+
+test("maps an LND stream error frame without exposing its remote message", () => {
+  const remoteMessage = "payment isn't initiated: private-node-detail";
+  assert.throws(
+    () => unwrapLndStreamFrame({ error: { code: 5, message: remoteMessage } }, {
+      requestLabel: "GET /v2/router/track/[redacted]",
+      errorAmbiguous: false,
+    }),
+    (error) => error instanceof LndRestError
+      && error.grpcCode === 5
+      && error.ambiguous === false
+      && error.message === "LND rejected GET /v2/router/track/[redacted]"
+      && !error.message.includes(remoteMessage),
+  );
+});
+
+test("keeps a value-moving stream error ambiguous", () => {
+  assert.throws(
+    () => unwrapLndStreamFrame({ error: { code: 14, message: "transport ended" } }, {
+      requestLabel: "POST /v2/router/send",
+    }),
+    (error) => error instanceof LndRestError && error.grpcCode === 14 && error.ambiguous === true,
+  );
+  assert.deepEqual(
+    unwrapLndStreamFrame({ result: { status: "SUCCEEDED" } }),
+    { status: "SUCCEEDED" },
+  );
 });
 
 test("accepts only explicit private-network LND host forms", () => {

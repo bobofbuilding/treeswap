@@ -61,8 +61,9 @@ The command refuses to overwrite an existing file and never records the RPC URL.
 - [x] Prove each credential's exact grant manifest against the pinned LND permission registry, require representative forbidden capability categories to fail specifically for authorization, and demonstrate live timeout enforcement.
 - [ ] Test standard invoices and hold invoices through create, accept, settle, cancel, expire, late-settle, and replay paths.
   - [x] Hold create/accept/settle, cancel, expiry, wrong and late preimage, exact signed-action replay, and restart while accepted pass through the isolated adapters.
-  - [ ] Standard-invoice route failure, fee cap, exhausted capacity, and duplicate/ambiguous outcomes remain; standard success plus lost-response recovery pass.
-- [ ] Inject delayed and fast Bitcoin blocks, LND restart, lost responses, idempotent retry, force close, unsynced state, TLS pin change, credential rotation, and credential revocation. Accepted-state LND restart, one-dispatch lost-response recovery, and disposable root-key revocation now pass.
+  - [x] Standard invoices above the signed fee cap or per-payment cap are rejected before dispatch, and read-only tracking proves `NOT_FOUND`.
+  - [ ] Standard-invoice route failure and duplicate/ambiguous outcomes remain; standard success plus lost-response recovery pass.
+- [ ] Inject delayed and fast Bitcoin blocks, LND restart, lost responses, idempotent retry, force close, unsynced state, TLS pin change, credential rotation, and credential revocation. Accepted-state LND restart, one-dispatch lost-response recovery, root-key revocation, live in-flight saturation, channel-offline recovery, and TLS-pin mismatch now pass.
 - [ ] Prove that the computed Lightning cutoff always precedes the EVM refund boundary by the published margin.
 - [ ] Produce a secret-free evidence bundle containing versions, configuration hashes, test results, and timestamps—never macaroons, invoices, or preimages.
 

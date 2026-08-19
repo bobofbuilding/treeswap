@@ -845,10 +845,248 @@ smoke_invoice_faults() {
   echo "Invoice fault smoke passed: expiry, late-settle rejection, wrong preimage, cancel, replay, and accepted-state LND restart."
 }
 
+assert_adapter_payment_not_found() {
+  local intent_digest=$1
+  local payment_hash=$2
+  local invoice_digest=$3
+  local amount_sats=$4
+  local request_id result payment_hash_base64 payment_hash_url
+  request_id="0x$(openssl rand -hex 32)"
+  if result=$(call_adapter payer-adapter /routerrpc.Router/TrackPaymentV2 \
+    "$request_id" "$intent_digest" "$payment_hash" "$invoice_digest" "$amount_sats" '{}'); then
+    echo "payment was dispatched despite a pre-dispatch rejection" >&2
+    return 1
+  fi
+  if ! jq -e '.errorCode == "NOT_FOUND"' <<<"$result" >/dev/null; then
+    echo "read-only tracking did not return NOT_FOUND after pre-dispatch rejection" >&2
+    jq -c '{error,errorCode,ambiguous}' <<<"$result" >&2
+    return 1
+  fi
+  payment_hash_base64=$(printf '%s' "${payment_hash#0x}" | xxd -r -p | openssl base64 -A)
+  payment_hash_url=$(jq -nr --arg value "$payment_hash_base64" '$value | @uri')
+  if [[ "$result" == *"${payment_hash#0x}"* || "$result" == *"$payment_hash_base64"* || "$result" == *"$payment_hash_url"* ]]; then
+    echo "read-only tracking error exposed its bound payment hash" >&2
+    return 1
+  fi
+}
+
+smoke_policy_faults() {
+  ensure_runtime_env
+  start_lab >/dev/null
+  local invoice payment_request payment_hash invoice_digest intent_digest request_id operation result
+  local hold_preimage_one hold_preimage_two hold_hash_one="" hold_hash_two=""
+  local hold_request_one hold_request_two state inflight_sats active_channels
+  local hold_result_one="" hold_result_two="" hold_pid_one="" hold_pid_two=""
+  local offline_invoice offline_request offline_hash offline_digest offline_intent offline_result
+  local decode_result tls_result
+
+  trap '[[ -z "${hold_hash_one:-}" ]] || compose exec -T bob lncli --network=regtest cancelinvoice "$hold_hash_one" >/dev/null 2>&1 || true; \
+    [[ -z "${hold_hash_two:-}" ]] || compose exec -T bob lncli --network=regtest cancelinvoice "$hold_hash_two" >/dev/null 2>&1 || true; \
+    [[ -z "${hold_pid_one:-}" ]] || kill "$hold_pid_one" 2>/dev/null || true; \
+    [[ -z "${hold_pid_two:-}" ]] || kill "$hold_pid_two" 2>/dev/null || true; \
+    [[ -z "${hold_result_one:-}" ]] || rm -f "$hold_result_one"; \
+    [[ -z "${hold_result_two:-}" ]] || rm -f "$hold_result_two"; \
+    compose start bob >/dev/null 2>&1 || true' EXIT
+
+  invoice=$(compose exec -T bob lncli --network=regtest addinvoice \
+    --amt=10000 --memo=treeswap-fee-cap --expiry=600 --private)
+  payment_request=$(jq -er '.payment_request' <<<"$invoice")
+  payment_hash=$(compose exec -T alice lncli --network=regtest \
+    --macaroonpath=/root/.lnd/treeswap/payer.macaroon decodepayreq "$payment_request" |
+    jq -er '.payment_hash | ascii_downcase | "0x" + .')
+  invoice_digest="0x$(printf '%s' "$payment_request" | openssl dgst -sha256 -binary | xxd -p -c 256)"
+  intent_digest="0x$(openssl rand -hex 32)"
+  request_id="0x$(openssl rand -hex 32)"
+  operation=$(jq -cn --arg paymentRequest "$payment_request" \
+    '{paymentRequest:$paymentRequest,timeoutSeconds:30,feeLimitSats:"11"}')
+  if result=$(call_adapter payer-adapter /routerrpc.Router/SendPaymentV2 \
+    "$request_id" "$intent_digest" "$payment_hash" "$invoice_digest" 10000 "$operation"); then
+    echo "payer adapter accepted a routing fee above its cap" >&2
+    return 1
+  fi
+  if ! jq -e '.error | test("routing fee limit exceeds policy")' <<<"$result" >/dev/null; then
+    echo "routing-fee probe failed for an unexpected reason" >&2
+    jq -c '{error,errorCode,ambiguous}' <<<"$result" >&2
+    return 1
+  fi
+  assert_adapter_payment_not_found "$intent_digest" "$payment_hash" "$invoice_digest" 10000
+  echo "Policy fault stage passed: routing-fee cap and no dispatch."
+
+  invoice=$(compose exec -T bob lncli --network=regtest addinvoice \
+    --amt=100001 --memo=treeswap-amount-cap --expiry=600 --private)
+  payment_request=$(jq -er '.payment_request' <<<"$invoice")
+  payment_hash=$(compose exec -T alice lncli --network=regtest \
+    --macaroonpath=/root/.lnd/treeswap/payer.macaroon decodepayreq "$payment_request" |
+    jq -er '.payment_hash | ascii_downcase | "0x" + .')
+  invoice_digest="0x$(printf '%s' "$payment_request" | openssl dgst -sha256 -binary | xxd -p -c 256)"
+  intent_digest="0x$(openssl rand -hex 32)"
+  request_id="0x$(openssl rand -hex 32)"
+  operation=$(jq -cn --arg paymentRequest "$payment_request" \
+    '{paymentRequest:$paymentRequest,timeoutSeconds:30,feeLimitSats:"10"}')
+  if result=$(call_adapter payer-adapter /routerrpc.Router/SendPaymentV2 \
+    "$request_id" "$intent_digest" "$payment_hash" "$invoice_digest" 100001 "$operation"); then
+    echo "payer adapter accepted a payment above its per-payment cap" >&2
+    return 1
+  fi
+  if ! jq -e '.error | test("per-payment Lightning cap exceeded")' <<<"$result" >/dev/null; then
+    echo "per-payment probe failed for an unexpected reason" >&2
+    jq -c '{error,errorCode,ambiguous}' <<<"$result" >&2
+    return 1
+  fi
+  assert_adapter_payment_not_found "$intent_digest" "$payment_hash" "$invoice_digest" 100001
+  echo "Policy fault stage passed: per-payment cap and no dispatch."
+
+  hold_preimage_one=$(openssl rand -hex 32)
+  hold_hash_one=$(printf '%s' "$hold_preimage_one" | xxd -r -p |
+    openssl dgst -sha256 -binary | xxd -p -c 256)
+  hold_request_one=$(compose exec -T bob lncli --network=regtest \
+    --macaroonpath=/root/.lnd/treeswap/invoice.macaroon addholdinvoice \
+    --memo=treeswap-inflight-one --expiry=600 --cltv_expiry_delta=80 --private \
+    "$hold_hash_one" 80000 | jq -er '.payment_request')
+  hold_preimage_two=$(openssl rand -hex 32)
+  hold_hash_two=$(printf '%s' "$hold_preimage_two" | xxd -r -p |
+    openssl dgst -sha256 -binary | xxd -p -c 256)
+  hold_request_two=$(compose exec -T bob lncli --network=regtest \
+    --macaroonpath=/root/.lnd/treeswap/invoice.macaroon addholdinvoice \
+    --memo=treeswap-inflight-two --expiry=600 --cltv_expiry_delta=80 --private \
+    "$hold_hash_two" 80000 | jq -er '.payment_request')
+  umask 077
+  hold_result_one=$(mktemp "$STATE_DIR/policy-hold-one.XXXXXX")
+  hold_result_two=$(mktemp "$STATE_DIR/policy-hold-two.XXXXXX")
+  compose exec -T alice lncli --network=regtest \
+    --macaroonpath=/root/.lnd/treeswap/payer.macaroon payinvoice \
+    --force --fee_limit=10 --timeout=30s --json "$hold_request_one" >"$hold_result_one" 2>/dev/null &
+  hold_pid_one=$!
+  compose exec -T alice lncli --network=regtest \
+    --macaroonpath=/root/.lnd/treeswap/payer.macaroon payinvoice \
+    --force --fee_limit=10 --timeout=30s --json "$hold_request_two" >"$hold_result_two" 2>/dev/null &
+  hold_pid_two=$!
+  for _ in $(seq 1 30); do
+    state=$(compose exec -T bob lncli --network=regtest lookupinvoice "$hold_hash_one" |
+      jq -er '.state')
+    [[ "$state" == "ACCEPTED" ]] || { sleep 1; continue; }
+    state=$(compose exec -T bob lncli --network=regtest lookupinvoice "$hold_hash_two" |
+      jq -er '.state')
+    [[ "$state" == "ACCEPTED" ]] && break
+    sleep 1
+  done
+  if [[ "$state" != "ACCEPTED" ]]; then
+    echo "in-flight cap probes were not both accepted" >&2
+    return 1
+  fi
+  inflight_sats=$(compose exec -T alice lncli --network=regtest listchannels |
+    jq '[.channels[].pending_htlcs[].amount | tonumber] | add // 0')
+  if (( inflight_sats < 160000 )); then
+    echo "LND did not expose the expected in-flight HTLC value" >&2
+    return 1
+  fi
+
+  invoice=$(compose exec -T bob lncli --network=regtest addinvoice \
+    --amt=10000 --memo=treeswap-inflight-cap --expiry=600 --private)
+  payment_request=$(jq -er '.payment_request' <<<"$invoice")
+  payment_hash=$(compose exec -T alice lncli --network=regtest \
+    --macaroonpath=/root/.lnd/treeswap/payer.macaroon decodepayreq "$payment_request" |
+    jq -er '.payment_hash | ascii_downcase | "0x" + .')
+  invoice_digest="0x$(printf '%s' "$payment_request" | openssl dgst -sha256 -binary | xxd -p -c 256)"
+  intent_digest="0x$(openssl rand -hex 32)"
+  request_id="0x$(openssl rand -hex 32)"
+  operation=$(jq -cn --arg paymentRequest "$payment_request" \
+    '{paymentRequest:$paymentRequest,timeoutSeconds:30,feeLimitSats:"10"}')
+  if result=$(call_adapter payer-adapter /routerrpc.Router/SendPaymentV2 \
+    "$request_id" "$intent_digest" "$payment_hash" "$invoice_digest" 10000 "$operation"); then
+    echo "payer adapter opened exposure above its live in-flight cap" >&2
+    return 1
+  fi
+  jq -e '.error | test("Lightning in-flight cap exceeded")' <<<"$result" >/dev/null
+  assert_adapter_payment_not_found "$intent_digest" "$payment_hash" "$invoice_digest" 10000
+  echo "Policy fault stage passed: live in-flight cap and no dispatch."
+  compose exec -T bob lncli --network=regtest cancelinvoice "$hold_hash_one" >/dev/null
+  compose exec -T bob lncli --network=regtest cancelinvoice "$hold_hash_two" >/dev/null
+  hold_hash_one=""
+  hold_hash_two=""
+  if wait "$hold_pid_one"; then
+    hold_pid_one=""
+    echo "first canceled capacity probe unexpectedly succeeded" >&2
+    return 1
+  fi
+  hold_pid_one=""
+  if wait "$hold_pid_two"; then
+    hold_pid_two=""
+    echo "second canceled capacity probe unexpectedly succeeded" >&2
+    return 1
+  fi
+  hold_pid_two=""
+  rm -f "$hold_result_one" "$hold_result_two"
+  hold_result_one=""
+  hold_result_two=""
+  unset hold_preimage_one hold_preimage_two hold_request_one hold_request_two
+
+  offline_invoice=$(compose exec -T bob lncli --network=regtest addinvoice \
+    --amt=10000 --memo=treeswap-offline-channel --expiry=600 --private)
+  offline_request=$(jq -er '.payment_request' <<<"$offline_invoice")
+  offline_hash=$(compose exec -T alice lncli --network=regtest \
+    --macaroonpath=/root/.lnd/treeswap/payer.macaroon decodepayreq "$offline_request" |
+    jq -er '.payment_hash | ascii_downcase | "0x" + .')
+  offline_digest="0x$(printf '%s' "$offline_request" | openssl dgst -sha256 -binary | xxd -p -c 256)"
+  offline_intent="0x$(openssl rand -hex 32)"
+  compose stop bob >/dev/null
+  active_channels=1
+  for _ in $(seq 1 60); do
+    active_channels=$(compose exec -T alice lncli --network=regtest listchannels 2>/dev/null |
+      jq '[.channels[] | select(.active == true)] | length' || true)
+    (( active_channels == 0 )) && break
+    sleep 1
+  done
+  if (( active_channels != 0 )); then
+    echo "Alice did not mark the stopped peer channel inactive" >&2
+    return 1
+  fi
+  request_id="0x$(openssl rand -hex 32)"
+  operation=$(jq -cn --arg paymentRequest "$offline_request" \
+    '{paymentRequest:$paymentRequest,timeoutSeconds:30,feeLimitSats:"10"}')
+  if offline_result=$(call_adapter payer-adapter /routerrpc.Router/SendPaymentV2 \
+    "$request_id" "$offline_intent" "$offline_hash" "$offline_digest" 10000 "$operation"); then
+    echo "payer adapter dispatched while its only channel was offline" >&2
+    return 1
+  fi
+  jq -e '.error | test("service is unhealthy or unsynced")' <<<"$offline_result" >/dev/null
+  compose start bob >/dev/null
+  wait_for_wallet_rpc bob
+  initialize_wallet bob
+  wait_for_chain_sync bob
+  wait_for_active_channel alice
+  wait_for_active_channel bob
+  assert_adapter_payment_not_found "$offline_intent" "$offline_hash" "$offline_digest" 10000
+  echo "Policy fault stage passed: channel-offline rejection and recovery."
+
+  if tls_result=$(compose --profile adapter run --rm -T \
+    -e LND_TLS_CERT_FINGERPRINT="sha256:$(printf '00%.0s' {1..32})" payer-adapter 2>&1); then
+    echo "payer adapter started with a mismatched LND certificate pin" >&2
+    return 1
+  fi
+  if [[ "$tls_result" != *"configured LND certificate pin does not match the credential bundle"* ]]; then
+    echo "mismatched TLS-pin probe failed for an unexpected reason" >&2
+    return 1
+  fi
+
+  request_id="0x$(openssl rand -hex 32)"
+  decode_result=$(call_adapter payer-adapter /lnrpc.Lightning/DecodePayReq \
+    "$request_id" "$offline_intent" "$offline_hash" "$offline_digest" 10000 \
+    "$(jq -cn --arg paymentRequest "$offline_request" '{paymentRequest:$paymentRequest}')")
+  jq -e --arg paymentHash "$offline_hash" \
+    '.result.paymentHash == $paymentHash and .result.amountSats == "10000"' <<<"$decode_result" >/dev/null
+  echo "Policy fault stage passed: mismatched TLS pin and healthy pinned adapter."
+  compose exec -T bob lncli --network=regtest cancelinvoice "${offline_hash#0x}" >/dev/null
+  trap - EXIT
+
+  echo "Policy fault smoke passed: fee, amount, in-flight, offline-channel, no-dispatch, recovery, and TLS-pin enforcement."
+}
+
 smoke_coordinator_reconciliation() {
   ensure_runtime_env
   start_lab >/dev/null
   local invoice payment_request payment_hash input
+  compose --profile tools build coordinator-smoke >/dev/null
   invoice=$(compose exec -T bob lncli --network=regtest addinvoice \
     --amt=10000 --memo=treeswap-coordinator-regtest --expiry=600 --private)
   payment_request=$(jq -er '.payment_request' <<<"$invoice")
@@ -888,12 +1126,13 @@ case "${1:-}" in
   adapter-smoke) smoke_adapter_hold_invoice ;;
   credential-smoke) smoke_credential_lifecycle ;;
   invoice-fault-smoke) smoke_invoice_faults ;;
+  policy-fault-smoke) smoke_policy_faults ;;
   coordinator-smoke) smoke_coordinator_reconciliation ;;
   status) status_lab ;;
   down) stop_lab ;;
   destroy) destroy_lab ;;
   *)
-    echo "Usage: $0 {up|smoke|adapter-smoke|credential-smoke|invoice-fault-smoke|coordinator-smoke|status|down|destroy}" >&2
+    echo "Usage: $0 {up|smoke|adapter-smoke|credential-smoke|invoice-fault-smoke|policy-fault-smoke|coordinator-smoke|status|down|destroy}" >&2
     exit 2
     ;;
 esac

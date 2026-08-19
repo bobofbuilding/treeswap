@@ -135,7 +135,9 @@ const reconciled = await reconcileLightningAction({
   nowSeconds: () => Math.floor(Date.now() / 1_000),
 });
 if (reconciled.disposition !== "confirmed" || reconciled.action.dispatchCount !== 1) {
-  throw new Error("read-only reconciliation did not confirm exactly one dispatch");
+  throw new Error(
+    `read-only reconciliation did not confirm exactly one dispatch: disposition=${reconciled.disposition}, actionState=${reconciled.action.state}, dispatchCount=${reconciled.action.dispatchCount}`,
+  );
 }
 const storedBytes = await readFile(databasePath);
 if (storedBytes.includes(Buffer.from(input.paymentRequest))) throw new Error("coordinator persisted the raw invoice");

@@ -46,7 +46,7 @@ The pinned runtime is Node `22.22.0`. Its built-in SQLite API remains experiment
 | Exact `SUCCEEDED`, `SETTLED`, or method-compatible terminal proof | `CONFIRMED` | No |
 | Impossible terminal observation | settlement `HALTED` | No |
 
-An `UNKNOWN` action blocks every later action and every terminal transition. The recovery call uses a fresh signed, read-only `TrackPaymentV2` or `LookupInvoiceV2` request. It compares the returned hash and amount to the durable action before recording the observation. `NOT_FOUND` is not proof that a value-moving call was never accepted, so it intentionally leaves the action blocked.
+An `UNKNOWN` action blocks every later action and every terminal transition. The recovery call uses a fresh signed, read-only `TrackPaymentV2` or `LookupInvoiceV2` request. It compares the returned hash and amount to the durable action before recording the observation. LND REST stream error envelopes are parsed before result validation: a read-only gRPC `NotFound` becomes sanitized `NOT_FOUND`, while a send-stream error remains ambiguous. `NOT_FOUND` is not proof that a value-moving call was never accepted, so it intentionally leaves the action blocked.
 
 ### EVM claim outbox
 
