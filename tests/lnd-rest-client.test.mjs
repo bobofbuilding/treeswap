@@ -1,11 +1,26 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import {
+  bytes32PathSegment,
   invoiceDigest,
   isPrivateLndHostname,
   LndRestError,
   unwrapLndStreamFrame,
 } from "../lib/lnd-rest-client.mjs";
+
+test("encodes bytes32 REST path parameters as padded URL-safe base64", () => {
+  const value = `0xfb${"ff".repeat(31)}`;
+  const standard = Buffer.from(value.slice(2), "hex").toString("base64");
+  const encoded = bytes32PathSegment(value, "paymentHash");
+  assert.equal(standard.includes("/"), true);
+  assert.equal(standard.includes("+"), true);
+  assert.match(encoded, /^[A-Za-z0-9_-]{43}=$/);
+  assert.equal(encoded.includes("/"), false);
+  assert.equal(encoded.includes("+"), false);
+  assert.equal(encoded.endsWith("="), true);
+  assert.equal(Buffer.from(encoded, "base64url").toString("hex"), value.slice(2));
+  assert.throws(() => bytes32PathSegment(`0x${"FF".repeat(32)}`), /lowercase bytes32/);
+});
 
 test("uses a deterministic secret-free digest for an exact BOLT 11 invoice", () => {
   assert.equal(

@@ -125,15 +125,20 @@ store = await CoordinatorStore.open(databasePath);
 if (store.recoverInterruptedActions(Math.floor(Date.now() / 1_000)) !== 0) {
   throw new Error("UNKNOWN action was incorrectly treated as a fresh dispatch");
 }
-const reconciled = await reconcileLightningAction({
-  store,
-  actionId: action.actionId,
-  reconciliationRequestId: randomHash(),
-  privateKey,
-  keyId: required("COORDINATOR_KEY_ID"),
-  adapterUrl: "http://payer-adapter:3000",
-  nowSeconds: () => Math.floor(Date.now() / 1_000),
-});
+let reconciled;
+for (let attempt = 0; attempt < 40; attempt += 1) {
+  reconciled = await reconcileLightningAction({
+    store,
+    actionId: action.actionId,
+    reconciliationRequestId: randomHash(),
+    privateKey,
+    keyId: required("COORDINATOR_KEY_ID"),
+    adapterUrl: "http://payer-adapter:3000",
+    nowSeconds: () => Math.floor(Date.now() / 1_000),
+  });
+  if (reconciled.disposition !== "unresolved") break;
+  await new Promise((resolve) => setTimeout(resolve, 250));
+}
 if (reconciled.disposition !== "confirmed" || reconciled.action.dispatchCount !== 1) {
   throw new Error(
     `read-only reconciliation did not confirm exactly one dispatch: disposition=${reconciled.disposition}, actionState=${reconciled.action.state}, dispatchCount=${reconciled.action.dispatchCount}`,

@@ -34,6 +34,8 @@ Hold-invoice creation uses the all-zero digest only before an invoice exists. Th
 
 The audit record contains hashes, integer amount, method, decision, and reason codes. It excludes macaroons, preimages, and complete invoice text. Dynamic invoice/hash URL segments are redacted from transport errors. LND REST stream error frames are parsed before result validation: missing read-only tracking maps to non-ambiguous `NOT_FOUND`, while a value-moving send stream error remains ambiguous. An append-only journal is synced before dispatch; request IDs and exposure payment hashes cannot be reused. A lost response is recorded as `unknown` and is never automatically resent. The durable coordinator now recovers payer actions through a fresh signed `TrackPaymentV2` snapshot and invoice actions through `LookupInvoiceV2`; only a method-compatible exact terminal observation clears `UNKNOWN`.
 
+The `TrackPaymentV2` REST path encodes its 32-byte hash as padded URL-safe base64. The pinned grpc-gateway decoder requires valid Base64 padding, while the URL-safe alphabet keeps `/` and `+` out of the route segment. Standard base64 is retained only for protobuf JSON/query byte fields. Regression coverage includes hashes whose standard form contains reserved `/` and `+` characters.
+
 ## Regtest evidence
 
 `npm run regtest:adapter-smoke` proves a signed 10,000-sat hold invoice can be created on Bob, paid from Alice, observed as `ACCEPTED`, settled with the matching preimage, and completed as `SUCCEEDED`. It then restarts the payer adapter and proves the same signed request remains rejected by the durable journal. The invoice adapter also rejects a correctly signed payer action, and the underlying macaroons reject representative non-role RPCs.
@@ -56,7 +58,7 @@ Production should independently set `MAX_CHAIN_HEADER_AGE_SECONDS` for reported 
 
 `npm run regtest:htlc-cutoff-smoke` rapidly advances a real accepted HTLC to TreeSwap's 24-block settlement reserve. The adapter rejects the correct preimage at the exact boundary, then cancellation releases the original payer. The reserve is deliberately six blocks earlier than the 18-block LND auto-cancel boundary observed with the pinned release.
 
-`npm run regtest:coordinator-smoke` pays a real 10,000-sat standard invoice, deliberately loses the successful response, reopens the coordinator database in `UNKNOWN`, and recovers success through read-only tracking without a second dispatch. See [Durable coordinator boundary](./COORDINATOR.md).
+`npm run regtest:coordinator-smoke` pays a real 10,000-sat standard invoice, deliberately loses the successful response, reopens the coordinator database in `UNKNOWN`, and recovers success through bounded fresh read-only tracking without a second dispatch. A transient `NOT_FOUND` stays unresolved and permits only another read. See [Durable coordinator boundary](./COORDINATOR.md).
 
 `npm run regtest:coordinator-invoice-smoke` settles a real accepted 10,000-sat hold invoice, deliberately loses that successful response, reopens in `UNKNOWN`, and recovers `SETTLED` through a fresh preimage-free lookup. The database, WAL, and shared-memory files contain neither raw nor textual preimage bytes, and dispatch count remains one.
 
