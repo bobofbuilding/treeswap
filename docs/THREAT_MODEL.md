@@ -59,7 +59,7 @@ The solver-funded vault binds the user's beneficiary in the user-signed Lightnin
 ### TS-C03 — Timeout and finality race
 
 **Severity:** Critical  
-**Status:** Onchain ordering implemented; Lightning derivation and cross-chain race tests remain open
+**Status:** Deterministic derivation and boundary harness implemented; regtest, fork, and fault-injection campaigns remain a testnet gate
 
 Lightning HTLCs expire in Bitcoin block-height terms while BOLT 11 invoices and Ethereum reservations use wall-clock or Ethereum timestamps. A refund that opens too early can race a valid Lightning settlement; a claim window that is too short can let one party receive one leg while the other leg refunds.
 
@@ -72,7 +72,7 @@ Safeguards:
 - test reorgs, delayed blocks, mempool congestion, force-close, and boundary timestamps;
 - reject invoices whose expiry or final CLTV cannot satisfy the safety policy.
 
-The current vault enforces `quoteExpiresAt < lastSafeClaimAt`, a minimum settlement window, a minimum claim-to-refund buffer, a maximum lock duration, and a deterministic boundary where claims close exactly when refunds open. The future Lightning adapter must derive and validate `lastSafeClaimAt`; a user or solver cannot be trusted to choose it safely.
+Both escrows enforce `quoteExpiresAt < lastSafeClaimAt`, a minimum settlement window, a minimum claim-to-refund buffer, a maximum lock duration, and a deterministic boundary where claims close exactly when refunds open. `lib/settlement-policy.mjs` now derives those values from the signed invoice timestamp, expiry, final CLTV, observed Bitcoin height, Ethereum finality target, and explicit relay and congestion margins. It requires a larger final CLTV for hold invoices, checks the actual accepted HTLC height without ever extending the signed deadline, and distinguishes an observed escrow from a canonical, finalized escrow authorized for Lightning action. `docs/SETTLEMENT_POLICY.md` defines the policy. Bitcoin regtest, Ethereum fork, reorg, restart, congestion, delayed/fast-block, HTLC-timeout, and force-close campaigns remain required before testnet funding.
 
 ### TS-C04 — Relay can suppress or reorder quotes
 
@@ -228,10 +228,10 @@ A production escrow test suite should prove at least:
 ## Required adversarial tests
 
 - Stateful fuzzing of every escrow transition and signature field.
-- Claim/refund transactions in the same block and around every timeout boundary.
+- Claim/refund transactions in the same block and around every timeout boundary. **Deterministic and contract boundary harness complete.**
 - Preimage copied from the mempool by an unrelated account.
-- Ethereum reorg after escrow creation and after claim.
-- Bitcoin block delay, LND restart, held HTLC timeout, and force-close.
+- Ethereum reorg after escrow creation and after claim. **Authorization rejects an orphaned escrow; fork fault injection remains.**
+- Bitcoin block delay, LND restart, held HTLC timeout, and force-close. **Policy harness complete; regtest fault injection remains.**
 - Replayed intent on another chain, escrow address, protocol version, and nonce.
 - Replayed or mutated SIWE domain, URI, nonce, chain, issued time, and expiry.
 - Cross-origin session mutation, expired session use, and notification access from a different wallet.

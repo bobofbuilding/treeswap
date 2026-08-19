@@ -44,7 +44,7 @@ type SelectedQuote = {
 };
 ```
 
-The user chooses among the solver quotes it actually receives, then signs one complete quote for onchain reservation. TreeSwap may label the largest net output as “best received,” but never claims a globally best price. A future BIT → Lightning escrow must use a separate direction-specific type hash or verifying contract so signatures cannot cross directions.
+The user chooses among the solver quotes it actually receives, then signs one complete quote for onchain reservation. TreeSwap may label the largest net output as “best received,” but never claims a globally best price. The BIT → Lightning user escrow uses a separate type hash and verifying contract so signatures cannot cross directions.
 
 ## 4. BIT inventory
 
@@ -124,6 +124,8 @@ The public web application never receives a node macaroon, seed, preimage store,
 - quotes stop automatically if reconciliation, node health, BIT proxy monitoring, or circuit breakers fail.
 
 See [`LIQUIDITY_FUNDING.md`](LIQUIDITY_FUNDING.md) for the operational sequence.
+
+The three deadlines are derived by the fail-closed policy in [`SETTLEMENT_POLICY.md`](SETTLEMENT_POLICY.md), not selected by a user or solver. An escrow being visible is not enough to authorize Lightning: the adapter also requires canonical finality, an exact intent digest, reconciled balances, healthy chain and node state, and time remaining before the direction-specific cutoff.
 
 ## 9. Mandatory invariants
 
