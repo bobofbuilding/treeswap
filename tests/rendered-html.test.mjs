@@ -45,11 +45,13 @@ test("server-renders the TreeSwap prototype", async () => {
   assert.match(html, />Safety</i);
   assert.doesNotMatch(html, /Four checks block launch|security-section/i);
   assert.match(html, /application\/ld\+json/i);
+  assert.match(html, /href="https:\/\/treeswap\.vercel\.app\/favicon\.png"/i);
+  assert.match(html, /href="https:\/\/treeswap\.vercel\.app\/apple-touch-icon\.png"/i);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton|Your site is taking shape/i);
 });
 
 test("keeps swaps non-production and direct sends explicitly wallet-authorized", async () => {
-  const [page, sendPanel, sendLogic, account, authServer, authVerify, layout, readme, protocol, threatModel, vault, license] = await Promise.all([
+  const [page, sendPanel, sendLogic, account, authServer, authVerify, layout, manifest, readme, protocol, threatModel, vault, license] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/components/SendPanel.tsx", import.meta.url), "utf8"),
     readFile(new URL("../lib/send.mjs", import.meta.url), "utf8"),
@@ -57,6 +59,7 @@ test("keeps swaps non-production and direct sends explicitly wallet-authorized",
     readFile(new URL("../lib/siwe-server.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/auth/verify/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
+    readFile(new URL("../app/manifest.ts", import.meta.url), "utf8"),
     readFile(new URL("../README.md", import.meta.url), "utf8"),
     readFile(new URL("../docs/PROTOCOL.md", import.meta.url), "utf8"),
     readFile(new URL("../docs/THREAT_MODEL.md", import.meta.url), "utf8"),
@@ -73,6 +76,9 @@ test("keeps swaps non-production and direct sends explicitly wallet-authorized",
   assert.match(layout, /metadataBase/);
   assert.match(layout, /canonical/);
   assert.match(layout, /og\.png/);
+  assert.match(layout, /favicon\.png/);
+  assert.match(layout, /apple-touch-icon\.png/);
+  assert.match(manifest, /treeswap-neon-icon\.png/);
   assert.match(account, /Sign in with Ethereum/);
   assert.match(account, /Attach email/);
   assert.match(account, /current prototype does not send messages/i);
