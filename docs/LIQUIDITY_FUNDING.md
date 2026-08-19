@@ -16,7 +16,7 @@ This choice avoids pretending Lightning channel balances behave like ERC-20 vaul
 4. Call `deposit(amount)` and wait for the configured finality threshold.
 5. Reconcile `availableBalance(solver)` with vault events and the vault's actual BIT balance.
 6. Enable quotes only below a separately configured inventory budget.
-7. For each accepted quote, the solver calls `reserve` with one swap ID, payment hash, beneficiary, exact amount, fee, and refund time.
+7. For each firm quote, the solver signs the exact swap ID, payment hash, beneficiary, amount, BIT fee, and deadlines; the named user countersigns and exercises it against the solver's available vault balance.
 8. Withdraw only unreserved inventory. Remove allowances when the solver is disabled.
 
 Before testnet, reservations must also prove authorization from the selected signed quote and deployment tooling must verify bytecode and constructor immutables.
@@ -71,11 +71,11 @@ Stopping new quotes must not disable valid claim, refund, or solver withdrawal p
 
 - [x] Segregated BIT vault prototype
 - [x] Deterministic unit and stateful accounting tests
-- [ ] Full selected-quote EIP-712 verification
-- [ ] Complementary user-funded exact escrow
+- [x] Full dual-signed selected-quote EIP-712 verification
+- [x] Complementary user-funded exact escrow
 - [ ] BIT mainnet-fork pause, upgrade, and balance-delta tests
 - [ ] Lightning regtest adapter with hold invoices
-- [ ] Cross-clock timeout model and race tests
+- [x] Deterministic cross-clock timeout model and boundary tests
 - [ ] Reconciliation service and signed capacity heartbeats
 - [ ] Two independent solver deployments
 - [ ] External review and tiny testnet limits

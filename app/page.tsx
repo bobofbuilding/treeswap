@@ -361,7 +361,7 @@ export default function Home() {
                 <div className="detail-rows">
                   <div><span>{isPayInvoice ? "Invoice receives" : "Invoice amount"}</span><strong>{numberFormat(isPayInvoice ? desiredOutput : displayInput, 0)} sats</strong></div>
                   <div><span>{isPayInvoice ? "BIT locked" : "BIT recipient"}</span><strong>{isPayInvoice ? `${numberFormat(displayInput, 6)} BIT` : receiveAddressHasShape ? shortAddress(receiveAddress) : "Required"}</strong></div>
-                  <div><span>Solver fee</span><strong>{feeLabel}</strong></div>
+                  <div><span>BIT fee</span><strong>{feeLabel}</strong></div>
                   {isPayInvoice && <div><span>Estimated Lightning routing</span><strong>{activeOffer.routeFee} sats</strong></div>}
                   <div>
                     <span>Settlement protection</span>
@@ -525,7 +525,7 @@ export default function Home() {
                   <div><span>Selected solver</span><strong>{activeOffer.name}</strong></div>
                   <div><span>Invoice amount</span><strong>{numberFormat(isPayInvoice ? desiredOutput : displayInput)} sats</strong></div>
                   <div><span>BIT amount</span><strong>{numberFormat(isPayInvoice ? displayInput : desiredOutput, 6)} BIT</strong></div>
-                  <div><span>Solver fee</span><strong>{feeLabel}</strong></div>
+                  <div><span>BIT fee</span><strong>{feeLabel}</strong></div>
                 </div>
                 <div className="checkout-warning">
                   Prototype preview only. A live flow must verify the invoice checksum, signature, expiry, network, amount, and payment hash before locking funds.

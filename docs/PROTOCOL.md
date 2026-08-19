@@ -111,6 +111,7 @@ The public web application never receives a node macaroon, seed, preimage store,
 - [`UNITS_AND_ROUNDING.md`](UNITS_AND_ROUNDING.md) defines the only signable unit model: `uint96` BIT wei, whole `uint64` sats, exact millisatoshi divisibility, and integer basis points.
 - Quotes use whole sats in v1 and reject incompatible millisatoshi dust.
 - The protocol fee is denominated on the BIT leg in both directions.
+- [`FEES.md`](FEES.md) defines the exact fee, spread, routing, and refund boundary.
 - BIT → Lightning carries the higher solver fee because it consumes outbound Lightning liquidity and routing certainty.
 - Every active swap fixes its exact fee; no later configuration can reprice it.
 - No protocol execution fee is charged on refund.

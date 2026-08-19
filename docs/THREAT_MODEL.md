@@ -128,7 +128,9 @@ BIT uses 18 decimals, Lightning routes in millisatoshis, and the product quotes 
 
 ### TS-H05 — Fee denomination ambiguity
 
-Taking a protocol fee “from output” is ambiguous because one output exists on Lightning and cannot be atomically skimmed by Ethereum. The recommended v1 charges protocol fees on the BIT leg in both directions. Solver spread and routing are embedded in the signed Lightning output quote. Fee recipients and caps are fixed before payment.
+**Status:** BIT-only protocol fee, immutable recipient/cap, signed routing cap, and fee-free refund behavior implemented in both directions
+
+TreeSwap charges the protocol fee only in BIT wei in both directions and never attempts to skim Lightning. Both escrows bind the exact BIT fee in the signed quote, reject it above an immutable deployment cap, and send it to an immutable collector only on a valid preimage claim. Refund returns the full locked amount and charges no fee. Solver spread is embedded in the signed exchange amounts; BIT → Lightning also binds a maximum routing fee and exact Lightning output. A changed fee requires a new short-lived quote and fresh authorization. [`FEES.md`](FEES.md) defines the display and accounting rules.
 
 ### TS-H06 — Liquidity-pool insolvency and adverse selection
 

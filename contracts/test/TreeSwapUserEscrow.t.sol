@@ -100,6 +100,12 @@ contract TreeSwapUserEscrowTest is TestBase {
         assertEq(escrow.totalLocked(), 0, "refund left liabilities");
     }
 
+    function testBitFeeCannotExceedImmutableCap() public {
+        TreeSwapUserEscrow.SolverQuote memory quote =
+            _quote(keccak256("reverse-fee-cap"), paymentHash, BENEFICIARY, 500 ether, 6 ether, nextNonce++);
+        _expectOpenRevert(quote, TreeSwapUserEscrow.FeeExceedsCap.selector);
+    }
+
     function testPaymentHashAndSolverNonceAreSingleUse() public {
         uint256 nonce = nextNonce++;
         TreeSwapUserEscrow.SolverQuote memory first =
