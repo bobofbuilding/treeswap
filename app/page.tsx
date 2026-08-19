@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import WalletAccount from "@/app/components/WalletAccount";
 import {
   calculateLiquidityPlan,
   calculateRequiredInput,
@@ -134,7 +135,7 @@ export default function Home() {
     <main>
       <div className="prototype-strip">
         <span>Prototype</span>
-        <span>No wallets connected · No real funds</span>
+        <span>No swaps execute · No real funds</span>
       </div>
 
       <nav className="nav-shell" aria-label="Main navigation">
@@ -145,10 +146,10 @@ export default function Home() {
         <div className="nav-links">
           <a className="active" href="#trade">Trade</a>
           <a href="#mechanism">How it works</a>
-          <a href="https://github.com/bobofbuilding/treeswap/blob/agent/simplify-marketing-seo/docs/THREAT_MODEL.md" target="_blank" rel="noreferrer">Safety</a>
+          <a href="https://github.com/bobofbuilding/treeswap/blob/main/docs/THREAT_MODEL.md" target="_blank" rel="noreferrer">Safety</a>
           <a href="https://github.com/bobofbuilding/treeswap" target="_blank" rel="noreferrer">GitHub</a>
         </div>
-        <a className="network-pill" href="https://github.com/bobofbuilding/treeswap/blob/agent/simplify-marketing-seo/docs/THREAT_MODEL.md" target="_blank" rel="noreferrer"><span /> Risk limits</a>
+        <WalletAccount />
       </nav>
 
       <section className="trade-stage" id="trade">
@@ -422,6 +423,7 @@ export default function Home() {
         <div className="trade-trust" aria-label="Swap guarantees">
           <span><i>✓</i> Invoice-first</span>
           <span><i>✓</i> Best received quote</span>
+          <span><i>✓</i> Optional email receipts</span>
           <span><i>✓</i> No real funds</span>
         </div>
       </section>
@@ -501,6 +503,7 @@ export default function Home() {
                 <div className="checkout-warning">
                   Prototype preview only. A live flow must verify the invoice checksum, signature, expiry, network, amount, and payment hash before locking funds.
                 </div>
+                <p className="checkout-account-note">Want a copy? Sign in from the account menu to attach an email for invoice notices or transaction receipts.</p>
                 <button
                   type="button"
                   className="primary-action"

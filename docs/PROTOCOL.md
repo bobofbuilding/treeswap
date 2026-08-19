@@ -137,14 +137,25 @@ See [`LIQUIDITY_FUNDING.md`](LIQUIDITY_FUNDING.md) for the operational sequence.
 - BIT implementation changes or pauses stop new quotes and reservations.
 - Real swaps remain disabled when balances or Lightning capacity cannot be reconciled.
 
-## 10. Implementation order
+## 10. Identity and optional email
+
+TreeSwap uses EIP-4361 Sign-In with Ethereum only for an offchain account session. This authentication signature is separate from the EIP-712 selected-quote signature and cannot approve BIT, reserve inventory, or authorize a swap.
+
+The server issues a random 128-bit, ten-minute nonce bound to the exact request domain and URI. Verification requires Ethereum mainnet, a matching domain and URI, an unexpired message, a valid wallet signature, and an unused nonce. A successful sign-in creates an opaque, `HttpOnly`, `SameSite=Strict`, seven-day session whose server-side record is bound to the wallet address.
+
+An authenticated user may separately attach one email and choose invoice notices, transaction receipts, or both. The email is stored offchain, omitted from wallet signatures and intents, and can be detached immediately. The current record remains `pending` and must not receive mail until an email ownership-verification flow, delivery provider, unsubscribe path, and retention policy are implemented.
+
+SIWE currently supports externally owned accounts. Contract-wallet authentication requires an EIP-1271-capable verifier and an Ethereum provider before it can be advertised.
+
+## 11. Implementation order
 
 1. Exercise the current signed, capped BIT inventory vault against the mainnet-fork BIT proxy, including pause and implementation-change scenarios.
 2. Add the complementary user-funded exact BIT escrow for BIT → Lightning with a direction-separated EIP-712 type.
 3. Build the least-privilege Lightning regtest adapter and derive `lastSafeClaimAt` from validated BOLT 11 expiry, CLTV, Bitcoin height, and operating margins.
 4. Test reorgs and boundary races across both chain clocks, including delayed blocks, congestion, restart, and force-close cases.
 5. Add BIT proxy monitoring, reconciliation, quote shutdown, and an incident runbook without blocking existing claims or refunds.
-6. Run two or three independent solvers on testnet with tiny limits and no public deposits.
-7. Obtain independent contract, Lightning, and operational review before any mainnet funding.
+6. Add email ownership verification, notification delivery, unsubscribe enforcement, retention limits, and abuse controls before sending any message.
+7. Run two or three independent solvers on testnet with tiny limits and no public deposits.
+8. Obtain independent contract, Lightning, identity, privacy, and operational review before any mainnet funding.
 
 See [`THREAT_MODEL.md`](THREAT_MODEL.md) for the adversarial review and launch gates.

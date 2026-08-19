@@ -191,6 +191,33 @@ summary::-webkit-details-marker {
   box-shadow: 0 0 0 4px rgba(185, 245, 108, 0.11);
 }
 
+.account-button {
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 999px;
+  padding: 9px 12px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #d8e5dc;
+  background: rgba(255, 255, 255, 0.05);
+  font-size: 10px;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.account-button:hover {
+  color: white;
+  background: rgba(255, 255, 255, 0.1);
+}
+
+.account-button > span {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--leaf);
+  box-shadow: 0 0 0 4px rgba(185, 245, 108, 0.11);
+}
+
 .trade-stage {
   min-height: calc(100vh - 100px);
   padding: 54px 20px 42px;
@@ -1222,6 +1249,233 @@ footer a:hover {
   line-height: 1.5;
 }
 
+.checkout-account-note {
+  margin: 10px 3px 0;
+  color: #7d8981;
+  font-size: 8px;
+  line-height: 1.5;
+}
+
+.account-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 30;
+  padding: 20px;
+  display: grid;
+  place-items: center;
+  overflow-y: auto;
+  background: rgba(2, 17, 10, 0.76);
+  backdrop-filter: blur(10px);
+}
+
+.account-modal {
+  position: relative;
+  width: min(100%, 450px);
+  max-height: calc(100vh - 40px);
+  overflow-y: auto;
+  border: 1px solid rgba(255, 255, 255, 0.6);
+  border-radius: 24px;
+  padding: 29px;
+  color: var(--ink);
+  background: var(--paper);
+  box-shadow: var(--shadow);
+}
+
+.account-modal h2 {
+  margin: 9px 0 8px;
+  font: 400 32px/1 Georgia, serif;
+  letter-spacing: -0.04em;
+}
+
+.account-modal > p:not(.modal-kicker) {
+  margin: 0;
+  color: #728078;
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.signin-assurances {
+  margin: 20px 0 4px;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 7px;
+}
+
+.signin-assurances span {
+  border: 1px solid #e0e6de;
+  border-radius: 999px;
+  padding: 7px 9px;
+  color: #657269;
+  background: #f7f9f5;
+  font-size: 8px;
+}
+
+.signin-assurances i {
+  color: var(--forest-700);
+  font-style: normal;
+}
+
+.account-modal .account-fineprint,
+.privacy-note {
+  margin-top: 10px;
+  color: #89948c;
+  font-size: 8px;
+  line-height: 1.55;
+}
+
+.wallet-identity {
+  margin-top: 20px;
+  border: 1px solid #d9e7d4;
+  border-radius: 13px;
+  padding: 12px 13px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  background: #f1f8ec;
+}
+
+.wallet-identity span {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: #607067;
+  font-size: 9px;
+}
+
+.wallet-identity i {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--leaf);
+  box-shadow: 0 0 0 4px rgba(74, 133, 86, 0.1);
+}
+
+.wallet-identity strong {
+  font: 700 10px/1 var(--font-geist-mono), monospace;
+}
+
+.notification-settings {
+  margin-top: 12px;
+  border: 1px solid #e0e4de;
+  border-radius: 16px;
+  padding: 15px;
+  background: #f8f8f5;
+}
+
+.settings-heading {
+  margin-bottom: 14px;
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.settings-heading span {
+  color: var(--forest-700);
+  font: 750 8px/1 var(--font-geist-mono), monospace;
+  letter-spacing: 0.12em;
+}
+
+.settings-heading h3 {
+  margin: 5px 0 0;
+  font: 400 21px/1 Georgia, serif;
+  letter-spacing: -0.035em;
+}
+
+.settings-heading small {
+  border-radius: 999px;
+  padding: 5px 7px;
+  color: #815f38;
+  background: #fff0d9;
+  font-size: 7px;
+  font-weight: 750;
+  text-transform: uppercase;
+}
+
+.email-field {
+  display: grid;
+  gap: 6px;
+  color: #68756c;
+  font-size: 9px;
+  font-weight: 650;
+}
+
+.email-field input {
+  width: 100%;
+  border: 1px solid #dce1da;
+  border-radius: 11px;
+  padding: 11px 12px;
+  color: var(--ink);
+  background: white;
+  outline: 0;
+}
+
+.email-field input:focus {
+  border-color: #7e9d86;
+}
+
+.preference-row {
+  min-height: 49px;
+  border-bottom: 1px solid #e5e8e3;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  cursor: pointer;
+}
+
+.preference-row > span {
+  display: grid;
+  gap: 2px;
+}
+
+.preference-row strong {
+  color: #425047;
+  font-size: 9px;
+}
+
+.preference-row small {
+  color: #89938c;
+  font-size: 8px;
+}
+
+.preference-row input {
+  width: 17px;
+  height: 17px;
+  flex: 0 0 auto;
+  accent-color: var(--forest-700);
+}
+
+.text-action,
+.signout-action {
+  border: 0;
+  padding: 9px 0 0;
+  color: #6c7a70;
+  background: transparent;
+  font-size: 9px;
+  text-decoration: underline;
+  cursor: pointer;
+}
+
+.signout-action {
+  display: block;
+  margin: 10px auto 0;
+  color: #7e554d;
+}
+
+.account-message {
+  min-height: 18px;
+  padding-top: 10px;
+  color: var(--forest-700);
+  text-align: center;
+  font-size: 8px;
+}
+
+.account-message .error {
+  color: #a3483c;
+}
+
 .settling-line {
   min-height: 47px;
   margin-top: 12px;
@@ -1310,6 +1564,11 @@ footer a:hover {
   }
 
   .network-pill {
+    padding: 8px 10px;
+    font-size: 9px;
+  }
+
+  .account-button {
     padding: 8px 10px;
     font-size: 9px;
   }
@@ -1405,6 +1664,15 @@ footer a:hover {
   }
 
   .intent-modal {
+    padding: 24px 18px;
+  }
+
+  .account-backdrop {
+    padding: 10px;
+  }
+
+  .account-modal {
+    max-height: calc(100vh - 20px);
     padding: 24px 18px;
   }
 }

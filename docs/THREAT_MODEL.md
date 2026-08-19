@@ -180,6 +180,18 @@ A public intent can expose payment hashes, amounts, timing, Ethereum addresses, 
 
 An admin that can instantly change fees, upgrade escrow, redirect a treasury, or pause exits can steal or trap value. Prefer an immutable escrow; otherwise use a multisig, timelock, public change events, hard fee caps, and a pause that blocks only new opens/reservations.
 
+### TS-M10 — SIWE replay, phishing, or session theft
+
+A generic wallet signature, reusable nonce, mismatched domain, or readable session token can let an attacker impersonate a wallet account. The current account surface cannot move funds, but notification data and any later private swap history still require protection.
+
+TreeSwap uses the EIP-4361 plaintext format with an explicit no-transaction statement. The server generates a random 128-bit nonce, binds it to the exact domain and URI, limits it to ten minutes, verifies Ethereum mainnet and message times, atomically consumes it once, and creates a random opaque session. The cookie is `HttpOnly`, `SameSite=Strict`, scoped to `/`, and secure outside localhost. State-changing account requests require the exact request origin. Contract-wallet SIWE remains disabled until EIP-1271 verification is available.
+
+### TS-M11 — Email correlation, spoofing, and unwanted delivery
+
+Attaching email creates a durable correlation between an Ethereum address and an offchain identity. Accepting an unverified address can also send unwanted messages to a third party.
+
+Email is optional, omitted from SIWE and swap intents, stored separately, and detachable. Invoice and receipt consent are independent. Every new or changed address returns to `pending`; the prototype sends nothing. Delivery must remain disabled until ownership verification, unsubscribe enforcement, rate limits, minimal retention, access logging, and deletion procedures exist.
+
 ## Contract invariants
 
 A production escrow test suite should prove at least:
@@ -215,6 +227,9 @@ A production escrow test suite should prove at least:
 - Ethereum reorg after escrow creation and after claim.
 - Bitcoin block delay, LND restart, held HTLC timeout, and force-close.
 - Replayed intent on another chain, escrow address, protocol version, and nonce.
+- Replayed or mutated SIWE domain, URI, nonce, chain, issued time, and expiry.
+- Cross-origin session mutation, expired session use, and notification access from a different wallet.
+- Unverified-email delivery, preference bypass, unsubscribe failure, and wallet/email deletion.
 - BIT pause and implementation upgrade while escrows are open.
 - Fee rounding across dust, maximum values, and thousands of small fills.
 - Solver quote spam, cancellation, capacity exhaustion, and deliberate last-look failure.
@@ -225,7 +240,7 @@ A production escrow test suite should prove at least:
 
 ### Prototype publication
 
-- Clearly marked simulation with no real wallet actions.
+- Clearly marked simulation; SIWE may sign a login message, but no approval or transaction is requested.
 - Threat model and par-value caveat public.
 - MIT license and reproducible build.
 
@@ -234,6 +249,8 @@ A production escrow test suite should prove at least:
 - Mainnet-fork escrow campaign, including BIT proxy changes and pauses.
 - Regtest hold-invoice adapter and forced-timeout tests.
 - Complementary BIT → Lightning escrow and direction-replay tests.
+- EIP-1271 SIWE support if contract wallets are accepted.
+- Verified email delivery, unsubscribe enforcement, retention limits, and abuse controls before sending mail.
 - Monitoring for BIT proxy upgrades and pauses.
 - No public LP deposits, order book, or rewards.
 

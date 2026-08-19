@@ -2,6 +2,7 @@
   "extends": "./tsconfig.json",
   "include": [
     "next-env.d.ts",
+    "worker-configuration.d.ts",
     "app/**/*.ts",
     "app/**/*.tsx",
     ".next/types/**/*.ts"

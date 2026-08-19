@@ -12,12 +12,16 @@ The prototype assumes a business par value of **1 BIT = 100 sats**. This value i
 - Directional fees, with the BIT → Lightning path priced higher
 - Hash-locked settlement walkthrough
 - Two-sided solver inventory planner for Lightning and BIT
+- EIP-4361 Sign-In with Ethereum using one-time server nonces and opaque sessions
+- Optional offchain email preferences for invoice notices and transaction receipts
 - Immutable, segregated BIT vault prototype with user-signed quotes, beneficiary binding, price and exposure caps, ordered deadlines, and Foundry invariants
 - Product and protocol specification in [`docs/PROTOCOL.md`](docs/PROTOCOL.md)
 - Liquidity operations plan in [`docs/LIQUIDITY_FUNDING.md`](docs/LIQUIDITY_FUNDING.md)
 - Adversarial design review and launch gates in [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md)
 
-The interface remains a simulation. It does not connect wallets, create payable Lightning invoices, transfer BIT, or publish quotes. The Solidity vault is local and undeployed.
+The interface remains a swap simulation. It can connect an injected Ethereum wallet and request a standard sign-in message, but it does not request token approvals, submit transactions, create payable Lightning invoices, transfer BIT, or publish quotes. The Solidity vault is local and undeployed.
+
+Email preferences are attached to the signed-in wallet account, never included in the SIWE message or an onchain intent, and can be detached at any time. Records remain pending and no email is delivered until an ownership-verification and delivery service is configured.
 
 ## Security status
 
@@ -43,7 +47,8 @@ forge test
 - Complementary user-funded BIT → Lightning escrow with direction-separated signatures
 - Lightning hold-invoice coordinator
 - Solver daemon and quote transport
-- Wallet integrations
+- Transaction-capable wallet integration with explicit approval boundaries
+- Email ownership verification, delivery provider, unsubscribe handling, and retention policy
 - Reconciliation, proxy monitoring, incident controls, and external review
 - Testnet deployment before any mainnet liquidity
 
