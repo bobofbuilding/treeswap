@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { BrowserProvider, Contract, formatUnits, getAddress } from "ethers";
 import { hasMainnetBolt11Shape, parseBolt11AmountSats, sanitizeAmount } from "@/lib/product.mjs";
+import { sanitizeDisplayText } from "@/lib/untrusted-text.mjs";
 import {
   BIT_DECIMALS,
   prepareBitSend,
@@ -60,8 +61,10 @@ function explainWalletError(cause: unknown, fallback: string) {
   if (typeof cause === "object" && cause !== null) {
     const error = cause as { code?: number; message?: string; shortMessage?: string };
     if (error.code === 4001) return "The wallet request was cancelled.";
-    if (error.shortMessage) return error.shortMessage.slice(0, 240);
-    if (error.message && !/internal json-rpc error/i.test(error.message)) return error.message.slice(0, 240);
+    if (error.shortMessage) return sanitizeDisplayText(error.shortMessage, { maxLength: 240 });
+    if (error.message && !/internal json-rpc error/i.test(error.message)) {
+      return sanitizeDisplayText(error.message, { maxLength: 240 });
+    }
   }
   return fallback;
 }

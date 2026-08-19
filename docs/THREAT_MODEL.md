@@ -224,9 +224,11 @@ Both escrows are immutable, non-upgradeable, have constructor-fixed fee collecto
 
 ### TS-M10 — SIWE replay, phishing, or session theft
 
+**Status:** Resolved for EOA account metadata; durable production storage remains a deployment gate
+
 A generic wallet signature, reusable nonce, mismatched domain, or readable session token can let an attacker impersonate a wallet account. The current account surface cannot move funds, but notification data and any later private swap history still require protection.
 
-TreeSwap uses the EIP-4361 plaintext format with an explicit no-transaction statement. The server generates a random 128-bit nonce, binds it to the exact domain and URI, limits it to ten minutes, verifies Ethereum mainnet and message times, atomically consumes it once, and creates a random opaque session. The cookie is `HttpOnly`, `SameSite=Strict`, scoped to `/`, and secure outside localhost. State-changing account requests require the exact request origin. Contract-wallet SIWE remains disabled until EIP-1271 verification is available.
+TreeSwap uses the EIP-4361 plaintext format with an exact no-transaction statement. The server generates a random 128-bit nonce, binds it to an allowlisted HTTPS origin, exact domain and URI, Ethereum mainnet, issue time, and exact ten-minute expiry, and atomically consumes it once. Optional resources and mutable scope fields fail closed. The client rechecks address and chain after signing. A random 256-bit session is stored only by hash, replaces prior wallet sessions, and expires in 24 hours. Its cookie is `HttpOnly`, `Secure`, `SameSite=Strict`, host-only via the `__Host-` prefix, and scoped to `/`; account mutations require the exact origin and all auth responses disable caching. Contract-wallet SIWE remains disabled until chain-aware EIP-1271 verification and session invalidation are available. See [Authentication boundary](./AUTHENTICATION.md).
 
 ### TS-M11 — Email correlation, spoofing, and unwanted delivery
 

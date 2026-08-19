@@ -2,9 +2,10 @@ import { and, eq, gt } from "drizzle-orm";
 import type { ReadonlyRequestCookies } from "next/dist/server/web/spec-extension/adapters/request-cookies";
 import { getDb } from "@/db";
 import { authSessions, notificationPreferences } from "@/db/schema";
+import { isAllowedTreeSwapOrigin } from "@/lib/siwe-policy.mjs";
 
-export const SESSION_COOKIE = "treeswap_session";
-export const SESSION_DURATION_SECONDS = 7 * 24 * 60 * 60;
+export const SESSION_COOKIE = "__Host-treeswap_session";
+export const SESSION_DURATION_SECONDS = 24 * 60 * 60;
 export const SIWE_MESSAGE_TTL_SECONDS = 10 * 60;
 export const REQUIRED_CHAIN_ID = 1;
 
@@ -33,8 +34,7 @@ export async function sha256Hex(value: string): Promise<string> {
 export function requestIdentity(request: Request): { domain: string; origin: string; secure: boolean } {
   const url = new URL(request.url);
   const secure = url.protocol === "https:";
-  const isLocal = url.hostname === "localhost" || url.hostname === "127.0.0.1";
-  if (!secure && !isLocal) throw new Error("SIWE requires HTTPS");
+  if (!isAllowedTreeSwapOrigin(url.origin)) throw new Error("SIWE origin is not allowed");
 
   return {
     domain: url.host,
@@ -61,6 +61,7 @@ export async function createSession(walletAddress: string, chainId: number): Pro
   const now = new Date();
   const expiresAt = new Date(now.getTime() + SESSION_DURATION_SECONDS * 1_000);
 
+  await getDb().delete(authSessions).where(eq(authSessions.walletAddress, walletAddress.toLowerCase()));
   await getDb().insert(authSessions).values({
     tokenHash,
     walletAddress: walletAddress.toLowerCase(),

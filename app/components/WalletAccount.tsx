@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from "react";
 import { buildSiweMessage } from "@/lib/account.mjs";
+import { sanitizeDisplayText } from "@/lib/untrusted-text.mjs";
 import type { EthereumProvider } from "@/types/wallets";
 
 type NotificationPreferences = {
@@ -114,6 +115,11 @@ export default function WalletAccount() {
         method: "personal_sign",
         params: [message, address],
       })) as string;
+      const [signedAccount] = (await wallet.request({ method: "eth_accounts" })) as string[];
+      const signedChainId = (await wallet.request({ method: "eth_chainId" })) as string;
+      if (signedAccount?.toLowerCase() !== address.toLowerCase() || signedChainId !== "0x1") {
+        throw new Error("The wallet account or network changed while signing. Start again.");
+      }
 
       const verifyResponse = await fetch("/api/auth/verify", {
         method: "POST",
@@ -124,7 +130,7 @@ export default function WalletAccount() {
       applySession(nextSession);
       setNotice("Wallet verified. No transaction was submitted.");
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Wallet sign-in was cancelled.");
+      setError(sanitizeDisplayText(cause instanceof Error ? cause.message : "Wallet sign-in was cancelled.", { maxLength: 240 }));
     } finally {
       setWorking(false);
       setLoadingSession(false);
@@ -146,7 +152,7 @@ export default function WalletAccount() {
       setSession((current) => (current ? { ...current, notifications } : current));
       setNotice("Email attached. Verification is required before delivery can begin.");
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Email preferences could not be saved.");
+      setError(sanitizeDisplayText(cause instanceof Error ? cause.message : "Email preferences could not be saved.", { maxLength: 240 }));
     } finally {
       setWorking(false);
     }
@@ -163,7 +169,7 @@ export default function WalletAccount() {
       setEmail("");
       setNotice("Email detached from this wallet account.");
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "The email could not be detached.");
+      setError(sanitizeDisplayText(cause instanceof Error ? cause.message : "The email could not be detached.", { maxLength: 240 }));
     } finally {
       setWorking(false);
     }
@@ -180,7 +186,7 @@ export default function WalletAccount() {
       setNotice("");
       setOpen(false);
     } catch (cause) {
-      setError(cause instanceof Error ? cause.message : "Sign-out could not be completed.");
+      setError(sanitizeDisplayText(cause instanceof Error ? cause.message : "Sign-out could not be completed.", { maxLength: 240 }));
     } finally {
       setWorking(false);
     }
@@ -219,7 +225,7 @@ export default function WalletAccount() {
                 <div className="signin-assurances">
                   <span><i>✓</i> Ethereum mainnet</span>
                   <span><i>✓</i> One-time nonce</span>
-                  <span><i>✓</i> Seven-day session</span>
+                  <span><i>✓</i> 24-hour session</span>
                 </div>
                 <button type="button" className="primary-action" onClick={signIn} disabled={working}>
                   {working ? "Waiting for wallet…" : "Sign in with Ethereum"} <span>→</span>

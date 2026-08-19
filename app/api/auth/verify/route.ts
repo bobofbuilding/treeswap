@@ -3,6 +3,7 @@ import { cookies } from "next/headers";
 import { SiweMessage } from "siwe";
 import { getDb } from "@/db";
 import { siweNonces } from "@/db/schema";
+import { validateSiweMessageFields } from "@/lib/siwe-policy.mjs";
 import {
   createSession,
   noStoreJson,
@@ -47,18 +48,8 @@ export async function POST(request: Request) {
       .limit(1);
 
     if (!nonceRecord) return noStoreJson({ error: "This sign-in request expired or was already used." }, { status: 401 });
-    if (
-      message.domain !== nonceRecord.domain ||
-      message.domain !== identity.domain ||
-      message.uri !== nonceRecord.uri ||
-      message.uri !== identity.origin ||
-      message.chainId !== REQUIRED_CHAIN_ID ||
-      message.version !== "1" ||
-      !message.issuedAt ||
-      !message.expirationTime ||
-      new Date(message.expirationTime) > new Date(nonceRecord.expiresAt) ||
-      new Date(message.issuedAt) < new Date(nonceRecord.createdAt)
-    ) {
+    const fieldPolicy = validateSiweMessageFields({ message, nonceRecord, identity, now: now.toISOString() });
+    if (!fieldPolicy.valid || message.chainId !== REQUIRED_CHAIN_ID) {
       return noStoreJson({ error: "The SIWE message does not match this sign-in request." }, { status: 401 });
     }
 
@@ -81,7 +72,7 @@ export async function POST(request: Request) {
     const cookieStore = await cookies();
     cookieStore.set(SESSION_COOKIE, token, {
       httpOnly: true,
-      secure: identity.secure,
+      secure: true,
       sameSite: "strict",
       path: "/",
       maxAge: SESSION_DURATION_SECONDS,
