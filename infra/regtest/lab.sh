@@ -487,6 +487,21 @@ wait_for_adapter_healthy() {
   return 1
 }
 
+wait_for_disposable_adapter() {
+  local container=$1
+  for _ in $(seq 1 60); do
+    if docker exec "$container" node -e \
+      'fetch("http://127.0.0.1:3000/healthz").then(r=>{if(!r.ok)process.exit(1)}).catch(()=>process.exit(1))' \
+      >/dev/null 2>&1; then
+      return 0
+    fi
+    sleep 1
+  done
+  docker logs "$container" >&2 2>/dev/null || true
+  echo "disposable adapter did not become ready" >&2
+  return 1
+}
+
 start_lab() {
   ensure_runtime_env
   compose up -d bitcoind alice bob
@@ -1274,6 +1289,156 @@ smoke_directional_capacity() {
   echo "Directional-capacity smoke passed: outbound and inbound exposure failed closed at exhaustion, then both recovered after rebalancing."
 }
 
+smoke_daily_cap() {
+  ensure_runtime_env
+  start_lab >/dev/null
+  local cap_sats=10000
+  local suffix payer_container invoice_container payer_journal invoice_journal
+  local payer_invoice payer_request payer_hash payer_digest payer_intent payer_id payer_operation payer_result
+  local rejected_invoice rejected_request rejected_hash rejected_digest rejected_intent rejected_id rejected_operation rejected_result
+  local restore_invoice restore_request="" payer_paid=false
+  local hold_preimage hold_hash hold_intent hold_id hold_operation hold_result hold_digest hold_created=false
+  local rejected_preimage rejected_hold_hash rejected_hold_intent rejected_hold_id rejected_hold_operation rejected_hold_result
+  local cancel_id cancel_result zero_hash
+
+  suffix=$(openssl rand -hex 8)
+  payer_container="treeswap-regtest-daily-payer-$suffix"
+  invoice_container="treeswap-regtest-daily-invoice-$suffix"
+  payer_journal="/data/daily-cap-$suffix.jsonl"
+  invoice_journal="/data/daily-cap-$suffix.jsonl"
+  trap '[[ "${hold_created:-false}" != true || -z "${hold_hash:-}" ]] || \
+      compose exec -T bob lncli --network=regtest cancelinvoice "${hold_hash#0x}" >/dev/null 2>&1 || true; \
+    [[ "${payer_paid:-false}" != true || -z "${restore_request:-}" ]] || \
+      compose exec -T bob lncli --network=regtest --macaroonpath=/root/.lnd/treeswap/payer.macaroon \
+        payinvoice --force --fee_limit=10 --timeout=30s "$restore_request" >/dev/null 2>&1 || true; \
+    docker exec "${payer_container:-missing}" rm -f "${payer_journal:-/invalid}" >/dev/null 2>&1 || true; \
+    docker exec "${invoice_container:-missing}" rm -f "${invoice_journal:-/invalid}" >/dev/null 2>&1 || true; \
+    docker rm -f "${payer_container:-missing}" "${invoice_container:-missing}" >/dev/null 2>&1 || true' EXIT
+
+  docker rm -f "$payer_container" "$invoice_container" >/dev/null 2>&1 || true
+  compose --profile adapter run --rm -d --name "$payer_container" \
+    -e MAX_DAILY_VALUE_SATS="$cap_sats" \
+    -e ADAPTER_JOURNAL_PATH="$payer_journal" \
+    payer-adapter >/dev/null
+  wait_for_disposable_adapter "$payer_container"
+
+  restore_invoice=$(compose exec -T alice lncli --network=regtest addinvoice \
+    --amt="$cap_sats" --memo=treeswap-daily-cap-restore --expiry=600 --private)
+  restore_request=$(jq -er '.payment_request' <<<"$restore_invoice")
+  payer_invoice=$(compose exec -T bob lncli --network=regtest addinvoice \
+    --amt="$cap_sats" --memo=treeswap-daily-cap-fill --expiry=600 --private)
+  payer_request=$(jq -er '.payment_request' <<<"$payer_invoice")
+  payer_hash=$(compose exec -T alice lncli --network=regtest \
+    --macaroonpath=/root/.lnd/treeswap/payer.macaroon decodepayreq "$payer_request" |
+    jq -er '.payment_hash | ascii_downcase | "0x" + .')
+  payer_digest="0x$(printf '%s' "$payer_request" | openssl dgst -sha256 -binary | xxd -p -c 256)"
+  payer_intent="0x$(openssl rand -hex 32)"
+  payer_id="0x$(openssl rand -hex 32)"
+  payer_operation=$(jq -cn --arg paymentRequest "$payer_request" \
+    '{paymentRequest:$paymentRequest,timeoutSeconds:30,feeLimitSats:"10"}')
+  payer_result=$(sign_adapter_authorization /routerrpc.Router/SendPaymentV2 \
+    "$payer_id" "$payer_intent" "$payer_hash" "$payer_digest" "$cap_sats" "$payer_operation" |
+    docker exec -i "$payer_container" node /app/infra/lightning-adapter/client.mjs)
+  jq -e --arg paymentHash "$payer_hash" --arg amount "$cap_sats" \
+    '.result.status == "SUCCEEDED" and .result.paymentHash == $paymentHash and .result.amountSats == $amount' \
+    <<<"$payer_result" >/dev/null
+  payer_paid=true
+
+  docker rm -f "$payer_container" >/dev/null
+  compose --profile adapter run --rm -d --name "$payer_container" \
+    -e MAX_DAILY_VALUE_SATS="$cap_sats" \
+    -e ADAPTER_JOURNAL_PATH="$payer_journal" \
+    payer-adapter >/dev/null
+  wait_for_disposable_adapter "$payer_container"
+
+  rejected_invoice=$(compose exec -T bob lncli --network=regtest addinvoice \
+    --amt=1 --memo=treeswap-daily-cap-reject --expiry=600 --private)
+  rejected_request=$(jq -er '.payment_request' <<<"$rejected_invoice")
+  rejected_hash=$(compose exec -T alice lncli --network=regtest \
+    --macaroonpath=/root/.lnd/treeswap/payer.macaroon decodepayreq "$rejected_request" |
+    jq -er '.payment_hash | ascii_downcase | "0x" + .')
+  rejected_digest="0x$(printf '%s' "$rejected_request" | openssl dgst -sha256 -binary | xxd -p -c 256)"
+  rejected_intent="0x$(openssl rand -hex 32)"
+  rejected_id="0x$(openssl rand -hex 32)"
+  rejected_operation=$(jq -cn --arg paymentRequest "$rejected_request" \
+    '{paymentRequest:$paymentRequest,timeoutSeconds:30,feeLimitSats:"10"}')
+  if rejected_result=$(sign_adapter_authorization /routerrpc.Router/SendPaymentV2 \
+    "$rejected_id" "$rejected_intent" "$rejected_hash" "$rejected_digest" 1 "$rejected_operation" |
+    docker exec -i "$payer_container" node /app/infra/lightning-adapter/client.mjs); then
+    echo "restarted payer adapter exceeded its daily cap" >&2
+    return 1
+  fi
+  jq -e '.ambiguous == false and (.error | test("daily Lightning cap exceeded"))' \
+    <<<"$rejected_result" >/dev/null
+  assert_adapter_payment_not_found "$rejected_intent" "$rejected_hash" "$rejected_digest" 1
+  compose exec -T bob lncli --network=regtest cancelinvoice "${rejected_hash#0x}" >/dev/null
+
+  compose exec -T bob lncli --network=regtest \
+    --macaroonpath=/root/.lnd/treeswap/payer.macaroon payinvoice \
+    --force --fee_limit=10 --timeout=30s "$restore_request" >/dev/null
+  payer_paid=false
+  restore_request=""
+  echo "Daily-cap stage passed: payer saturation survived adapter restart and the next payment was not dispatched."
+
+  compose --profile adapter run --rm -d --name "$invoice_container" \
+    -e MAX_DAILY_VALUE_SATS="$cap_sats" \
+    -e ADAPTER_JOURNAL_PATH="$invoice_journal" \
+    invoice-adapter >/dev/null
+  wait_for_disposable_adapter "$invoice_container"
+  zero_hash="0x$(printf '00%.0s' {1..32})"
+  hold_preimage="0x$(openssl rand -hex 32)"
+  hold_hash="0x$(printf '%s' "${hold_preimage#0x}" | xxd -r -p |
+    openssl dgst -sha256 -binary | xxd -p -c 256)"
+  hold_intent="0x$(openssl rand -hex 32)"
+  hold_id="0x$(openssl rand -hex 32)"
+  hold_operation=$(jq -cn '{memo:"treeswap-daily-cap-hold",expirySeconds:600,cltvExpiry:80,isPrivate:true}')
+  hold_result=$(sign_adapter_authorization /invoicesrpc.Invoices/AddHoldInvoice \
+    "$hold_id" "$hold_intent" "$hold_hash" "$zero_hash" "$cap_sats" "$hold_operation" |
+    docker exec -i "$invoice_container" node /app/infra/lightning-adapter/client.mjs)
+  hold_digest=$(jq -er '.result.invoiceDigest' <<<"$hold_result")
+  hold_created=true
+
+  docker rm -f "$invoice_container" >/dev/null
+  compose --profile adapter run --rm -d --name "$invoice_container" \
+    -e MAX_DAILY_VALUE_SATS="$cap_sats" \
+    -e ADAPTER_JOURNAL_PATH="$invoice_journal" \
+    invoice-adapter >/dev/null
+  wait_for_disposable_adapter "$invoice_container"
+
+  rejected_preimage="0x$(openssl rand -hex 32)"
+  rejected_hold_hash="0x$(printf '%s' "${rejected_preimage#0x}" | xxd -r -p |
+    openssl dgst -sha256 -binary | xxd -p -c 256)"
+  rejected_hold_intent="0x$(openssl rand -hex 32)"
+  rejected_hold_id="0x$(openssl rand -hex 32)"
+  rejected_hold_operation=$(jq -cn '{memo:"treeswap-daily-cap-hold-reject",expirySeconds:600,cltvExpiry:80,isPrivate:true}')
+  if rejected_hold_result=$(sign_adapter_authorization /invoicesrpc.Invoices/AddHoldInvoice \
+    "$rejected_hold_id" "$rejected_hold_intent" "$rejected_hold_hash" "$zero_hash" 1 "$rejected_hold_operation" |
+    docker exec -i "$invoice_container" node /app/infra/lightning-adapter/client.mjs); then
+    echo "restarted invoice adapter exceeded its daily cap" >&2
+    return 1
+  fi
+  jq -e '.ambiguous == false and (.error | test("daily Lightning cap exceeded"))' \
+    <<<"$rejected_hold_result" >/dev/null
+  if compose exec -T bob lncli --network=regtest lookupinvoice "${rejected_hold_hash#0x}" >/dev/null 2>&1; then
+    echo "daily-cap rejection still created a hold invoice" >&2
+    return 1
+  fi
+
+  cancel_id="0x$(openssl rand -hex 32)"
+  cancel_result=$(call_adapter invoice-adapter /invoicesrpc.Invoices/CancelInvoice \
+    "$cancel_id" "$hold_intent" "$hold_hash" "$hold_digest" "$cap_sats" '{}')
+  jq -e '.result.state == "CANCELED"' <<<"$cancel_result" >/dev/null
+  hold_created=false
+  hold_hash=""
+  unset payer_request rejected_request hold_preimage rejected_preimage
+  docker exec "$payer_container" rm -f "$payer_journal" >/dev/null
+  docker exec "$invoice_container" rm -f "$invoice_journal" >/dev/null
+  docker rm -f "$payer_container" "$invoice_container" >/dev/null
+  trap - EXIT
+
+  echo "Daily-cap smoke passed: payer and invoice caps survived restart, rejected before dispatch, and exact UTC rollover remains deterministic in the journal tests."
+}
+
 smoke_stale_chain_header() {
   ensure_runtime_env
   start_lab >/dev/null
@@ -1930,6 +2095,7 @@ case "${1:-}" in
   invoice-fault-smoke) smoke_invoice_faults ;;
   policy-fault-smoke) smoke_policy_faults ;;
   directional-capacity-smoke) smoke_directional_capacity ;;
+  daily-cap-smoke) smoke_daily_cap ;;
   stale-chain-smoke) smoke_stale_chain_header ;;
   unsynced-chain-smoke) smoke_unsynced_chain_catchup ;;
   force-close-smoke) smoke_force_close_recovery ;;
@@ -1941,7 +2107,7 @@ case "${1:-}" in
   down) stop_lab ;;
   destroy) destroy_lab ;;
   *)
-    echo "Usage: $0 {up|smoke|adapter-smoke|credential-smoke|invoice-fault-smoke|policy-fault-smoke|directional-capacity-smoke|stale-chain-smoke|unsynced-chain-smoke|force-close-smoke|route-fault-smoke|htlc-cutoff-smoke|coordinator-smoke|coordinator-invoice-smoke|status|down|destroy}" >&2
+    echo "Usage: $0 {up|smoke|adapter-smoke|credential-smoke|invoice-fault-smoke|policy-fault-smoke|directional-capacity-smoke|daily-cap-smoke|stale-chain-smoke|unsynced-chain-smoke|force-close-smoke|route-fault-smoke|htlc-cutoff-smoke|coordinator-smoke|coordinator-invoice-smoke|status|down|destroy}" >&2
     exit 2
     ;;
 esac

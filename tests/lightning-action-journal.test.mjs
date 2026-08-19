@@ -59,3 +59,33 @@ test("serializes concurrent duplicate reservations", async () => {
   const results = await Promise.allSettled([journal.reserve(reservation()), journal.reserve(reservation())]);
   assert.deepEqual(results.map(({ status }) => status).sort(), ["fulfilled", "rejected"]);
 });
+
+test("rolls value usage at the exact UTC boundary without rolling replay protection", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "treeswap-journal-"));
+  const path = join(directory, "actions.jsonl");
+  const dayStart = Math.floor(NOW / 86_400) * 86_400;
+  const lastSecond = dayStart + 86_399;
+  const first = reservation(id("last-second-exposure").toLowerCase());
+  const journal = await LightningActionJournal.open(path);
+  await journal.reserve({ ...first, recordedAt: lastSecond });
+  await journal.complete(first.requestId, "unknown", lastSecond, "transport-ambiguous");
+  assert.equal(journal.usageForUtcDay(lastSecond).dailyValueSats, 10_000n);
+
+  const reopened = await LightningActionJournal.open(path);
+  assert.equal(reopened.usageForUtcDay(lastSecond + 1).dailyValueSats, 0n);
+  assert.equal(reopened.has(first.requestId), true);
+  assert.equal(reopened.hasExposurePaymentHash(first.paymentHash), true);
+
+  const second = {
+    ...reservation(id("first-second-exposure").toLowerCase()),
+    paymentHash: id("first-second-payment").toLowerCase(),
+    recordedAt: lastSecond + 1,
+  };
+  await reopened.reserve(second);
+  await reopened.complete(second.requestId, "succeeded", lastSecond + 2, "payment-succeeded");
+  assert.equal(reopened.usageForUtcDay(lastSecond + 1).dailyValueSats, 10_000n);
+
+  const restartedAgain = await LightningActionJournal.open(path);
+  assert.equal(restartedAgain.usageForUtcDay(lastSecond + 1).dailyValueSats, 10_000n);
+  await assert.rejects(() => restartedAgain.reserve(first), /already used/);
+});

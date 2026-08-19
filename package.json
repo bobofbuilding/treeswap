@@ -26,6 +26,7 @@
     "regtest:invoice-fault-smoke": "bash infra/regtest/lab.sh invoice-fault-smoke",
     "regtest:policy-fault-smoke": "bash infra/regtest/lab.sh policy-fault-smoke",
     "regtest:directional-capacity-smoke": "bash infra/regtest/lab.sh directional-capacity-smoke",
+    "regtest:daily-cap-smoke": "bash infra/regtest/lab.sh daily-cap-smoke",
     "regtest:stale-chain-smoke": "bash infra/regtest/lab.sh stale-chain-smoke",
     "regtest:unsynced-chain-smoke": "bash infra/regtest/lab.sh unsynced-chain-smoke",
     "regtest:force-close-smoke": "bash infra/regtest/lab.sh force-close-smoke",
