@@ -33,11 +33,15 @@ test("server-renders the TreeSwap prototype", async () => {
   const html = await response.text();
   assert.match(html, /<title>TreeSwap \| Pay Lightning Invoices with BIT<\/title>/i);
   assert.match(html, /Swap through an invoice/);
+  assert.match(html, />Swap</);
+  assert.match(html, />Pay</);
+  assert.match(html, />Earn</);
+  assert.match(html, /Receive BIT/);
   assert.match(html, /Review invoice payment/);
   assert.match(html, /Best received of .*signed quotes/);
   assert.match(html, /1 BIT = 100 sats/);
   assert.match(html, /Swap prototype · Sends use your wallet/);
-  assert.match(html, />Send</);
+  assert.match(html, /Sends use your wallet/);
   assert.match(html, /Invoice in\. Quote out/i);
   assert.match(html, /There is no shared public liquidity pool/i);
   assert.match(html, /Reverse escrow pending/i);
@@ -74,6 +78,8 @@ test("keeps swaps non-production and direct sends explicitly wallet-authorized",
   assert.match(page, /checksum, signature, expiry/);
   assert.match(page, /short-lived, all-in prices/i);
   assert.match(page, /No shared LP pool/i);
+  assert.match(page, /aria-label="TreeSwap tools"[\s\S]*?>\s*Swap\s*<\/button>[\s\S]*?>\s*Pay\s*<\/button>[\s\S]*?>\s*Earn\s*<\/button>/);
+  assert.match(page, /aria-label="Swap direction"/);
   assert.match(page, /<InvoiceQr/);
   assert.match(invoiceQr, /QRCode\.toCanvas/);
   assert.match(invoiceQr, /`lightning:\$\{invoice\}`/);

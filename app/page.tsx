@@ -76,6 +76,7 @@ export default function Home() {
 
   const direction: Direction = view === "get-bit" ? "lightning-to-bit" : "bit-to-lightning";
   const isPayInvoice = view === "pay-invoice";
+  const isSwapView = view === "pay-invoice" || view === "get-bit";
   const offers = offerBook[direction];
   const activeOffer = offers[selectedOffer] ?? offers[0];
   const decodedInvoiceAmount = parseBolt11AmountSats(invoice);
@@ -157,8 +158,8 @@ export default function Home() {
       <section className="trade-stage" id="trade">
         <header className="trade-intro">
           <p className="eyebrow">BITCOIN LIGHTNING ↔ BIT</p>
-          <h1>{view === "send" ? "Send from your wallet." : "Swap through an invoice."}</h1>
-          <p>{view === "send" ? "Send BIT to an Ethereum address or pay a Lightning invoice." : "Paste an invoice to pay with BIT, or create one to receive BIT."}</p>
+          <h1>{view === "send" ? "Pay from your wallet." : view === "pool" ? "Earn by solving swaps." : "Swap through an invoice."}</h1>
+          <p>{view === "send" ? "Pay a Lightning invoice or send BIT directly." : view === "pool" ? "Prepare Lightning and BIT inventory for competitive quotes." : "Paste an invoice to pay with BIT, or create one to receive BIT."}</p>
         </header>
 
         <section
@@ -176,19 +177,11 @@ export default function Home() {
           <div className="card-tabs" role="group" aria-label="TreeSwap tools">
             <button
               type="button"
-              aria-pressed={view === "pay-invoice"}
-              className={view === "pay-invoice" ? "active" : ""}
+              aria-pressed={isSwapView}
+              className={isSwapView ? "active" : ""}
               onClick={() => selectView("pay-invoice")}
             >
-              Pay invoice
-            </button>
-            <button
-              type="button"
-              aria-pressed={view === "get-bit"}
-              className={view === "get-bit" ? "active" : ""}
-              onClick={() => selectView("get-bit")}
-            >
-              Get BIT
+              Swap
             </button>
             <button
               type="button"
@@ -196,7 +189,7 @@ export default function Home() {
               className={view === "send" ? "active" : ""}
               onClick={() => selectView("send")}
             >
-              Send
+              Pay
             </button>
             <button
               type="button"
@@ -204,7 +197,7 @@ export default function Home() {
               className={view === "pool" ? "active" : ""}
               onClick={() => selectView("pool")}
             >
-              Liquidity
+              Earn
             </button>
           </div>
 
@@ -212,6 +205,24 @@ export default function Home() {
             <SendPanel />
           ) : view !== "pool" ? (
             <div className="swap-view">
+              <div className="swap-direction-tabs" role="group" aria-label="Swap direction">
+                <button
+                  type="button"
+                  aria-pressed={view === "pay-invoice"}
+                  className={view === "pay-invoice" ? "active" : ""}
+                  onClick={() => selectView("pay-invoice")}
+                >
+                  Pay invoice
+                </button>
+                <button
+                  type="button"
+                  aria-pressed={view === "get-bit"}
+                  className={view === "get-bit" ? "active" : ""}
+                  onClick={() => selectView("get-bit")}
+                >
+                  Receive BIT
+                </button>
+              </div>
               {isPayInvoice ? (
                 <>
                   <div className="invoice-panel">

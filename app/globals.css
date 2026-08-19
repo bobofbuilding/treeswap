@@ -312,6 +312,34 @@ summary::-webkit-details-marker {
   padding: 0 2px 3px;
 }
 
+.swap-direction-tabs {
+  margin: 0 4px 10px;
+  border-radius: 12px;
+  padding: 3px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 3px;
+  background: #eef1eb;
+}
+
+.swap-direction-tabs button {
+  min-height: 34px;
+  border: 0;
+  border-radius: 9px;
+  color: #778179;
+  background: transparent;
+  font-size: 9px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.swap-direction-tabs button:hover,
+.swap-direction-tabs button.active {
+  color: var(--ink);
+  background: white;
+  box-shadow: 0 1px 4px rgba(18, 55, 36, 0.08);
+}
+
 .amount-panel {
   border: 1px solid transparent;
   border-radius: 18px;
