@@ -57,6 +57,8 @@ For all six node/role pairs, the bootstrap reads the baked macaroon back, requir
 
 On success it writes one new mode-`0600` JSON record under ignored `outputs/`. The record contains only the published commit, UTC start/finish times, runtime versions, immutable external image identifiers, SHA-256 configuration hashes, campaign names/pass states, explicit limitations, and its own deterministic digest. It contains no command output, environment value, path, invoice, payment hash, preimage, macaroon, RPC URL, private key, wallet seed, or email. The command refuses a dirty/unpublished tree, mutable external image, failed campaign, unsafe filename, symlinked output directory, or overwrite. This local record is evidence—not funding authorization, independent review, public-testnet evidence, or a deployment manifest.
 
+Published checkpoint `a3aad9f0fd11b6e5fc6524e7fdf091c36ddf4412` completed all 13 local campaigns from `2026-08-19T16:55:41.519Z` through `2026-08-19T16:58:05.650Z`. Its validated evidence digest is `sha256:91289a6613e6d23aa0945852d3cbbdf51396ab5921e22bb74b1334db4d4906d3`; the matching [hosted security-and-build run](https://github.com/bobofbuilding/treeswap/actions/runs/32278699370) also passed. This is a reproducible checkpoint, not the final release artifact.
+
 ## Remaining campaigns
 
 - Standard-invoice route failure and explicit duplicate request. Success, excessive-fee and amount rejection, no-dispatch tracking, and lost-response reconciliation now pass; invoice-settlement lost-response recovery also passes.

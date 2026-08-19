@@ -68,6 +68,7 @@ The command refuses to overwrite an existing file and never records the RPC URL.
 - [ ] Prove that the computed Lightning cutoff always precedes the EVM refund boundary by the published margin. Pure ordering and the live Lightning-height boundary pass; combined EVM/Lightning fork or testnet evidence remains.
 - [ ] Produce a secret-free evidence bundle from the final published release commit containing versions, configuration hashes, test results, and timestamps—never macaroons, invoices, or preimages.
   - [x] A fail-closed generator requires clean published `main`, reruns every local qualification campaign, records no command output or environment data, rejects secret-bearing fields, and writes a non-overwriting mode-`0600` artifact under ignored `outputs/`.
+  - [x] Published checkpoint `a3aad9f0fd11b6e5fc6524e7fdf091c36ddf4412` passed all 13 local campaigns and hosted CI; its validated local-only digest is `sha256:91289a6613e6d23aa0945852d3cbbdf51396ab5921e22bb74b1334db4d4906d3`.
   - [ ] Attach the final release artifact digest, reviewer, and date to the signed deployment manifest.
 
 The current adapter boundary, live lab, and remaining fault matrix are documented in [Lightning adapter](./LIGHTNING_ADAPTER.md) and [Lightning regtest lab](./LIGHTNING_REGTEST.md).
