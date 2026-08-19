@@ -40,6 +40,8 @@ The audit record contains hashes, integer amount, method, decision, and reason c
 
 `npm run regtest:credential-smoke` proves each node/role credential has exactly its declared root-key ID, URI set, and one expiry caveat; every granted URI exists in the pinned LND registry; representative forbidden capability categories fail specifically for authorization; a two-second credential expires; and deleting a disposable credential's root-key ID revokes it without taking down the node.
 
+`npm run regtest:invoice-fault-smoke` proves hold-invoice expiry and late-settle rejection, wrong-preimage rejection without state mutation, explicit cancellation, cancellation replay rejection, and accepted-invoice persistence across an LND restart. The original in-flight payer request completes only after the recovered invoice is settled; the campaign never issues a replacement payment.
+
 `npm run regtest:coordinator-smoke` pays a real 10,000-sat standard invoice, deliberately loses the successful response, reopens the coordinator database in `UNKNOWN`, and recovers success through read-only tracking without a second dispatch. See [Durable coordinator boundary](./COORDINATOR.md).
 
 ## Rotation and incident response
@@ -48,4 +50,4 @@ Bake each role from a dedicated root key, record issuance and expiry, rotate bef
 
 ## Deployment gate
 
-Before testnet funding, add cancel, invoice expiry, late-settle, fee-limit, amount-limit, exhausted-liquidity, delayed/fast-block, force-close, TLS-pin, overlap-rotation, and invoice-side ambiguous-response campaigns; export a secret-free evidence bundle; and independently review the implementation and evidence. Exact grant manifests, credential timeout, and root-key revocation now pass locally.
+Before testnet funding, add live fee-limit, amount-limit, exhausted-liquidity, HTLC-cutoff, delayed/fast-block, force-close, TLS-pin, overlap-rotation, and invoice-side ambiguous-response campaigns; export a secret-free evidence bundle; and independently review the implementation and evidence. Exact grant manifests, credential timeout, root-key revocation, hold-invoice terminal faults, and accepted-state LND restart now pass locally.

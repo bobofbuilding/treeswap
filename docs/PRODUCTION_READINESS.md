@@ -59,8 +59,10 @@ The command refuses to overwrite an existing file and never records the RPC URL.
 - [x] Persist request IDs before dispatch and prove a completed payment remains replay-blocked after the payer process restarts.
 - [x] Prove a payer authorization is rejected by the invoice process and representative forbidden macaroon RPCs fail.
 - [x] Prove each credential's exact grant manifest against the pinned LND permission registry, require representative forbidden capability categories to fail specifically for authorization, and demonstrate live timeout enforcement.
-- [ ] Test standard invoices and hold invoices through create, accept, settle, cancel, expire, late-settle, and replay paths. Create/accept/settle and restart-safe replay now pass.
-- [ ] Inject delayed and fast Bitcoin blocks, LND restart, lost responses, idempotent retry, force close, unsynced state, TLS pin change, credential rotation, and credential revocation. A real lost-success-response payment recovers through read-only tracking with dispatch count one, and disposable root-key revocation now fails closed without affecting the node.
+- [ ] Test standard invoices and hold invoices through create, accept, settle, cancel, expire, late-settle, and replay paths.
+  - [x] Hold create/accept/settle, cancel, expiry, wrong and late preimage, exact signed-action replay, and restart while accepted pass through the isolated adapters.
+  - [ ] Standard-invoice route failure, fee cap, exhausted capacity, and duplicate/ambiguous outcomes remain; standard success plus lost-response recovery pass.
+- [ ] Inject delayed and fast Bitcoin blocks, LND restart, lost responses, idempotent retry, force close, unsynced state, TLS pin change, credential rotation, and credential revocation. Accepted-state LND restart, one-dispatch lost-response recovery, and disposable root-key revocation now pass.
 - [ ] Prove that the computed Lightning cutoff always precedes the EVM refund boundary by the published margin.
 - [ ] Produce a secret-free evidence bundle containing versions, configuration hashes, test results, and timestamps—never macaroons, invoices, or preimages.
 

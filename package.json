@@ -22,6 +22,7 @@
     "regtest:smoke": "bash infra/regtest/lab.sh smoke",
     "regtest:adapter-smoke": "bash infra/regtest/lab.sh adapter-smoke",
     "regtest:credential-smoke": "bash infra/regtest/lab.sh credential-smoke",
+    "regtest:invoice-fault-smoke": "bash infra/regtest/lab.sh invoice-fault-smoke",
     "regtest:coordinator-smoke": "bash infra/regtest/lab.sh coordinator-smoke",
     "regtest:status": "bash infra/regtest/lab.sh status",
     "regtest:down": "bash infra/regtest/lab.sh down"

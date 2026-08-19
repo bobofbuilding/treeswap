@@ -112,6 +112,21 @@ wait_for_chain_sync() {
   return 1
 }
 
+wait_for_active_channel() {
+  local node=$1
+  local active_channels=0
+  for _ in $(seq 1 60); do
+    active_channels=$(compose exec -T "$node" lncli --network=regtest listchannels 2>/dev/null |
+      jq '[.channels[] | select(.active == true)] | length' || true)
+    if (( active_channels > 0 )); then
+      return 0
+    fi
+    sleep 1
+  done
+  echo "$node did not regain an active regtest channel" >&2
+  return 1
+}
+
 fund_private_channel() {
   local active_channels existing_channels confirmed_balance alice_address mine_address bob_pubkey
   active_channels=$(compose exec -T alice lncli --network=regtest listchannels | jq '[.channels[] | select(.active == true)] | length')
@@ -479,8 +494,7 @@ smoke_hold_invoice() {
   payment_pid=$!
 
   for _ in $(seq 1 30); do
-    state=$(compose exec -T bob lncli --network=regtest \
-      --macaroonpath=/root/.lnd/treeswap/invoice.macaroon lookupinvoice "$payment_hash" |
+    state=$(compose exec -T bob lncli --network=regtest lookupinvoice "$payment_hash" |
       jq -r .state)
     if [[ "$state" == "ACCEPTED" ]]; then
       accepted=true
@@ -636,6 +650,201 @@ smoke_adapter_hold_invoice() {
   echo "Adapter smoke passed: signed intent, pinned TLS, role isolation, accepted hold, settle, 10000-sat payment, and restart-safe replay rejection."
 }
 
+smoke_invoice_faults() {
+  ensure_runtime_env
+  start_lab >/dev/null
+  local amount_sats=10000
+  local zero_hash="0x$(printf '00%.0s' {1..32})"
+  local expiry_preimage expiry_payment_hash expiry_state late_output
+  local preimage payment_hash intent_digest create_id create_operation create_result
+  local pay_req invoice_digest payment_id pay_operation payment_envelope
+  local payment_result="" payment_pid="" lookup_id lookup_result state accepted
+  local wrong_preimage wrong_id wrong_operation wrong_result cancel_id cancel_envelope cancel_result
+  local settle_id settle_operation settle_result replay_result
+  local restart_preimage restart_hash restart_intent restart_create_id restart_create_result
+  local restart_pay_req restart_invoice_digest restart_payment_id restart_payment_envelope
+  local restart_result="" restart_pid="" restart_lookup_id restart_lookup_result
+  local restart_settle_id restart_settle_operation restart_settle_result
+
+  trap '[[ -z "${payment_pid:-}" ]] || kill "$payment_pid" 2>/dev/null || true; \
+    [[ -z "${restart_pid:-}" ]] || kill "$restart_pid" 2>/dev/null || true; \
+    [[ -z "${payment_result:-}" ]] || rm -f "$payment_result"; \
+    [[ -z "${restart_result:-}" ]] || rm -f "$restart_result"' EXIT
+
+  expiry_preimage=$(openssl rand -hex 32)
+  expiry_payment_hash=$(printf '%s' "$expiry_preimage" | xxd -r -p |
+    openssl dgst -sha256 -binary | xxd -p -c 256)
+  compose exec -T bob lncli --network=regtest \
+    --macaroonpath=/root/.lnd/treeswap/invoice.macaroon addholdinvoice \
+    --memo=treeswap-expiry-regtest --expiry=2 --cltv_expiry_delta=48 --private \
+    "$expiry_payment_hash" "$amount_sats" >/dev/null
+  sleep 3
+  expiry_state=$(compose exec -T bob lncli --network=regtest lookupinvoice "$expiry_payment_hash" |
+    jq -er '.state')
+  if [[ "$expiry_state" != "CANCELED" ]]; then
+    echo "expired hold invoice did not become CANCELED" >&2
+    return 1
+  fi
+  if late_output=$(compose exec -T bob lncli --network=regtest \
+    --macaroonpath=/root/.lnd/treeswap/invoice.macaroon settleinvoice "$expiry_preimage" 2>&1); then
+    echo "expired hold invoice accepted a late settlement" >&2
+    return 1
+  fi
+  if [[ "$late_output" != *"invoice already canceled"* ]]; then
+    echo "late settlement failed for a reason other than invoice expiry" >&2
+    return 1
+  fi
+  unset expiry_preimage
+
+  preimage="0x$(openssl rand -hex 32)"
+  payment_hash="0x$(printf '%s' "${preimage#0x}" | xxd -r -p |
+    openssl dgst -sha256 -binary | xxd -p -c 256)"
+  intent_digest="0x$(openssl rand -hex 32)"
+  create_id="0x$(openssl rand -hex 32)"
+  create_operation=$(jq -cn '{memo:"treeswap-cancel-regtest",expirySeconds:600,cltvExpiry:80,isPrivate:true}')
+  create_result=$(call_adapter invoice-adapter /invoicesrpc.Invoices/AddHoldInvoice \
+    "$create_id" "$intent_digest" "$payment_hash" "$zero_hash" "$amount_sats" "$create_operation")
+  pay_req=$(jq -er '.result.paymentRequest' <<<"$create_result")
+  invoice_digest=$(jq -er '.result.invoiceDigest' <<<"$create_result")
+  payment_id="0x$(openssl rand -hex 32)"
+  pay_operation=$(jq -cn --arg paymentRequest "$pay_req" \
+    '{paymentRequest:$paymentRequest,timeoutSeconds:30,feeLimitSats:"10"}')
+  payment_envelope=$(sign_adapter_authorization /routerrpc.Router/SendPaymentV2 \
+    "$payment_id" "$intent_digest" "$payment_hash" "$invoice_digest" "$amount_sats" "$pay_operation")
+  umask 077
+  payment_result=$(mktemp "$STATE_DIR/invoice-fault-payment.XXXXXX")
+  printf '%s\n' "$payment_envelope" | call_signed_adapter payer-adapter >"$payment_result" &
+  payment_pid=$!
+
+  accepted=false
+  for _ in $(seq 1 30); do
+    lookup_id="0x$(openssl rand -hex 32)"
+    lookup_result=$(call_adapter invoice-adapter /invoicesrpc.Invoices/LookupInvoiceV2 \
+      "$lookup_id" "$intent_digest" "$payment_hash" "$invoice_digest" "$amount_sats" '{}')
+    state=$(jq -er '.result.state' <<<"$lookup_result")
+    if [[ "$state" == "ACCEPTED" ]]; then
+      accepted=true
+      break
+    fi
+    sleep 1
+  done
+  if [[ "$accepted" != true ]]; then
+    echo "cancel fault invoice was not accepted" >&2
+    return 1
+  fi
+
+  wrong_preimage="0x$(openssl rand -hex 32)"
+  wrong_id="0x$(openssl rand -hex 32)"
+  wrong_operation=$(jq -cn --arg preimage "$wrong_preimage" '{preimage:$preimage}')
+  if wrong_result=$(call_adapter invoice-adapter /invoicesrpc.Invoices/SettleInvoice \
+    "$wrong_id" "$intent_digest" "$payment_hash" "$invoice_digest" "$amount_sats" "$wrong_operation"); then
+    echo "invoice adapter accepted a wrong preimage" >&2
+    return 1
+  fi
+  jq -e '.error | test("preimage does not match")' <<<"$wrong_result" >/dev/null
+  lookup_id="0x$(openssl rand -hex 32)"
+  lookup_result=$(call_adapter invoice-adapter /invoicesrpc.Invoices/LookupInvoiceV2 \
+    "$lookup_id" "$intent_digest" "$payment_hash" "$invoice_digest" "$amount_sats" '{}')
+  jq -e '.result.state == "ACCEPTED"' <<<"$lookup_result" >/dev/null
+
+  cancel_id="0x$(openssl rand -hex 32)"
+  cancel_envelope=$(sign_adapter_authorization /invoicesrpc.Invoices/CancelInvoice \
+    "$cancel_id" "$intent_digest" "$payment_hash" "$invoice_digest" "$amount_sats" '{}')
+  cancel_result=$(printf '%s\n' "$cancel_envelope" | call_signed_adapter invoice-adapter)
+  jq -e '.result.state == "CANCELED"' <<<"$cancel_result" >/dev/null
+  lookup_id="0x$(openssl rand -hex 32)"
+  lookup_result=$(call_adapter invoice-adapter /invoicesrpc.Invoices/LookupInvoiceV2 \
+    "$lookup_id" "$intent_digest" "$payment_hash" "$invoice_digest" "$amount_sats" '{}')
+  jq -e '.result.state == "CANCELED"' <<<"$lookup_result" >/dev/null
+  if replay_result=$(printf '%s\n' "$cancel_envelope" | call_signed_adapter invoice-adapter); then
+    echo "invoice adapter accepted a replayed cancellation" >&2
+    return 1
+  fi
+  jq -e '.error | test("already used")' <<<"$replay_result" >/dev/null
+
+  settle_id="0x$(openssl rand -hex 32)"
+  settle_operation=$(jq -cn --arg preimage "$preimage" '{preimage:$preimage}')
+  if settle_result=$(call_adapter invoice-adapter /invoicesrpc.Invoices/SettleInvoice \
+    "$settle_id" "$intent_digest" "$payment_hash" "$invoice_digest" "$amount_sats" "$settle_operation"); then
+    echo "canceled hold invoice accepted a late settlement" >&2
+    return 1
+  fi
+  jq -e '.error | test("not accepted")' <<<"$settle_result" >/dev/null
+  if wait "$payment_pid"; then
+    payment_pid=""
+    echo "payer reported success for a canceled hold invoice" >&2
+    return 1
+  fi
+  payment_pid=""
+  jq -e '.error | test("Lightning payment failed")' "$payment_result" >/dev/null
+  rm -f "$payment_result"
+  payment_result=""
+  unset preimage wrong_preimage pay_req payment_envelope
+
+  restart_preimage="0x$(openssl rand -hex 32)"
+  restart_hash="0x$(printf '%s' "${restart_preimage#0x}" | xxd -r -p |
+    openssl dgst -sha256 -binary | xxd -p -c 256)"
+  restart_intent="0x$(openssl rand -hex 32)"
+  restart_create_id="0x$(openssl rand -hex 32)"
+  restart_create_result=$(call_adapter invoice-adapter /invoicesrpc.Invoices/AddHoldInvoice \
+    "$restart_create_id" "$restart_intent" "$restart_hash" "$zero_hash" "$amount_sats" \
+    "$(jq -cn '{memo:"treeswap-restart-regtest",expirySeconds:600,cltvExpiry:80,isPrivate:true}')")
+  restart_pay_req=$(jq -er '.result.paymentRequest' <<<"$restart_create_result")
+  restart_invoice_digest=$(jq -er '.result.invoiceDigest' <<<"$restart_create_result")
+  restart_payment_id="0x$(openssl rand -hex 32)"
+  restart_payment_envelope=$(sign_adapter_authorization /routerrpc.Router/SendPaymentV2 \
+    "$restart_payment_id" "$restart_intent" "$restart_hash" "$restart_invoice_digest" "$amount_sats" \
+    "$(jq -cn --arg paymentRequest "$restart_pay_req" \
+      '{paymentRequest:$paymentRequest,timeoutSeconds:30,feeLimitSats:"10"}')")
+  restart_result=$(mktemp "$STATE_DIR/invoice-restart-payment.XXXXXX")
+  printf '%s\n' "$restart_payment_envelope" | call_signed_adapter payer-adapter >"$restart_result" &
+  restart_pid=$!
+
+  accepted=false
+  for _ in $(seq 1 30); do
+    restart_lookup_id="0x$(openssl rand -hex 32)"
+    restart_lookup_result=$(call_adapter invoice-adapter /invoicesrpc.Invoices/LookupInvoiceV2 \
+      "$restart_lookup_id" "$restart_intent" "$restart_hash" "$restart_invoice_digest" "$amount_sats" '{}')
+    state=$(jq -er '.result.state' <<<"$restart_lookup_result")
+    if [[ "$state" == "ACCEPTED" ]]; then
+      accepted=true
+      break
+    fi
+    sleep 1
+  done
+  if [[ "$accepted" != true ]]; then
+    echo "restart fault invoice was not accepted" >&2
+    return 1
+  fi
+
+  compose restart bob >/dev/null
+  wait_for_wallet_rpc bob
+  initialize_wallet bob
+  wait_for_chain_sync bob
+  wait_for_active_channel bob
+  restart_lookup_id="0x$(openssl rand -hex 32)"
+  restart_lookup_result=$(call_adapter invoice-adapter /invoicesrpc.Invoices/LookupInvoiceV2 \
+    "$restart_lookup_id" "$restart_intent" "$restart_hash" "$restart_invoice_digest" "$amount_sats" '{}')
+  jq -e '.result.state == "ACCEPTED"' <<<"$restart_lookup_result" >/dev/null
+
+  restart_settle_id="0x$(openssl rand -hex 32)"
+  restart_settle_operation=$(jq -cn --arg preimage "$restart_preimage" '{preimage:$preimage}')
+  restart_settle_result=$(call_adapter invoice-adapter /invoicesrpc.Invoices/SettleInvoice \
+    "$restart_settle_id" "$restart_intent" "$restart_hash" "$restart_invoice_digest" \
+    "$amount_sats" "$restart_settle_operation")
+  jq -e '.result.state == "SETTLED"' <<<"$restart_settle_result" >/dev/null
+  wait "$restart_pid"
+  restart_pid=""
+  jq -e --arg preimage "$restart_preimage" \
+    '.result.status == "SUCCEEDED" and .result.preimage == $preimage' "$restart_result" >/dev/null
+  rm -f "$restart_result"
+  restart_result=""
+  unset restart_preimage restart_pay_req restart_payment_envelope
+  trap - EXIT
+
+  echo "Invoice fault smoke passed: expiry, late-settle rejection, wrong preimage, cancel, replay, and accepted-state LND restart."
+}
+
 smoke_coordinator_reconciliation() {
   ensure_runtime_env
   start_lab >/dev/null
@@ -678,12 +887,13 @@ case "${1:-}" in
   smoke) smoke_hold_invoice ;;
   adapter-smoke) smoke_adapter_hold_invoice ;;
   credential-smoke) smoke_credential_lifecycle ;;
+  invoice-fault-smoke) smoke_invoice_faults ;;
   coordinator-smoke) smoke_coordinator_reconciliation ;;
   status) status_lab ;;
   down) stop_lab ;;
   destroy) destroy_lab ;;
   *)
-    echo "Usage: $0 {up|smoke|adapter-smoke|credential-smoke|coordinator-smoke|status|down|destroy}" >&2
+    echo "Usage: $0 {up|smoke|adapter-smoke|credential-smoke|invoice-fault-smoke|coordinator-smoke|status|down|destroy}" >&2
     exit 2
     ;;
 esac
