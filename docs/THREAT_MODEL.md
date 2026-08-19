@@ -111,7 +111,7 @@ Both escrows enforce `quoteExpiresAt < lastSafeClaimAt`, a minimum settlement wi
 ### TS-C04 — Relay can suppress or reorder quotes
 
 **Severity:** High for swaps
-**Status:** Multi-solver signed validation and deterministic received-set selection implemented; global availability is explicitly not claimed
+**Status:** Direction-correct multi-solver signed validation and deterministic received-set selection implemented; global availability is explicitly not claimed
 
 An offchain relay can hide a better quote, delay one solver, or fabricate receipt order. The escrow can enforce the exact selected quote but cannot prove that it was globally best.
 
@@ -121,7 +121,8 @@ Safeguards:
 - have the client request quotes from multiple independent solvers or relays;
 - show “best received quote,” never “global best price”;
 - let the user choose the signed quote rather than letting the relay select it;
-- bind the selected quote's exact output, fee, recipient, hash, and expiry; and
+- bind the selected quote's exact output, fee, recipient, hash, and expiry;
+- require one unchanged user invoice across BIT → Lightning offers, but a distinct solver-owned hold invoice for every Lightning → BIT offer;
 - keep public order-book rewards outside v1.
 
 The escrows verify direction-specific accepted terms onchain. `lib/rfq.mjs` now verifies the solver's complete EIP-712 offer before selection, accepts a bounded response set, retains one best offer per independent solver, orders exact-output offers by input price and receipt time, commits the verified received set, and requires the user to select one exact offer. Every fallback solver requires fresh user authorization. `docs/RFQ_POLICY.md` defines the claim boundary: this proves the selected terms and reproduces the client's received set, but it cannot prove that an untrusted relay delivered every quote available elsewhere. The product therefore says “Best received quote,” requires multiple solver identities, and makes no global-best claim.

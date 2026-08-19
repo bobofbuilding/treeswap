@@ -3,6 +3,8 @@ import test from "node:test";
 import { Wallet, id } from "ethers";
 import {
   RFQ_OFFER_TYPES,
+  ZERO_BYTES32,
+  bindSelectedSolverInvoice,
   buildReceivedQuoteBook,
   fallbackAuthorization,
   rfqDomain,
@@ -19,8 +21,8 @@ const request = {
   verifyingContract: "0x4444444444444444444444444444444444444444",
   user: "0x5555555555555555555555555555555555555555",
   beneficiary: "0x6666666666666666666666666666666666666666",
-  paymentHash: id("payment-hash"),
-  invoiceDigest: id("invoice"),
+  paymentHash: ZERO_BYTES32,
+  invoiceDigest: ZERO_BYTES32,
   nonce: 7n,
   expiresAt: NOW + 120,
   capacityEpoch: 42,
@@ -49,8 +51,8 @@ function offer(solver, index, lightningAmountSats) {
     feeBitAmount: 5n * 10n ** 17n,
     lightningAmountSats: BigInt(lightningAmountSats),
     maxRoutingFeeSats: 10n,
-    paymentHash: request.paymentHash,
-    invoiceDigest: request.invoiceDigest,
+    paymentHash: id(`payment-hash-${index}`),
+    invoiceDigest: id(`invoice-${index}`),
     requestNonce: request.nonce,
     offerNonce: BigInt(index),
     expiresAt: NOW + 60,
@@ -123,7 +125,72 @@ test("requires an explicit selection from the committed received set", async () 
   const selection = selectReceivedQuote(book, id("offer-1"));
   assert.equal(selection.requiresExactUserAuthorization, true);
   assert.equal(selection.receiptDigest, book.receiptDigest);
+  const selectedIntent = bindSelectedSolverInvoice(request, book, id("offer-1"));
+  assert.equal(selectedIntent.paymentHash, id("payment-hash-1"));
+  assert.equal(selectedIntent.invoiceDigest, id("invoice-1"));
+  assert.equal(selectedIntent.selectedSolver, solvers[0].address);
+  assert.throws(() => { book.offers[0].offer.paymentHash = id("post-verification-mutation"); }, /read only/);
+  assert.throws(
+    () => bindSelectedSolverInvoice({ ...request, maxFeeBps: 99n }, book, id("offer-1")),
+    /request changed after quote verification/,
+  );
   assert.throws(() => selectReceivedQuote(book, id("suppressed-offer")), /not in the verified received set/);
+  assert.throws(() => selectReceivedQuote({ ...book }, id("offer-1")), /locally verified offers/);
+  assert.throws(
+    () => buildReceivedQuoteBook({ request: { ...request, hiddenFallback: true }, envelopes: [], now: NOW, policy }),
+    /fields are not exact/,
+  );
+});
+
+test("requires each Lightning-to-BIT solver to bind a distinct hold invoice", async () => {
+  const first = await envelope(solvers[0], 1, 10_000, "relay-a");
+  const copied = await envelope(solvers[1], 2, 10_100, "relay-b");
+  copied.offer.paymentHash = first.offer.paymentHash;
+  copied.offer.invoiceDigest = first.offer.invoiceDigest;
+  copied.signature = await solvers[1].signTypedData(rfqDomain(request), RFQ_OFFER_TYPES, copied.offer);
+  const third = await envelope(solvers[2], 3, 10_200, "direct-c");
+  const book = buildReceivedQuoteBook({ request, envelopes: [first, copied, third], now: NOW, policy });
+  assert.equal(book.solverCount, 2);
+  assert.match(book.rejected[0].reasons.join("; "), /distinct hold invoices/);
+
+  const prebound = { ...request, paymentHash: id("shared"), invoiceDigest: id("shared-invoice") };
+  assert.throws(
+    () => buildReceivedQuoteBook({ request: prebound, envelopes: [first, third], now: NOW, policy }),
+    /not enough independent valid solver offers/,
+  );
+});
+
+test("keeps one user invoice fixed across all BIT-to-Lightning solver offers", async () => {
+  const userInvoiceRequest = {
+    ...request,
+    direction: "bit-to-lightning",
+    paymentHash: id("user-invoice-payment"),
+    invoiceDigest: id("user-invoice-digest"),
+    exactBitOutputWei: 0n,
+    exactLightningOutputSats: 10_000n,
+  };
+  async function userInvoiceEnvelope(solver, index, source, changedHash = null) {
+    const signedOffer = {
+      ...offer(solver, index, 10_000),
+      direction: id(userInvoiceRequest.direction),
+      paymentHash: changedHash ?? userInvoiceRequest.paymentHash,
+      invoiceDigest: userInvoiceRequest.invoiceDigest,
+      grossBitAmount: 101n * BIT,
+      feeBitAmount: 1n * BIT,
+    };
+    return {
+      source,
+      receivedAt: NOW,
+      offer: signedOffer,
+      signature: await solver.signTypedData(rfqDomain(userInvoiceRequest), RFQ_OFFER_TYPES, signedOffer),
+    };
+  }
+  const valid = await userInvoiceEnvelope(solvers[0], 10, "relay-a");
+  const changed = await userInvoiceEnvelope(solvers[1], 11, "relay-b", id("substituted-payment"));
+  const second = await userInvoiceEnvelope(solvers[2], 12, "direct-c");
+  const book = buildReceivedQuoteBook({ request: userInvoiceRequest, envelopes: [valid, changed, second], now: NOW, policy });
+  assert.equal(book.solverCount, 2);
+  assert.match(book.rejected[0].reasons.join("; "), /payment hash changed/);
 });
 
 test("never silently falls back to another solver", async () => {
@@ -150,6 +217,14 @@ test("bounds work before signature verification", async () => {
   assert.throws(
     () => buildReceivedQuoteBook({ request, envelopes: Array(17).fill(one), now: NOW, policy }),
     /bounded offer limit/,
+  );
+  assert.throws(
+    () => buildReceivedQuoteBook({ request, envelopes: [], now: NOW, policy: { ...policy, maxOffersPerRequest: Number.NaN } }),
+    /non-negative safe integer/,
+  );
+  assert.throws(
+    () => buildReceivedQuoteBook({ request, envelopes: [], now: NOW, policy: { ...policy, minimumIndependentSolvers: 1 } }),
+    /minimum is outside policy/,
   );
 });
 

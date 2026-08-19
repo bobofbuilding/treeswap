@@ -23,9 +23,9 @@ The contracts should not contain a solver allowlist. Safety comes from signature
 
 1. The client creates a short-lived blind RFQ containing only the direction, exact amount/unit, chain, maximum routing cost, expiry, and an unlinkable request identifier.
 2. It sends the RFQ to several relays and optionally known solver endpoints.
-3. Any solver may return a signed capability declaration and exact offer. Relays cannot alter a signature or create an executable quote.
+3. Any solver may return a signed capability declaration and exact offer. BIT → Lightning offers all bind the user's one invoice; each Lightning → BIT solver instead binds its own distinct hold invoice. Relays cannot alter a signature or create an executable quote.
 4. The client bounds work, retains at most one quote per solver, validates capacity freshness and every signed field, and commits the exact received set.
-5. The user selects and signs one quote. There is no silent fallback to another solver.
+5. The user selects and signs one quote. For Lightning → BIT, only that offer's hold invoice becomes payable. There is no silent fallback to another solver or invoice.
 6. The appropriate immutable escrow enforces the quote. Anyone may relay the preimage, but only the already-bound beneficiary is paid.
 
 An ERC-7683-compatible resolver can later expose TreeSwap orders to general intent solvers, but it must identify Lightning verification, availability, finality, and node-capacity assumptions explicitly. A resolver does not make those assumptions trustless by itself.

@@ -8,7 +8,7 @@ TreeSwap coordinates full-fill swaps between Lightning sats and BIT on Ethereum 
 
 The product displays `1 BIT = 100 sats` as a project reference value. The BIT contract does not enforce that price. TreeSwap never promises unconditional redemption at par; users accept exact integer amounts from short-lived solver quotes.
 
-The user experience is invoice-first. BIT → Lightning starts with an exact, amount-bearing BOLT 11 invoice supplied by the user. Lightning → BIT fixes the BIT amount and Ethereum beneficiary before the selected solver creates the hold invoice. Amountless invoices remain unsupported in v1.
+The user experience is invoice-first. BIT → Lightning starts with one exact, amount-bearing BOLT 11 invoice supplied by the user and shared unchanged across solver offers. For Lightning → BIT, each competing solver creates its own short-lived hold invoice and binds its nonzero hash and digest in its signed offer; the request itself leaves those fields zero until the user selects one exact offer. Amountless invoices remain unsupported in v1.
 
 ## 2. Minimal participants
 
@@ -100,8 +100,8 @@ The public web application never receives a node macaroon, seed, preimage store,
 
 ### Lightning → BIT
 
-1. Solvers return signed quotes; the user selects one.
-2. The selected solver creates a hold invoice and signs the exact selected quote against its pre-funded vault inventory.
+1. Solvers create distinct short-lived hold invoices and return signed quotes against their own pre-funded vault inventory; the user validates the received set and selects one.
+2. The selected offer's exact invoice, hash, solver, price, and capacity epoch become the private settlement intent. No other solver or invoice may be substituted without a new selection and authorization.
 3. The user countersigns and exercises the quote. The vault verifies both signatures, the live-open gate, BIT runtime settings, price and exposure caps, and deadline ordering. The user then verifies the finalized reservation and every supported BOLT 11 field before paying.
 4. The solver settles the hold invoice with the preimage.
 5. The user or a relayer supplies the preimage to claim BIT.

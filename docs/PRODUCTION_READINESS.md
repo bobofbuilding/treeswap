@@ -91,6 +91,8 @@ The coordinator state, crash semantics, live evidence, runtime qualification ris
 - [ ] Allow Lightning → BIT only against already deposited, solver-owned BIT inventory.
 - [ ] Give unknown BIT → Lightning solvers a tiny first-fill cap; raise limits only from objective completed-swap history or a separately reviewed bond design.
 - [ ] Let clients query multiple relays, verify every signature locally, commit the received set, and choose one exact quote.
+  - [x] Direction-specific invoice competition is enforced: one user invoice for BIT → Lightning and one distinct solver hold invoice per Lightning → BIT offer.
+  - [ ] Bind solver capability declarations to live Lightning node/payee control and authenticated endpoint keys.
 - [ ] Run two or more independently operated solvers through adversarial churn, withholding, relay censorship, restarts, and insolvency simulations.
 - [ ] Publish fill rate, timeout rate, median completion, capacity freshness, and halt history per solver without claiming a globally best price.
 

@@ -6,6 +6,13 @@ Status: deterministic signed-offer validation and selection harness. Live indepe
 
 Every solver offer is an EIP-712 message bound to protocol version, Ethereum chain, direction-specific verifying contract, request ID, direction, user, beneficiary, exact amounts, BIT fee, maximum routing fee, payment hash, invoice digest, request and offer nonces, expiry, and capacity epoch.
 
+Invoice ownership differs by direction:
+
+- For BIT → Lightning, the user supplies one exact standard invoice. Its payment hash and invoice digest are fixed in the request and every solver must quote against those same values.
+- For Lightning → BIT, the pricing request uses the all-zero payment hash and invoice digest because no shared invoice can represent competing solver nodes. Every solver creates and signs a distinct short-lived hold invoice, and its offer binds that invoice's nonzero hash and digest. Duplicate hashes or invoice digests across competing solver identities are rejected.
+
+After the user selects a Lightning → BIT offer, `bindSelectedSolverInvoice` converts only that signed offer's hash and invoice digest into the private settlement intent and commits the received-set digest. The user must decode and validate that exact hold invoice before countersigning or paying. Unselected hold invoices receive no payment and expire or are canceled by their owning solver under bounded firm-quote admission.
+
 The client rejects any offer that changes an exact request field, exceeds a user cap, uses stale capacity, lacks a canonical solver signature, or outlives the short request window.
 
 For the offers actually received, selection is reproducible:
@@ -34,3 +41,5 @@ The `receiptDigest` makes the client's observed set reproducible; it does not tu
 ## Deployment gate
 
 Before testnet swaps, connect at least two independently operated solvers, use short-lived capacity epochs, authenticate the transport, retain privacy-minimized receipt evidence, and measure suppression, latency, expiry, and fill failures. Public rewards or a global-best claim require a separate mechanism and review.
+
+The testnet capability declaration must also bind each EVM solver identity to its Lightning node/payee identity and authenticated private endpoint. That node-control proof and live invoice decoding remain deployment gates; an EVM signature over an invoice digest alone does not prove control of the Lightning node that issued it.
