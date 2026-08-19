@@ -23,6 +23,7 @@
     "regtest:smoke": "bash infra/regtest/lab.sh smoke",
     "regtest:adapter-smoke": "bash infra/regtest/lab.sh adapter-smoke",
     "regtest:credential-smoke": "bash infra/regtest/lab.sh credential-smoke",
+    "regtest:credential-rotation-smoke": "bash infra/regtest/lab.sh credential-rotation-smoke",
     "regtest:invoice-fault-smoke": "bash infra/regtest/lab.sh invoice-fault-smoke",
     "regtest:policy-fault-smoke": "bash infra/regtest/lab.sh policy-fault-smoke",
     "regtest:directional-capacity-smoke": "bash infra/regtest/lab.sh directional-capacity-smoke",

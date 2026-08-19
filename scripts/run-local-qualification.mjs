@@ -79,6 +79,7 @@ const campaigns = [
   ["coordinator:evm-faults", "npm", ["run", "test:coordinator-evm"]],
   ["evm:escrow-reorgs", "npm", ["run", "test:escrow-reorg"]],
   ["lightning:credential-lifecycle", "npm", ["run", "regtest:credential-smoke"]],
+  ["lightning:credential-overlap-rotation", "npm", ["run", "regtest:credential-rotation-smoke"]],
   ["lightning:adapter-hold", "npm", ["run", "regtest:adapter-smoke"]],
   ["lightning:invoice-faults", "npm", ["run", "regtest:invoice-fault-smoke"]],
   ["lightning:policy-faults", "npm", ["run", "regtest:policy-fault-smoke"]],

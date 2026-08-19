@@ -66,6 +66,16 @@ test("keeps a value-moving stream error ambiguous", () => {
   );
 });
 
+test("keeps malformed read-only stream results safe to retry", () => {
+  assert.throws(
+    () => unwrapLndStreamFrame(null, {
+      requestLabel: "GET /v2/router/track/[redacted]",
+      errorAmbiguous: false,
+    }),
+    (error) => error instanceof LndRestError && error.ambiguous === false,
+  );
+});
+
 test("accepts only explicit private-network LND host forms", () => {
   for (const host of ["alice", "127.0.0.1", "10.4.0.2", "172.20.0.2", "192.168.1.2", "lnd.internal", "lnd.default.svc.cluster.local", "fd00::1"]) {
     assert.equal(isPrivateLndHostname(host), true, host);

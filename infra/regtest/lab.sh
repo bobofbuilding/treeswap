@@ -289,14 +289,15 @@ role_permissions() {
   esac
 }
 
-verify_role_manifest() {
+verify_role_manifest_at() {
   local node=$1
   local role=$2
-  local manifest expected actual root_key_id caveat caveat_time expires_at now
+  local macaroon_path=$3
+  local root_key_id=$4
+  local manifest expected actual caveat caveat_time expires_at now
   local available_permissions uri
   manifest=$(compose exec -T "$node" lncli --network=regtest printmacaroon \
-    --macaroon_file="/root/.lnd/treeswap/${role}.macaroon")
-  root_key_id=$(role_root_key_id "$role")
+    --macaroon_file="$macaroon_path")
   if [[ $(jq -r '.root_key_id' <<<"$manifest") != "$root_key_id" ]]; then
     echo "$node $role credential has the wrong root-key ID" >&2
     return 1
@@ -327,6 +328,13 @@ verify_role_manifest() {
       return 1
     fi
   done < <(role_permissions "$role")
+}
+
+verify_role_manifest() {
+  local node=$1
+  local role=$2
+  verify_role_manifest_at "$node" "$role" "/root/.lnd/treeswap/${role}.macaroon" \
+    "$(role_root_key_id "$role")"
 }
 
 assert_role_command_denied() {
@@ -445,6 +453,132 @@ smoke_credential_lifecycle() {
   compose exec -T "$node" rm -f "$expiry_path" "$revocation_path"
 
   echo "Credential lifecycle smoke passed: exact role manifests, authorization-only denials, expiry, and root-key revocation."
+}
+
+delete_exported_payer_next_credential() {
+  compose --profile tools run --rm -T --entrypoint /bin/sh export-alice-payer-credential \
+    -ec 'rm -f /target/payer-next.macaroon' >/dev/null
+}
+
+smoke_credential_rotation() {
+  ensure_runtime_env
+  start_lab >/dev/null
+  local node=alice
+  local old_root_key_id=103
+  local next_root_key_id=203
+  local next_source=/root/.lnd/treeswap/payer-next.macaroon
+  local next_target=/run/treeswap/credentials/payer-next.macaroon
+  local next_container="treeswap-regtest-payer-next"
+  local invoice payment_request payment_hash invoice_digest intent_digest operation
+  local old_id old_result next_id next_result revoked_id revoked_result recovered_id recovered_result
+
+  trap 'docker rm -f "${next_container:-missing}" >/dev/null 2>&1 || true; \
+    delete_exported_payer_next_credential >/dev/null 2>&1 || true; \
+    if [[ -n "${payment_hash:-}" ]]; then compose exec -T bob lncli --network=regtest cancelinvoice "${payment_hash#0x}" >/dev/null 2>&1 || true; fi; \
+    compose exec -T "${node:-alice}" rm -f "${next_source:-/invalid}" >/dev/null 2>&1 || true; \
+    delete_test_macaroon_id "${node:-alice}" "${next_root_key_id:-203}" >/dev/null 2>&1 || true; \
+    bake_node_credentials "${node:-alice}" >/dev/null 2>&1 || true; \
+    start_adapters >/dev/null 2>&1 || true' EXIT
+
+  docker rm -f "$next_container" >/dev/null 2>&1 || true
+  delete_test_macaroon_id "$node" "$next_root_key_id"
+  compose exec -T "$node" rm -f "$next_source"
+  compose exec -T "$node" lncli --network=regtest bakemacaroon \
+    --timeout="$ROLE_CREDENTIAL_LIFETIME_SECONDS" \
+    --root_key_id="$next_root_key_id" --save_to="$next_source" \
+    uri:/lnrpc.Lightning/GetInfo \
+    uri:/lnrpc.Lightning/ListChannels \
+    uri:/lnrpc.Lightning/PendingChannels \
+    uri:/lnrpc.Lightning/DecodePayReq \
+    uri:/routerrpc.Router/SendPaymentV2 \
+    uri:/routerrpc.Router/TrackPaymentV2 >/dev/null
+  verify_role_manifest_at "$node" payer "$next_source" "$next_root_key_id"
+
+  compose --profile tools run --rm -T --entrypoint /bin/sh export-alice-payer-credential \
+    -ec 'cp -f /source/treeswap/payer-next.macaroon /target/payer-next.macaroon; chown 1000:1000 /target/payer-next.macaroon; chmod 0400 /target/payer-next.macaroon' \
+    >/dev/null
+  compose --profile adapter run --rm -d --name "$next_container" \
+    -e LND_MACAROON_PATH="$next_target" \
+    -e CREDENTIAL_ID=alice-payer-regtest-next \
+    -e CREDENTIAL_ROOT_KEY_ID="$next_root_key_id" \
+    -e ADAPTER_JOURNAL_PATH=/tmp/rotation-actions.jsonl \
+    payer-adapter >/dev/null
+  wait_for_disposable_adapter "$next_container"
+
+  invoice=$(compose exec -T bob lncli --network=regtest addinvoice \
+    --amt=10000 --memo=treeswap-credential-rotation --expiry=600 --private)
+  payment_request=$(jq -er '.payment_request' <<<"$invoice")
+  payment_hash=$(compose exec -T alice lncli --network=regtest \
+    --macaroonpath=/root/.lnd/treeswap/payer.macaroon decodepayreq "$payment_request" |
+    jq -er '.payment_hash | ascii_downcase | "0x" + .')
+  invoice_digest="0x$(printf '%s' "$payment_request" | openssl dgst -sha256 -binary | xxd -p -c 256)"
+  intent_digest="0x$(openssl rand -hex 32)"
+  operation=$(jq -cn --arg paymentRequest "$payment_request" '{paymentRequest:$paymentRequest}')
+
+  old_id="0x$(openssl rand -hex 32)"
+  old_result=$(call_adapter payer-adapter /lnrpc.Lightning/DecodePayReq \
+    "$old_id" "$intent_digest" "$payment_hash" "$invoice_digest" 10000 "$operation")
+  jq -e --arg paymentHash "$payment_hash" \
+    '.result.paymentHash == $paymentHash and .result.amountSats == "10000"' <<<"$old_result" >/dev/null
+  next_id="0x$(openssl rand -hex 32)"
+  next_result=$(sign_adapter_authorization /lnrpc.Lightning/DecodePayReq \
+    "$next_id" "$intent_digest" "$payment_hash" "$invoice_digest" 10000 "$operation" |
+    docker exec -i "$next_container" node /app/infra/lightning-adapter/client.mjs)
+  jq -e --arg paymentHash "$payment_hash" \
+    '.result.paymentHash == $paymentHash and .result.amountSats == "10000"' <<<"$next_result" >/dev/null
+  echo "Credential-rotation stage passed: old and next exact-role credentials overlapped successfully."
+
+  if ! compose exec -T "$node" lncli --network=regtest \
+    deletemacaroonid "$old_root_key_id" >/dev/null; then
+    echo "old payer root key could not be revoked" >&2
+    return 1
+  fi
+  assert_test_credential_denied "$node" /root/.lnd/treeswap/payer.macaroon revocation
+  revoked_id="0x$(openssl rand -hex 32)"
+  if revoked_result=$(call_adapter payer-adapter /lnrpc.Lightning/DecodePayReq \
+    "$revoked_id" "$intent_digest" "$payment_hash" "$invoice_digest" 10000 "$operation"); then
+    echo "old payer adapter remained authorized after root-key revocation" >&2
+    return 1
+  fi
+  if ! jq -e '.ambiguous == false and .errorCode == "REJECTED"' <<<"$revoked_result" >/dev/null; then
+    echo "old payer adapter did not return a deterministic rejection after root-key revocation" >&2
+    jq -c '{errorCode,ambiguous}' <<<"$revoked_result" >&2 || true
+    return 1
+  fi
+
+  next_id="0x$(openssl rand -hex 32)"
+  next_result=$(sign_adapter_authorization /lnrpc.Lightning/DecodePayReq \
+    "$next_id" "$intent_digest" "$payment_hash" "$invoice_digest" 10000 "$operation" |
+    docker exec -i "$next_container" node /app/infra/lightning-adapter/client.mjs)
+  if ! jq -e --arg paymentHash "$payment_hash" \
+    '.result.paymentHash == $paymentHash and .result.amountSats == "10000"' <<<"$next_result" >/dev/null; then
+    echo "replacement payer credential stopped working after old-root revocation" >&2
+    jq -c '{errorCode,ambiguous}' <<<"$next_result" >&2 || true
+    return 1
+  fi
+
+  docker rm -f "$next_container" >/dev/null
+  delete_exported_payer_next_credential
+  compose exec -T "$node" rm -f "$next_source"
+  delete_test_macaroon_id "$node" "$next_root_key_id"
+  bake_node_credentials "$node"
+  verify_role_manifest "$node" payer
+  start_adapters >/dev/null
+
+  recovered_id="0x$(openssl rand -hex 32)"
+  recovered_result=$(call_adapter payer-adapter /lnrpc.Lightning/DecodePayReq \
+    "$recovered_id" "$intent_digest" "$payment_hash" "$invoice_digest" 10000 "$operation")
+  if ! jq -e --arg paymentHash "$payment_hash" \
+    '.result.paymentHash == $paymentHash and .result.amountSats == "10000"' <<<"$recovered_result" >/dev/null; then
+    echo "standard payer credential did not recover after the rotation drill" >&2
+    jq -c '{errorCode,ambiguous}' <<<"$recovered_result" >&2 || true
+    return 1
+  fi
+  compose exec -T bob lncli --network=regtest cancelinvoice "${payment_hash#0x}" >/dev/null
+  unset payment_request
+  trap - EXIT
+
+  echo "Credential-rotation smoke passed: overlap, old-root revocation, uninterrupted next credential, and baseline recovery all succeeded."
 }
 
 node_tls_fingerprint() {
@@ -2092,6 +2226,7 @@ case "${1:-}" in
   smoke) smoke_hold_invoice ;;
   adapter-smoke) smoke_adapter_hold_invoice ;;
   credential-smoke) smoke_credential_lifecycle ;;
+  credential-rotation-smoke) smoke_credential_rotation ;;
   invoice-fault-smoke) smoke_invoice_faults ;;
   policy-fault-smoke) smoke_policy_faults ;;
   directional-capacity-smoke) smoke_directional_capacity ;;
@@ -2107,7 +2242,7 @@ case "${1:-}" in
   down) stop_lab ;;
   destroy) destroy_lab ;;
   *)
-    echo "Usage: $0 {up|smoke|adapter-smoke|credential-smoke|invoice-fault-smoke|policy-fault-smoke|directional-capacity-smoke|daily-cap-smoke|stale-chain-smoke|unsynced-chain-smoke|force-close-smoke|route-fault-smoke|htlc-cutoff-smoke|coordinator-smoke|coordinator-invoice-smoke|status|down|destroy}" >&2
+    echo "Usage: $0 {up|smoke|adapter-smoke|credential-smoke|credential-rotation-smoke|invoice-fault-smoke|policy-fault-smoke|directional-capacity-smoke|daily-cap-smoke|stale-chain-smoke|unsynced-chain-smoke|force-close-smoke|route-fault-smoke|htlc-cutoff-smoke|coordinator-smoke|coordinator-invoice-smoke|status|down|destroy}" >&2
     exit 2
     ;;
 esac

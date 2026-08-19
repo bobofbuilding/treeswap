@@ -19,6 +19,7 @@ npm run regtest:up
 npm run regtest:smoke
 npm run regtest:adapter-smoke
 npm run regtest:credential-smoke
+npm run regtest:credential-rotation-smoke
 npm run regtest:invoice-fault-smoke
 npm run regtest:policy-fault-smoke
 npm run regtest:directional-capacity-smoke
@@ -48,6 +49,8 @@ For all six node/role pairs, the bootstrap reads the baked macaroon back, requir
 `regtest:adapter-smoke` performs that lifecycle exclusively through the internal invoice and payer adapter processes. A local coordinator key signs exact 30-second authorizations; only its public key enters the adapter credential volumes. Each adapter verifies its pinned LND certificate, private-network hostname, role, signature, invoice, amount, hash, capacity epoch, live sync, active-channel liquidity, caps, and replay journal. After success, the campaign restarts the payer adapter and proves the exact request remains rejected, then proves the invoice adapter cannot execute a payer authorization.
 
 `regtest:credential-smoke` first performs the exact six-role manifest and negative-authority checks. It then proves a disposable, two-second `GetInfo` credential works before its caveat and fails specifically as expired afterward. A second disposable credential works, its dedicated root-key ID is deleted, and the unchanged credential then fails while the admin node remains healthy. Test root keys and files are removed; no credential material is exported as evidence.
+
+`regtest:credential-rotation-smoke` bakes a replacement payer credential under a new root-key ID, verifies its exact permission and expiry manifest, and runs old and replacement adapters concurrently. Both decode the same exact invoice during the overlap window. The campaign then deletes only the old root key, requires both native LND and the old adapter to reject it, proves the replacement adapter remains available, and restores a fresh standard credential. Read-only authorization and transport failures are explicitly non-ambiguous because they cannot move value; value-moving unknown outcomes remain ambiguous. The initial run plus three consecutive warm-state repetitions pass, and cleanup leaves neither the temporary root key nor credential behind.
 
 `regtest:invoice-fault-smoke` proves an unaccepted hold invoice expires to `CANCELED` and rejects a late preimage. It accepts a second hold payment, rejects a wrong preimage without changing `ACCEPTED`, cancels it, confirms `CANCELED`, rejects an exact signed cancellation replay and a correct late preimage, and requires the payer to report failure. Finally, it restarts and unlocks Bob's LND while a third HTLC is `ACCEPTED`, requires the same invoice and channel to recover, settles with the bound preimage, and requires the original one-shot payer request—not a replacement payment—to finish `SUCCEEDED`. Payment-result files are mode-restricted and removed.
 
@@ -85,7 +88,7 @@ Published checkpoint `1c788216e1b2c12ae0b27760968f251d5556c752` completed all 20
 - Hold-invoice cancel, expiry, wrong preimage, late settle, signed-action replay, restart while accepted, and the 24-block HTLC cutoff under rapid block advancement now pass.
 - Stale capacity epoch and production-duration delay remain. Rapid blocks, genuine 500-block unsynced-node catch-up, full force-close/CSV-sweep/channel-replacement recovery, compressed-threshold stale-header rejection with zero dispatch, accepted-state LND restart, channel-offline rejection/recovery, live directional exhaustion/rebalancing, and live in-flight-cap saturation now pass.
 - Live payer/invoice daily-cap saturation and restart persistence pass, and deterministic journal coverage proves exact UTC rollover without weakening permanent replay protection.
-- Real certificate rotation, overlap credential rotation, and stateless initialization. TLS-pin mismatch, exact grant manifests, timeout enforcement, root-key revocation, and representative forbidden-RPC categories now pass.
+- Real certificate rotation and stateless initialization remain. Overlap credential rotation, deterministic old-root revocation, uninterrupted replacement service, TLS-pin mismatch, exact grant manifests, timeout enforcement, and representative forbidden-RPC categories now pass.
 - Promote a clean published-checkpoint qualification record into the reviewed release manifest. The secret-free generator and schema are implemented; a record from the final release commit remains required.
 
 This lab is local evidence, not permission to fund testnet or mainnet.
