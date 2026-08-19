@@ -581,6 +581,189 @@ smoke_credential_rotation() {
   echo "Credential-rotation smoke passed: overlap, old-root revocation, uninterrupted next credential, and baseline recovery all succeeded."
 }
 
+restore_alice_tls_backup() {
+  local alice_container
+  alice_container=$(compose ps -a -q alice 2>/dev/null || true)
+  [[ -n "$alice_container" ]] || return 0
+  compose stop alice >/dev/null 2>&1 || true
+  if ! docker run --rm --volumes-from "$alice_container" --entrypoint /bin/sh \
+    node:22.22.0-alpine@sha256:e4bf2a82ad0a4037d28035ae71529873c069b13eb0455466ae0bc13363826e34 \
+    -ec '
+      cert=/root/.lnd/tls.cert
+      key=/root/.lnd/tls.key
+      previous_cert=/root/.lnd/tls.cert.treeswap-previous
+      previous_key=/root/.lnd/tls.key.treeswap-previous
+      if [ -e "$previous_cert" ] || [ -e "$previous_key" ]; then
+        test -s "$previous_cert" && test -s "$previous_key"
+        rm -f "$cert" "$key"
+        mv "$previous_cert" "$cert"
+        mv "$previous_key" "$key"
+      fi' >/dev/null; then
+    echo "Alice TLS rollback could not restore the previous certificate pair" >&2
+    return 1
+  fi
+  compose start alice >/dev/null
+  wait_for_wallet_rpc alice
+  initialize_wallet alice
+  wait_for_chain_sync alice
+  reconnect_alice_bob_channel
+}
+
+reconnect_alice_bob_channel() {
+  local bob_pubkey
+  bob_pubkey=$(compose exec -T bob lncli --network=regtest getinfo | jq -er '.identity_pubkey')
+  compose exec -T alice lncli --network=regtest connect "$bob_pubkey@bob:9735" >/dev/null 2>&1 || true
+  wait_for_active_channel alice
+  wait_for_active_channel bob
+}
+
+rotate_alice_tls_pair() {
+  compose exec -T alice /bin/sh -ec '
+    cert=/root/.lnd/tls.cert
+    key=/root/.lnd/tls.key
+    previous_cert=/root/.lnd/tls.cert.treeswap-previous
+    previous_key=/root/.lnd/tls.key.treeswap-previous
+    test -s "$cert" && test -s "$key"
+    test ! -e "$previous_cert" && test ! -e "$previous_key"
+    mv "$cert" "$previous_cert"
+    if ! mv "$key" "$previous_key"; then
+      mv "$previous_cert" "$cert"
+      exit 1
+    fi'
+  compose restart alice >/dev/null
+  wait_for_wallet_rpc alice
+  initialize_wallet alice
+  wait_for_chain_sync alice
+  reconnect_alice_bob_channel
+}
+
+smoke_tls_certificate_rotation() {
+  ensure_runtime_env
+  start_lab >/dev/null
+  local old_fingerprint new_fingerprint old_identity new_identity old_channels new_channels
+  local invoice payment_request payment_hash invoice_digest intent_digest operation
+  local baseline_id baseline_result old_pin_id old_pin_result rollback_id rollback_result
+  local recovered_id recovered_result payment_count
+
+  trap 'if [[ -n "${payment_hash:-}" ]]; then compose exec -T bob lncli --network=regtest cancelinvoice "${payment_hash#0x}" >/dev/null 2>&1 || true; fi; \
+    restore_alice_tls_backup >/dev/null 2>&1 || true; \
+    start_adapters >/dev/null 2>&1 || true' EXIT
+
+  old_fingerprint=$(node_tls_fingerprint alice)
+  old_identity=$(compose exec -T alice lncli --network=regtest getinfo | jq -er '.identity_pubkey')
+  old_channels=$(compose exec -T alice lncli --network=regtest listchannels |
+    jq -r '.channels[].channel_point' | LC_ALL=C sort)
+  [[ -n "$old_channels" ]] || { echo "TLS rotation requires an active channel baseline" >&2; return 1; }
+
+  invoice=$(compose exec -T bob lncli --network=regtest addinvoice \
+    --amt=10000 --memo=treeswap-tls-rotation --expiry=600 --private)
+  payment_request=$(jq -er '.payment_request' <<<"$invoice")
+  payment_hash=$(compose exec -T alice lncli --network=regtest \
+    --macaroonpath=/root/.lnd/treeswap/payer.macaroon decodepayreq "$payment_request" |
+    jq -er '.payment_hash | ascii_downcase | "0x" + .')
+  invoice_digest="0x$(printf '%s' "$payment_request" | openssl dgst -sha256 -binary | xxd -p -c 256)"
+  intent_digest="0x$(openssl rand -hex 32)"
+  operation=$(jq -cn --arg paymentRequest "$payment_request" '{paymentRequest:$paymentRequest}')
+
+  baseline_id="0x$(openssl rand -hex 32)"
+  baseline_result=$(call_adapter payer-adapter /lnrpc.Lightning/DecodePayReq \
+    "$baseline_id" "$intent_digest" "$payment_hash" "$invoice_digest" 10000 "$operation")
+  jq -e --arg paymentHash "$payment_hash" \
+    '.result.paymentHash == $paymentHash and .result.amountSats == "10000"' <<<"$baseline_result" >/dev/null
+
+  rotate_alice_tls_pair
+
+  new_fingerprint=$(node_tls_fingerprint alice)
+  if [[ "$new_fingerprint" == "$old_fingerprint" ]]; then
+    echo "LND did not generate a new TLS identity after rotation" >&2
+    return 1
+  fi
+  new_identity=$(compose exec -T alice lncli --network=regtest getinfo | jq -er '.identity_pubkey')
+  new_channels=$(compose exec -T alice lncli --network=regtest listchannels |
+    jq -r '.channels[].channel_point' | LC_ALL=C sort)
+  if [[ "$new_identity" != "$old_identity" || "$new_channels" != "$old_channels" ]]; then
+    echo "TLS rotation changed the node identity or channel set" >&2
+    return 1
+  fi
+
+  old_pin_id="0x$(openssl rand -hex 32)"
+  if old_pin_result=$(call_adapter payer-adapter /lnrpc.Lightning/DecodePayReq \
+    "$old_pin_id" "$intent_digest" "$payment_hash" "$invoice_digest" 10000 "$operation"); then
+    echo "old pinned adapter accepted the rotated LND certificate" >&2
+    return 1
+  fi
+  if ! jq -e '.ambiguous == false and .errorCode == "REJECTED"' <<<"$old_pin_result" >/dev/null; then
+    echo "old TLS pin did not fail as a deterministic read-only rejection" >&2
+    jq -c '{errorCode,ambiguous}' <<<"$old_pin_result" >&2 || true
+    return 1
+  fi
+  if [[ "$old_pin_result" == *"$payment_request"* || "$old_pin_result" == *"${payment_hash#0x}"* ]]; then
+    echo "old TLS-pin rejection exposed bound invoice material" >&2
+    return 1
+  fi
+  payment_count=$(compose exec -T alice lncli --network=regtest listpayments |
+    jq --arg paymentHash "${payment_hash#0x}" \
+      '[.payments[] | select((.payment_hash | ascii_downcase) == $paymentHash)] | length')
+  if (( payment_count != 0 )); then
+    echo "TLS rotation probe unexpectedly dispatched a payment" >&2
+    return 1
+  fi
+  echo "TLS-rotation stage passed: the old pinned adapter failed closed without dispatch."
+
+  restore_alice_tls_backup
+  if [[ $(node_tls_fingerprint alice) != "$old_fingerprint" ]]; then
+    echo "TLS rollback did not restore the original certificate" >&2
+    return 1
+  fi
+  rollback_id="0x$(openssl rand -hex 32)"
+  rollback_result=$(call_adapter payer-adapter /lnrpc.Lightning/DecodePayReq \
+    "$rollback_id" "$intent_digest" "$payment_hash" "$invoice_digest" 10000 "$operation")
+  if ! jq -e --arg paymentHash "$payment_hash" \
+    '.result.paymentHash == $paymentHash and .result.amountSats == "10000"' <<<"$rollback_result" >/dev/null; then
+    echo "old pinned adapter did not recover after certificate rollback" >&2
+    jq -c '{errorCode,ambiguous}' <<<"$rollback_result" >&2 || true
+    return 1
+  fi
+  echo "TLS-rotation stage passed: rollback restored the old certificate and adapter pin."
+
+  rotate_alice_tls_pair
+  new_fingerprint=$(node_tls_fingerprint alice)
+  if [[ "$new_fingerprint" == "$old_fingerprint" ]]; then
+    echo "LND did not generate a new TLS identity after the final rotation" >&2
+    return 1
+  fi
+  new_identity=$(compose exec -T alice lncli --network=regtest getinfo | jq -er '.identity_pubkey')
+  new_channels=$(compose exec -T alice lncli --network=regtest listchannels |
+    jq -r '.channels[].channel_point' | LC_ALL=C sort)
+  if [[ "$new_identity" != "$old_identity" || "$new_channels" != "$old_channels" ]]; then
+    echo "final TLS rotation changed the node identity or channel set" >&2
+    return 1
+  fi
+
+  start_adapters >/dev/null
+  if [[ "$ALICE_TLS_FINGERPRINT" != "$new_fingerprint" ]]; then
+    echo "adapter rollout did not bind the newly observed LND certificate" >&2
+    return 1
+  fi
+  recovered_id="0x$(openssl rand -hex 32)"
+  recovered_result=$(call_adapter payer-adapter /lnrpc.Lightning/DecodePayReq \
+    "$recovered_id" "$intent_digest" "$payment_hash" "$invoice_digest" 10000 "$operation")
+  if ! jq -e --arg paymentHash "$payment_hash" \
+    '.result.paymentHash == $paymentHash and .result.amountSats == "10000"' <<<"$recovered_result" >/dev/null; then
+    echo "newly pinned payer adapter did not recover after TLS rotation" >&2
+    jq -c '{errorCode,ambiguous}' <<<"$recovered_result" >&2 || true
+    return 1
+  fi
+
+  compose exec -T alice rm -f \
+    /root/.lnd/tls.cert.treeswap-previous /root/.lnd/tls.key.treeswap-previous
+  compose exec -T bob lncli --network=regtest cancelinvoice "${payment_hash#0x}" >/dev/null
+  unset payment_request
+  trap - EXIT
+
+  echo "TLS-certificate rotation smoke passed: old pin rejected, rollback recovered, no payment dispatched, and the new pin restored the unchanged node and channel."
+}
+
 node_tls_fingerprint() {
   local node=$1
   compose exec -T "$node" cat /root/.lnd/tls.cert |
@@ -2227,6 +2410,7 @@ case "${1:-}" in
   adapter-smoke) smoke_adapter_hold_invoice ;;
   credential-smoke) smoke_credential_lifecycle ;;
   credential-rotation-smoke) smoke_credential_rotation ;;
+  tls-rotation-smoke) smoke_tls_certificate_rotation ;;
   invoice-fault-smoke) smoke_invoice_faults ;;
   policy-fault-smoke) smoke_policy_faults ;;
   directional-capacity-smoke) smoke_directional_capacity ;;
@@ -2242,7 +2426,7 @@ case "${1:-}" in
   down) stop_lab ;;
   destroy) destroy_lab ;;
   *)
-    echo "Usage: $0 {up|smoke|adapter-smoke|credential-smoke|credential-rotation-smoke|invoice-fault-smoke|policy-fault-smoke|directional-capacity-smoke|daily-cap-smoke|stale-chain-smoke|unsynced-chain-smoke|force-close-smoke|route-fault-smoke|htlc-cutoff-smoke|coordinator-smoke|coordinator-invoice-smoke|status|down|destroy}" >&2
+    echo "Usage: $0 {up|smoke|adapter-smoke|credential-smoke|credential-rotation-smoke|tls-rotation-smoke|invoice-fault-smoke|policy-fault-smoke|directional-capacity-smoke|daily-cap-smoke|stale-chain-smoke|unsynced-chain-smoke|force-close-smoke|route-fault-smoke|htlc-cutoff-smoke|coordinator-smoke|coordinator-invoice-smoke|status|down|destroy}" >&2
     exit 2
     ;;
 esac
