@@ -253,6 +253,8 @@ role_root_key_id() {
     observer) printf '%s\n' 101 ;;
     invoice) printf '%s\n' 102 ;;
     payer) printf '%s\n' 103 ;;
+    solver-node-signer) printf '%s\n' 104 ;;
+    node-proof-verifier) printf '%s\n' 105 ;;
     *) echo "unknown credential role" >&2; return 1 ;;
   esac
 }
@@ -284,6 +286,12 @@ role_permissions() {
         uri:/lnrpc.Lightning/PendingChannels \
         uri:/routerrpc.Router/SendPaymentV2 \
         uri:/routerrpc.Router/TrackPaymentV2
+      ;;
+    solver-node-signer)
+      printf '%s\n' uri:/lnrpc.Lightning/SignMessage
+      ;;
+    node-proof-verifier)
+      printf '%s\n' uri:/lnrpc.Lightning/VerifyMessage
       ;;
     *) echo "unknown credential role" >&2; return 1 ;;
   esac
@@ -2713,6 +2721,79 @@ smoke_coordinator_invoice_reconciliation() {
   trap - EXIT
 }
 
+smoke_solver_node_proof() {
+  ensure_runtime_env
+  start_lab >/dev/null
+  local signer_node=bob
+  local verifier_node=alice
+  local signer_role=solver-node-signer
+  local verifier_role=node-proof-verifier
+  local signer_root_key_id verifier_root_key_id signer_path verifier_path
+  local node_pubkey proof_challenge message signature result changed
+  signer_root_key_id=$(role_root_key_id "$signer_role")
+  verifier_root_key_id=$(role_root_key_id "$verifier_role")
+  signer_path="/root/.lnd/treeswap/${signer_role}.macaroon"
+  verifier_path="/root/.lnd/treeswap/${verifier_role}.macaroon"
+  trap 'compose exec -T "${signer_node:-bob}" rm -f "${signer_path:-/root/.lnd/treeswap/solver-node-signer.macaroon}" >/dev/null 2>&1 || true; \
+    compose exec -T "${verifier_node:-alice}" rm -f "${verifier_path:-/root/.lnd/treeswap/node-proof-verifier.macaroon}" >/dev/null 2>&1 || true; \
+    delete_test_macaroon_id "${signer_node:-bob}" "${signer_root_key_id:-104}" >/dev/null 2>&1 || true; \
+    delete_test_macaroon_id "${verifier_node:-alice}" "${verifier_root_key_id:-105}" >/dev/null 2>&1 || true' EXIT
+
+  delete_test_macaroon_id "$signer_node" "$signer_root_key_id"
+  delete_test_macaroon_id "$verifier_node" "$verifier_root_key_id"
+  compose exec -T "$signer_node" rm -f "$signer_path"
+  compose exec -T "$verifier_node" rm -f "$verifier_path"
+  compose exec -T "$signer_node" lncli --network=regtest bakemacaroon \
+    --timeout="$ROLE_CREDENTIAL_LIFETIME_SECONDS" \
+    --root_key_id="$signer_root_key_id" --save_to="$signer_path" \
+    uri:/lnrpc.Lightning/SignMessage >/dev/null
+  compose exec -T "$verifier_node" lncli --network=regtest bakemacaroon \
+    --timeout="$ROLE_CREDENTIAL_LIFETIME_SECONDS" \
+    --root_key_id="$verifier_root_key_id" --save_to="$verifier_path" \
+    uri:/lnrpc.Lightning/VerifyMessage >/dev/null
+  verify_role_manifest_at "$signer_node" "$signer_role" "$signer_path" "$signer_root_key_id"
+  verify_role_manifest_at "$verifier_node" "$verifier_role" "$verifier_path" "$verifier_root_key_id"
+  verify_role_negative_matrix "$signer_node" "$signer_role"
+  verify_role_negative_matrix "$verifier_node" "$verifier_role"
+  node_pubkey=$(compose exec -T "$signer_node" lncli --network=regtest getinfo | jq -er '.identity_pubkey | ascii_downcase')
+
+  for run in 1 2 3 4; do
+    proof_challenge="0x$(openssl rand -hex 32)"
+    message=$(printf 'TreeSwap solver capability v1\n%s\n' "$proof_challenge")
+    signature=$(compose exec -T "$signer_node" lncli --network=regtest \
+      --macaroonpath="$signer_path" signmessage --msg "$message" | jq -er '.signature')
+    if [[ ! "$signature" =~ ^[ybndrfg8ejkmcpqxot1uwisza345h769]{104}$ ]]; then
+      echo "solver node returned a non-canonical proof signature" >&2
+      return 1
+    fi
+    result=$(compose exec -T "$verifier_node" lncli --network=regtest \
+      --macaroonpath="$verifier_path" verifymessage --msg "$message" --sig "$signature")
+    if ! jq -e --arg pubkey "$node_pubkey" \
+      '.valid == true and (.pubkey | ascii_downcase) == $pubkey' <<<"$result" >/dev/null; then
+      echo "independent LND verifier did not recover the declared solver node" >&2
+      return 1
+    fi
+    changed=$(printf '%s-mutated' "$message")
+    result=$(compose exec -T "$verifier_node" lncli --network=regtest \
+      --macaroonpath="$verifier_path" verifymessage --msg "$changed" --sig "$signature")
+    if ! jq -e '.valid == false' <<<"$result" >/dev/null; then
+      echo "solver node proof remained valid after challenge mutation" >&2
+      return 1
+    fi
+  done
+
+  assert_role_command_denied "$signer_node" "$signer_role" \
+    verifymessage --msg "$message" --sig "$signature"
+  assert_role_command_denied "$verifier_node" "$verifier_role" signmessage --msg "$message"
+  compose exec -T "$signer_node" rm -f "$signer_path"
+  compose exec -T "$verifier_node" rm -f "$verifier_path"
+  delete_test_macaroon_id "$signer_node" "$signer_root_key_id"
+  delete_test_macaroon_id "$verifier_node" "$verifier_root_key_id"
+  trap - EXIT
+  unset signature result message proof_challenge
+  echo "Solver node-proof smoke passed: four exact challenges recovered the declared node, mutation failed, and role permissions stayed separated."
+}
+
 status_lab() {
   ensure_runtime_env
   compose ps
@@ -2753,11 +2834,12 @@ case "${1:-}" in
   htlc-cutoff-smoke) smoke_htlc_cutoff ;;
   coordinator-smoke) smoke_coordinator_reconciliation ;;
   coordinator-invoice-smoke) smoke_coordinator_invoice_reconciliation ;;
+  solver-node-proof-smoke) smoke_solver_node_proof ;;
   status) status_lab ;;
   down) stop_lab ;;
   destroy) destroy_lab ;;
   *)
-    echo "Usage: $0 {up|smoke|adapter-smoke|credential-smoke|credential-rotation-smoke|tls-rotation-smoke|invoice-fault-smoke|policy-fault-smoke|directional-capacity-smoke|daily-cap-smoke|stateless-init-smoke|production-duration-smoke|stale-chain-smoke|unsynced-chain-smoke|force-close-smoke|route-fault-smoke|htlc-cutoff-smoke|coordinator-smoke|coordinator-invoice-smoke|status|down|destroy}" >&2
+    echo "Usage: $0 {up|smoke|adapter-smoke|credential-smoke|credential-rotation-smoke|tls-rotation-smoke|invoice-fault-smoke|policy-fault-smoke|directional-capacity-smoke|daily-cap-smoke|stateless-init-smoke|production-duration-smoke|stale-chain-smoke|unsynced-chain-smoke|force-close-smoke|route-fault-smoke|htlc-cutoff-smoke|coordinator-smoke|coordinator-invoice-smoke|solver-node-proof-smoke|status|down|destroy}" >&2
     exit 2
     ;;
 esac

@@ -46,6 +46,7 @@ function solver(overrides = {}) {
     admitted: true,
     suspended: false,
     capacityObservedAt: NOW - 2,
+    capabilityExpiresAt: NOW + 30,
     capacityEpoch: 7,
     availableBitWei: 100n * BIT,
     committedBitWei: 0n,
@@ -111,6 +112,8 @@ test("requires vetted, fresh, reliable, signed solver capacity", () => {
 
   for (const [changed, reason] of [
     [solver({ admitted: false }), /not admitted/],
+    [solver({ capabilityExpiresAt: NOW }), /capability expired/],
+    [solver({ capabilityExpiresAt: NOW + 10 }), /outlives solver capability/],
     [solver({ capacityObservedAt: NOW - 11 }), /capacity is stale/],
     [solver({ successfulFills: 8n, attributableFailures: 2n }), /reliability/],
     [solver({ availableBitWei: 10n * BIT, committedBitWei: 1n }), /uncommitted capacity/],

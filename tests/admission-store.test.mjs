@@ -55,6 +55,7 @@ function snapshot(epoch = 7, overrides = {}) {
   return {
     solverId: SOLVER,
     capabilityDigest: hash(`solver-capability:${epoch}`),
+    capabilityExpiresAt: NOW + 300 + (epoch - 7),
     capabilityVerified: true,
     capacityEpoch: epoch,
     availableBitWei: String(100n * BIT),
@@ -440,5 +441,32 @@ test("migrates a v2 coordinator database forward without treating it as release 
     assert.equal(admitted.request.state, "ACTIVE");
   } finally {
     store.close();
+  }
+});
+
+test("migrates v3 solver capabilities as expired instead of extending legacy authority", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "treeswap-capability-migration-"));
+  const path = join(directory, "coordinator.sqlite");
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const rfq = request("capability-migration", 2);
+  const current = await CoordinatorStore.open(path);
+  current.admitRfq({ identity: identity(), request: rfq, policy: policy(), now: NOW });
+  current.recordSolverCapacity(snapshot());
+  current.close();
+
+  const legacy = new DatabaseSync(path);
+  legacy.exec("ALTER TABLE solver_capacity DROP COLUMN capability_expires_at");
+  legacy.prepare("UPDATE coordinator_meta SET value = 'treeswap.coordinator.v3' WHERE key = 'schema'").run();
+  legacy.close();
+
+  const migrated = await CoordinatorStore.open(path);
+  try {
+    assert.equal(migrated.getSolverCapacity(SOLVER).capabilityExpiresAt, 0);
+    assert.throws(
+      () => migrated.reserveVerifiedFirmOffer(reservation(rfq, "capability-migration")),
+      /solver capability expired/,
+    );
+  } finally {
+    migrated.close();
   }
 });

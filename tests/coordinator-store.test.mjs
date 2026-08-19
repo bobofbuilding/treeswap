@@ -295,12 +295,12 @@ test("creates a verified private backup and restores it only to a fresh path", a
     store.acceptSettlement(value);
     assert.deepEqual(store.integrityCheck({ full: true }), {
       check: "integrity_check",
-      schema: "treeswap.coordinator.v3",
+      schema: "treeswap.coordinator.v4",
       status: "ok",
     });
     const backup = await store.createVerifiedBackup(backupPath);
     assert.equal(backup.check, "integrity_check");
-    assert.equal(backup.schema, "treeswap.coordinator.v3");
+    assert.equal(backup.schema, "treeswap.coordinator.v4");
     assert.equal(backup.status, "ok");
     assert.ok(Number(backup.pages) > 0);
     assert.equal((await stat(backupPath)).mode & 0o777, 0o600);
@@ -313,7 +313,7 @@ test("creates a verified private backup and restores it only to a fresh path", a
   const restore = await CoordinatorStore.restoreVerifiedBackup(backupPath, restoredPath);
   assert.deepEqual(restore, {
     check: "integrity_check",
-    schema: "treeswap.coordinator.v3",
+    schema: "treeswap.coordinator.v4",
     status: "ok",
     restoredToFreshPath: true,
   });
