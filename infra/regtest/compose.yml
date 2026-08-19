@@ -121,6 +121,32 @@ services:
       - bob-data:/root/.lnd
     networks: [regtest]
 
+  charlie:
+    image: lightninglabs/lnd:v0.21.2-beta@sha256:17e7e5adf823717a8e1ba7e02ac5d90eb58a029b5d30073914f64ab23e7cebf4
+    restart: unless-stopped
+    depends_on:
+      bitcoind:
+        condition: service_healthy
+    command:
+      - --noseedbackup
+      - --bitcoin.active
+      - --bitcoin.regtest
+      - --bitcoin.node=bitcoind
+      - --bitcoind.rpchost=bitcoind:18443
+      - --bitcoind.rpcuser=${BITCOIND_RPC_USER}
+      - --bitcoind.rpcpass=${BITCOIND_RPC_PASSWORD}
+      - --bitcoind.zmqpubrawblock=tcp://bitcoind:28332
+      - --bitcoind.zmqpubrawtx=tcp://bitcoind:28333
+      - --rpclisten=0.0.0.0:10009
+      - --restlisten=0.0.0.0:8080
+      - --listen=0.0.0.0:9735
+      - --tlsextradomain=charlie
+      - --alias=treeswap-charlie-unrouted
+      - --color=#888888
+    volumes:
+      - charlie-data:/root/.lnd
+    networks: [regtest]
+
   export-alice-payer-credential:
     image: node:22.22.0-alpine@sha256:e4bf2a82ad0a4037d28035ae71529873c069b13eb0455466ae0bc13363826e34
     profiles: [tools]
@@ -269,6 +295,7 @@ volumes:
   bitcoind-data:
   alice-data:
   bob-data:
+  charlie-data:
   alice-payer-credentials:
   bob-invoice-credentials:
   payer-adapter-state:

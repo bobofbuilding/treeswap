@@ -59,11 +59,11 @@ The command refuses to overwrite an existing file and never records the RPC URL.
 - [x] Persist request IDs before dispatch and prove a completed payment remains replay-blocked after the payer process restarts.
 - [x] Prove a payer authorization is rejected by the invoice process and representative forbidden macaroon RPCs fail.
 - [x] Prove each credential's exact grant manifest against the pinned LND permission registry, require representative forbidden capability categories to fail specifically for authorization, and demonstrate live timeout enforcement.
-- [ ] Test standard invoices and hold invoices through create, accept, settle, cancel, expire, late-settle, and replay paths.
+- [x] Test standard invoices and hold invoices through create, accept, settle, cancel, expire, late-settle, and replay paths.
   - [x] Hold create/accept/settle, cancel, expiry, wrong and late preimage, exact signed-action replay, and restart while accepted pass through the isolated adapters.
   - [x] Standard invoices above the signed fee cap or per-payment cap are rejected before dispatch, and read-only tracking proves `NOT_FOUND`.
-  - [ ] Standard-invoice route failure and an explicit duplicate-payment attempt remain; standard success plus payer- and invoice-side lost-response recovery pass.
-- [ ] Inject delayed and fast Bitcoin blocks, LND restart, lost responses, idempotent retry, force close, unsynced state, TLS pin change, credential rotation, and credential revocation. Accepted-state LND restart, one-dispatch payer and invoice recovery, root-key revocation, live in-flight saturation, channel-offline recovery, and TLS-pin mismatch now pass.
+  - [x] Standard success, terminal no-route failure, exact-request replay, same-hash duplicate rejection, and payer- and invoice-side lost-response recovery pass with one-dispatch evidence.
+- [ ] Inject delayed and fast Bitcoin blocks, LND restart, lost responses, idempotent retry, force close, unsynced state, TLS pin change, credential rotation, and credential revocation. Accepted-state LND restart, terminal no-route failure, exact and same-hash duplicate rejection, one-dispatch payer and invoice recovery, root-key revocation, live in-flight saturation, channel-offline recovery, and TLS-pin mismatch now pass.
   - [x] Rapid blocks reach the live HTLC boundary; the adapter rejects settlement at a 24-block reserve, six blocks before the auto-cancel boundary observed in pinned LND.
 - [ ] Prove that the computed Lightning cutoff always precedes the EVM refund boundary by the published margin. Pure ordering and the live Lightning-height boundary pass; combined EVM/Lightning fork or testnet evidence remains.
 - [ ] Produce a secret-free evidence bundle from the final published release commit containing versions, configuration hashes, test results, and timestamps—never macaroons, invoices, or preimages.

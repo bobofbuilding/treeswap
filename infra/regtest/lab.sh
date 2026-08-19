@@ -77,9 +77,9 @@ wait_for_wallet_rpc() {
   local state=""
   for _ in $(seq 1 90); do
     state=$(compose exec -T "$node" lncli --network=regtest state 2>/dev/null | jq -r '.state // empty' || true)
-    if [[ -n "$state" ]]; then
-      return 0
-    fi
+    case "$state" in
+      NON_EXISTING|LOCKED|RPC_ACTIVE|SERVER_ACTIVE) return 0 ;;
+    esac
     sleep 1
   done
   echo "$node wallet RPC did not become reachable" >&2
@@ -1098,6 +1098,85 @@ smoke_policy_faults() {
   echo "Policy fault smoke passed: fee, amount, in-flight, offline-channel, no-dispatch, recovery, and TLS-pin enforcement."
 }
 
+smoke_route_and_duplicate_failure() {
+  ensure_runtime_env
+  start_lab >/dev/null
+  local invoice payment_request payment_hash invoice_digest intent_digest request_id operation
+  local payment_envelope result track_id track_result matching_before matching_after
+  local replay_result duplicate_id duplicate_envelope duplicate_result
+
+  compose up -d charlie >/dev/null
+  wait_for_wallet_rpc charlie
+  initialize_wallet charlie
+  wait_for_chain_sync charlie
+  wait_for_wallet_state charlie "SERVER_ACTIVE"
+  if (( $(compose exec -T charlie lncli --network=regtest listchannels | jq '.channels | length') != 0 )); then
+    echo "unrouted fault node unexpectedly has a channel" >&2
+    return 1
+  fi
+
+  invoice=$(compose exec -T charlie lncli --network=regtest addinvoice \
+    --amt=10000 --memo=treeswap-no-route --expiry=600)
+  payment_request=$(jq -er '.payment_request' <<<"$invoice")
+  payment_hash=$(compose exec -T alice lncli --network=regtest \
+    --macaroonpath=/root/.lnd/treeswap/payer.macaroon decodepayreq "$payment_request" |
+    jq -er '.payment_hash | ascii_downcase | "0x" + .')
+  invoice_digest="0x$(printf '%s' "$payment_request" | openssl dgst -sha256 -binary | xxd -p -c 256)"
+  intent_digest="0x$(openssl rand -hex 32)"
+  request_id="0x$(openssl rand -hex 32)"
+  operation=$(jq -cn --arg paymentRequest "$payment_request" \
+    '{paymentRequest:$paymentRequest,timeoutSeconds:30,feeLimitSats:"10"}')
+  payment_envelope=$(sign_adapter_authorization /routerrpc.Router/SendPaymentV2 \
+    "$request_id" "$intent_digest" "$payment_hash" "$invoice_digest" 10000 "$operation")
+
+  matching_before=$(compose exec -T alice lncli --network=regtest listpayments --include_incomplete |
+    jq --arg hash "${payment_hash#0x}" '[.payments[] | select((.payment_hash | ascii_downcase) == $hash)] | length')
+  if (( matching_before != 0 )); then
+    echo "unrouted payment hash was not fresh" >&2
+    return 1
+  fi
+  if result=$(printf '%s\n' "$payment_envelope" | call_signed_adapter payer-adapter); then
+    echo "unrouted payment unexpectedly succeeded" >&2
+    return 1
+  fi
+  if ! jq -e '.ambiguous == false and (.error | test("Lightning payment failed.*NO_ROUTE"))' <<<"$result" >/dev/null; then
+    echo "unrouted payment failed for an unexpected reason" >&2
+    jq -c '{error,errorCode,ambiguous}' <<<"$result" >&2
+    return 1
+  fi
+
+  track_id="0x$(openssl rand -hex 32)"
+  track_result=$(call_adapter payer-adapter /routerrpc.Router/TrackPaymentV2 \
+    "$track_id" "$intent_digest" "$payment_hash" "$invoice_digest" 10000 '{}')
+  jq -e --arg paymentHash "$payment_hash" \
+    '.result.status == "FAILED" and .result.paymentHash == $paymentHash and .result.amountSats == "10000"' \
+    <<<"$track_result" >/dev/null
+
+  if replay_result=$(printf '%s\n' "$payment_envelope" | call_signed_adapter payer-adapter); then
+    echo "failed payment authorization was replayed" >&2
+    return 1
+  fi
+  jq -e '.error | test("request identifier was already used")' <<<"$replay_result" >/dev/null
+
+  duplicate_id="0x$(openssl rand -hex 32)"
+  duplicate_envelope=$(sign_adapter_authorization /routerrpc.Router/SendPaymentV2 \
+    "$duplicate_id" "$intent_digest" "$payment_hash" "$invoice_digest" 10000 "$operation")
+  if duplicate_result=$(printf '%s\n' "$duplicate_envelope" | call_signed_adapter payer-adapter); then
+    echo "failed payment hash opened a second Lightning exposure" >&2
+    return 1
+  fi
+  jq -e '.error | test("payment hash was already used for Lightning exposure")' <<<"$duplicate_result" >/dev/null
+
+  matching_after=$(compose exec -T alice lncli --network=regtest listpayments --include_incomplete |
+    jq --arg hash "${payment_hash#0x}" '[.payments[] | select((.payment_hash | ascii_downcase) == $hash)] | length')
+  if (( matching_after != 1 )); then
+    echo "duplicate rejection did not preserve exactly one LND payment record" >&2
+    return 1
+  fi
+  unset payment_request payment_envelope duplicate_envelope
+  echo "Route and duplicate fault smoke passed: one unrouted dispatch failed, tracked FAILED, and both replay paths were rejected without a second LND payment."
+}
+
 smoke_htlc_cutoff() {
   ensure_runtime_env
   start_lab >/dev/null
@@ -1348,6 +1427,7 @@ case "${1:-}" in
   credential-smoke) smoke_credential_lifecycle ;;
   invoice-fault-smoke) smoke_invoice_faults ;;
   policy-fault-smoke) smoke_policy_faults ;;
+  route-fault-smoke) smoke_route_and_duplicate_failure ;;
   htlc-cutoff-smoke) smoke_htlc_cutoff ;;
   coordinator-smoke) smoke_coordinator_reconciliation ;;
   coordinator-invoice-smoke) smoke_coordinator_invoice_reconciliation ;;
@@ -1355,7 +1435,7 @@ case "${1:-}" in
   down) stop_lab ;;
   destroy) destroy_lab ;;
   *)
-    echo "Usage: $0 {up|smoke|adapter-smoke|credential-smoke|invoice-fault-smoke|policy-fault-smoke|htlc-cutoff-smoke|coordinator-smoke|coordinator-invoice-smoke|status|down|destroy}" >&2
+    echo "Usage: $0 {up|smoke|adapter-smoke|credential-smoke|invoice-fault-smoke|policy-fault-smoke|route-fault-smoke|htlc-cutoff-smoke|coordinator-smoke|coordinator-invoice-smoke|status|down|destroy}" >&2
     exit 2
     ;;
 esac

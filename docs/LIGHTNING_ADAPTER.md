@@ -44,6 +44,8 @@ The audit record contains hashes, integer amount, method, decision, and reason c
 
 `npm run regtest:policy-fault-smoke` proves excessive fee and per-payment requests never reach LND, saturates the node with two real held HTLCs and enforces the aggregate in-flight cap, rejects while the only channel is offline, recovers after the peer and channel return, and refuses to start a disposable adapter with a mismatched TLS pin. Each pre-dispatch rejection is followed by read-only `NOT_FOUND` tracking once the service is healthy.
 
+`npm run regtest:route-fault-smoke` pays a standard invoice from a synced third node with no channels. It requires one terminal `FAILED/NO_ROUTE` dispatch, matching read-only tracking, rejection of the exact authorization replay, rejection of a new authorization that reuses the payment hash, and exactly one matching LND payment record. It also runs successfully from empty regtest volumes.
+
 `npm run regtest:htlc-cutoff-smoke` rapidly advances a real accepted HTLC to TreeSwap's 24-block settlement reserve. The adapter rejects the correct preimage at the exact boundary, then cancellation releases the original payer. The reserve is deliberately six blocks earlier than the 18-block LND auto-cancel boundary observed with the pinned release.
 
 `npm run regtest:coordinator-smoke` pays a real 10,000-sat standard invoice, deliberately loses the successful response, reopens the coordinator database in `UNKNOWN`, and recovers success through read-only tracking without a second dispatch. See [Durable coordinator boundary](./COORDINATOR.md).
