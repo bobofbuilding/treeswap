@@ -32,7 +32,8 @@ test("server-renders the TreeSwap prototype", async () => {
 
   const html = await response.text();
   assert.match(html, /<title>TreeSwap \| Bitcoin Lightning ↔ BIT Swaps<\/title>/i);
-  assert.match(html, /Swap Lightning sats/);
+  assert.match(html, /Lightning ↔/);
+  assert.match(html, /BIT swaps/);
   assert.match(html, /1 BIT = 100 sats/);
   assert.match(html, /No wallets connected · No real funds/);
   assert.match(html, /One bridge · Two roles/i);

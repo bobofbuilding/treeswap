@@ -2,6 +2,13 @@
 
 import { useEffect, useState } from "react";
 import Link from "next/link";
+import {
+  calculateLiquidityPlan,
+  calculateQuote,
+  parseAmount,
+  PAR_SATS,
+  sanitizeAmount,
+} from "@/lib/product.mjs";
 
 type Direction = "lightning-to-bit" | "bit-to-lightning";
 type View = "swap" | "pool";
@@ -16,8 +23,6 @@ type Offer = {
 };
 
 const BIT_CONTRACT = "0x57A447E4d5e18A9423408C365963A73F08B9d18C";
-const PAR_SATS = 100;
-
 const offerBook: Record<Direction, Offer[]> = {
   "lightning-to-bit": [
     {
@@ -102,20 +107,27 @@ export default function Home() {
   const [poolReceipt, setPoolReceipt] = useState(false);
 
   const offers = offerBook[direction];
-  const inputAmount = Number(amount.replaceAll(",", "")) || 0;
+  const inputAmount = parseAmount(amount);
   const activeOffer = offers[selectedOffer] ?? offers[0];
-  const inputIsSats = direction === "lightning-to-bit";
-  const parOutput = inputIsSats ? inputAmount / PAR_SATS : inputAmount * PAR_SATS;
-  const intentFee = (parOutput * activeOffer.feeBps) / 10_000;
-  const outputAmount = Math.max(parOutput - intentFee - activeOffer.routeFee, 0);
+  const activeQuote = calculateQuote(
+    direction,
+    inputAmount,
+    activeOffer.feeBps,
+    activeOffer.routeFee,
+  );
+  const inputIsSats = activeQuote.inputIsSats;
+  const parOutput = activeQuote.referenceOutput;
+  const outputAmount = activeQuote.output;
   const feeLabel = `${(activeOffer.feeBps / 100).toFixed(2)}%`;
 
-  const lightningReserve = Number(lightningLiquidity) || 0;
-  const bitReserve = Number(bitLiquidity) || 0;
-  const usableLightning = Math.floor(lightningReserve * 0.75);
-  const usableBit = bitReserve * 0.75;
-  const balancedCapacity = Math.min(usableLightning, usableBit * PAR_SATS);
-  const fillCap = Math.floor(balancedCapacity * 0.05);
+  const {
+    lightningReserve,
+    bitReserve,
+    usableLightning,
+    usableBit,
+    balancedCapacity,
+    fillCap,
+  } = calculateLiquidityPlan(parseAmount(lightningLiquidity), parseAmount(bitLiquidity));
 
   const quoteExpiry = "00:24";
 
@@ -184,13 +196,10 @@ export default function Home() {
         <div className="hero-copy">
           <p className="eyebrow">BITCOIN LIGHTNING ↔ BIT</p>
           <h1>
-            Swap Lightning sats
-            <br />
-            and <em>BIT.</em>
+            Lightning ↔ <em>BIT swaps.</em>
           </h1>
           <p className="hero-deck">
-            Tell TreeSwap what you want to receive. Independent solvers return
-            signed quotes, you choose one, and a shared payment secret settles both sides.
+            Compare signed solver quotes. Choose one. Settle with one payment secret.
           </p>
           <div className="hero-actions">
             <a href="#top" onClick={() => setView("swap")}>Explore a swap</a>
@@ -233,7 +242,7 @@ export default function Home() {
                     id="swap-amount"
                     inputMode="decimal"
                     value={amount}
-                    onChange={(event) => setAmount(event.target.value.replace(/[^0-9.]/g, ""))}
+                    onChange={(event) => setAmount(sanitizeAmount(event.target.value))}
                     aria-label={`Amount in ${inputIsSats ? "sats" : "BIT"}`}
                   />
                   <span className={`asset-chip ${inputIsSats ? "btc" : "bit"}`}>
@@ -272,13 +281,12 @@ export default function Home() {
               </div>
               <div className="offer-list">
                 {offers.map((offer, index) => {
-                  const offerBase = inputIsSats
-                    ? inputAmount / PAR_SATS
-                    : inputAmount * PAR_SATS;
-                  const offerOutput = Math.max(
-                    offerBase - (offerBase * offer.feeBps) / 10_000 - offer.routeFee,
-                    0,
-                  );
+                  const offerOutput = calculateQuote(
+                    direction,
+                    inputAmount,
+                    offer.feeBps,
+                    offer.routeFee,
+                  ).output;
                   return (
                     <button
                       className={`offer-row ${selectedOffer === index ? "selected" : ""}`}
@@ -353,7 +361,7 @@ export default function Home() {
                       id="lightning-liquidity"
                       inputMode="numeric"
                       value={lightningLiquidity}
-                      onChange={(event) => { setLightningLiquidity(event.target.value.replace(/[^0-9]/g, "")); setPoolReceipt(false); }}
+                      onChange={(event) => { setLightningLiquidity(sanitizeAmount(event.target.value, false)); setPoolReceipt(false); }}
                     />
                     <span className="asset-chip btc"><i>₿</i>sats</span>
                   </div>
@@ -367,7 +375,7 @@ export default function Home() {
                       id="bit-liquidity"
                       inputMode="decimal"
                       value={bitLiquidity}
-                      onChange={(event) => { setBitLiquidity(event.target.value.replace(/[^0-9.]/g, "")); setPoolReceipt(false); }}
+                      onChange={(event) => { setBitLiquidity(sanitizeAmount(event.target.value)); setPoolReceipt(false); }}
                     />
                     <span className="asset-chip bit"><i>B</i>BIT</span>
                   </div>
