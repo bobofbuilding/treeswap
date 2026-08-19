@@ -153,6 +153,15 @@ test("bounds work before signature verification", async () => {
   );
 });
 
+test("rejects untrusted relay labels instead of normalizing signed receipt data", async () => {
+  const malicious = await envelope(solvers[0], 1, 10_000, "relay-a\nforged=true");
+  const second = await envelope(solvers[1], 2, 10_100, "relay-b");
+  assert.throws(
+    () => buildReceivedQuoteBook({ request, envelopes: [malicious, second], now: NOW, policy }),
+    /not enough independent valid solver offers/,
+  );
+});
+
 test("rejects stale capacity epochs and routing costs above the signed request cap", async () => {
   const stale = await envelope(solvers[0], 1, 10_000, "relay-a");
   stale.offer.capacityEpoch = request.capacityEpoch - 1;

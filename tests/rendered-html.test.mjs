@@ -55,7 +55,7 @@ test("server-renders the TreeSwap prototype", async () => {
 });
 
 test("keeps swaps non-production and direct sends explicitly wallet-authorized", async () => {
-  const [page, invoiceQr, sendPanel, sendLogic, account, authServer, authVerify, layout, manifest, readme, protocol, threatModel, vault, license] = await Promise.all([
+  const [page, invoiceQr, sendPanel, sendLogic, account, authServer, authVerify, layout, manifest, nextConfig, staticHeaders, inputHandling, readme, protocol, threatModel, vault, license] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/components/InvoiceQr.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/components/SendPanel.tsx", import.meta.url), "utf8"),
@@ -65,6 +65,9 @@ test("keeps swaps non-production and direct sends explicitly wallet-authorized",
     readFile(new URL("../app/api/auth/verify/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/layout.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/manifest.ts", import.meta.url), "utf8"),
+    readFile(new URL("../next.config.ts", import.meta.url), "utf8"),
+    readFile(new URL("../public/_headers", import.meta.url), "utf8"),
+    readFile(new URL("../docs/INPUT_HANDLING.md", import.meta.url), "utf8"),
     readFile(new URL("../README.md", import.meta.url), "utf8"),
     readFile(new URL("../docs/PROTOCOL.md", import.meta.url), "utf8"),
     readFile(new URL("../docs/THREAT_MODEL.md", import.meta.url), "utf8"),
@@ -94,6 +97,11 @@ test("keeps swaps non-production and direct sends explicitly wallet-authorized",
   assert.match(layout, /favicon\.png/);
   assert.match(layout, /apple-touch-icon\.png/);
   assert.match(manifest, /treeswap-neon-icon\.png/);
+  assert.match(nextConfig, /Content-Security-Policy/);
+  assert.match(nextConfig, /frame-ancestors 'none'/);
+  assert.match(staticHeaders, /X-Content-Type-Options: nosniff/);
+  assert.match(inputHandling, /never silently rewritten/);
+  assert.doesNotMatch(page, /dangerouslySetInnerHTML/);
   assert.match(account, /Sign in with Ethereum/);
   assert.match(account, /Attach email/);
   assert.match(account, /current prototype does not send messages/i);

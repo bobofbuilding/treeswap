@@ -15,6 +15,7 @@ import {
   roundUpAmount,
   sanitizeAmount,
 } from "@/lib/product.mjs";
+import { sanitizeSolverLabel } from "@/lib/untrusted-text.mjs";
 
 type Direction = "lightning-to-bit" | "bit-to-lightning";
 type View = "pay-invoice" | "get-bit" | "send" | "pool";
@@ -33,14 +34,14 @@ const DEMO_INVOICE = "lnbc2500u1qpzry9x8gf2tvdw0s3jn54khce6mua7l";
 const DEMO_ADDRESS = "0x1111111111111111111111111111111111111111";
 const offerBook: Record<Direction, Offer[]> = {
   "lightning-to-bit": [
-    { name: "Rootline", kind: "Solver", feeBps: 18, routeFee: 0, speed: "~12 sec", color: "mint" },
-    { name: "Arbor Nine", kind: "Solver", feeBps: 28, routeFee: 0, speed: "~18 sec", color: "orange" },
-    { name: "Canopy Labs", kind: "Solver", feeBps: 34, routeFee: 0, speed: "~21 sec", color: "violet" },
+    { name: sanitizeSolverLabel("Rootline"), kind: "Solver", feeBps: 18, routeFee: 0, speed: "~12 sec", color: "mint" },
+    { name: sanitizeSolverLabel("Arbor Nine"), kind: "Solver", feeBps: 28, routeFee: 0, speed: "~18 sec", color: "orange" },
+    { name: sanitizeSolverLabel("Canopy Labs"), kind: "Solver", feeBps: 34, routeFee: 0, speed: "~21 sec", color: "violet" },
   ],
   "bit-to-lightning": [
-    { name: "Rootline", kind: "Solver", feeBps: 72, routeFee: 6, speed: "~9 sec", color: "mint" },
-    { name: "Canopy Labs", kind: "Solver", feeBps: 85, routeFee: 12, speed: "~15 sec", color: "orange" },
-    { name: "Arbor Nine", kind: "Solver", feeBps: 97, routeFee: 8, speed: "~19 sec", color: "blue" },
+    { name: sanitizeSolverLabel("Rootline"), kind: "Solver", feeBps: 72, routeFee: 6, speed: "~9 sec", color: "mint" },
+    { name: sanitizeSolverLabel("Canopy Labs"), kind: "Solver", feeBps: 85, routeFee: 12, speed: "~15 sec", color: "orange" },
+    { name: sanitizeSolverLabel("Arbor Nine"), kind: "Solver", feeBps: 97, routeFee: 8, speed: "~19 sec", color: "blue" },
   ],
 };
 

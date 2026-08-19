@@ -200,7 +200,11 @@ Anyone, including an unrelated mempool bot, may relay a valid preimage, but both
 
 ### TS-M07 — Data and UI injection
 
+**Status:** Resolved with canonical signed identifiers, bounded text-only displays, structured logs, and browser response controls
+
 Invoice descriptions, solver names, token metadata, and memos are untrusted strings. Escape them in every interface and log, cap length, avoid rendering arbitrary markup, and never treat invoice text as instructions.
+
+Signed relay identifiers now fail unless their original bytes are already canonical; they are never rewritten into a possibly colliding identity. Display-only labels are Unicode-normalized, stripped of invisible and bidirectional controls, forced onto one line, and length-capped. React renders dynamic values as text, audit helpers emit one bounded JSON record, and no invoice text is passed to an instruction or authorization path. CSP, anti-framing, no-sniff, referrer, cross-origin, and browser-permission headers are defined for both Next.js/Vercel and the static worker output. Adversarial tests cover markup, Unicode controls, oversized values, canonicalization collisions, and log-line forgery. See [Untrusted text boundary](./INPUT_HANDLING.md).
 
 ### TS-M08 — Privacy leakage
 
