@@ -3,9 +3,9 @@ import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
 
 const siteUrl = "https://treeswap.vercel.app";
-const title = "TreeSwap | Bitcoin Lightning ↔ BIT Swaps";
+const title = "TreeSwap | Pay Lightning Invoices with BIT";
 const description =
-  "Compare signed solver quotes to swap Bitcoin Lightning sats and Bittrees BIT. Explore TreeSwap's safety-first, non-custodial prototype.";
+  "Pay a Bitcoin Lightning invoice with Bittrees BIT, or create a Lightning invoice to receive BIT. Compare signed solver quotes in TreeSwap's safety-first prototype.";
 
 const geistSans = Geist({
   variable: "--font-geist-sans",
@@ -40,7 +40,7 @@ export const metadata: Metadata = {
         url: "/og.png",
         width: 1200,
         height: 630,
-        alt: "TreeSwap — Swap Lightning sats and BIT",
+        alt: "TreeSwap — Pay Lightning invoices with BIT",
       },
     ],
   },

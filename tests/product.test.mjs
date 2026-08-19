@@ -4,7 +4,12 @@ import test from "node:test";
 import {
   calculateLiquidityPlan,
   calculateQuote,
+  calculateRequiredInput,
+  hasMainnetBolt11Shape,
+  normalizeBolt11,
   parseAmount,
+  parseBolt11AmountSats,
+  roundUpAmount,
   sanitizeAmount,
 } from "../lib/product.mjs";
 
@@ -25,6 +30,26 @@ test("converts BIT to Lightning and includes routing in the net output", () => {
 test("never displays a negative output", () => {
   assert.equal(calculateQuote("bit-to-lightning", 1, 10_000, 500).output, 0);
   assert.equal(calculateQuote("lightning-to-bit", Number.NaN, 18).output, 0);
+});
+
+test("calculates the input required to satisfy an exact invoice amount", () => {
+  const bitRequired = calculateRequiredInput("bit-to-lightning", 250_000, 72, 6);
+  assert.ok(Math.abs(bitRequired - 2_518.190975) < 0.0001);
+
+  const satsRequired = calculateRequiredInput("lightning-to-bit", 2_500, 18);
+  assert.ok(Math.abs(satsRequired - 250_450.81146) < 0.0001);
+  assert.equal(calculateRequiredInput("lightning-to-bit", 2_500, 10_000), 0);
+  assert.equal(roundUpAmount(bitRequired, 6), 2_518.190976);
+  assert.equal(roundUpAmount(satsRequired), 250_451);
+});
+
+test("normalizes and previews mainnet BOLT 11 invoice amounts", () => {
+  const invoice = "LIGHTNING: LNBC2500U1QPZ RY9X8GF2TVDW0S3JN54KHCE6MUA7L";
+  assert.equal(normalizeBolt11(invoice), "lnbc2500u1qpzry9x8gf2tvdw0s3jn54khce6mua7l");
+  assert.equal(hasMainnetBolt11Shape(invoice), true);
+  assert.equal(parseBolt11AmountSats(invoice), 250_000);
+  assert.equal(parseBolt11AmountSats("lnbc1amountlessrequestdemo"), null);
+  assert.equal(hasMainnetBolt11Shape("lntb2500u1testnetrequestdemo"), false);
 });
 
 test("keeps a reserve and caps the suggested first fill", () => {
@@ -48,4 +73,3 @@ test("sanitizes malformed amounts before calculation", () => {
   assert.equal(parseAmount("not-a-number"), 0);
   assert.equal(parseAmount("-3"), 0);
 });
-

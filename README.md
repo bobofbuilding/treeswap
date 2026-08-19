@@ -6,7 +6,7 @@ The prototype assumes a business par value of **1 BIT = 100 sats**. This value i
 
 ## What is included
 
-- Interactive Lightning → BIT and BIT → Lightning quote builder
+- Invoice-first preview for paying Lightning invoices with BIT or receiving BIT through a solver invoice
 - Competing, short-lived independent-solver quotes
 - User-selected signed-quote model with no global best-price promise
 - Directional fees, with the BIT → Lightning path priced higher
@@ -17,7 +17,7 @@ The prototype assumes a business par value of **1 BIT = 100 sats**. This value i
 - Liquidity operations plan in [`docs/LIQUIDITY_FUNDING.md`](docs/LIQUIDITY_FUNDING.md)
 - Adversarial design review and launch gates in [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md)
 
-The interface remains a simulation. It does not connect wallets, create Lightning invoices, transfer BIT, or publish quotes. The Solidity vault is local and undeployed.
+The interface remains a simulation. It does not connect wallets, create payable Lightning invoices, transfer BIT, or publish quotes. The Solidity vault is local and undeployed.
 
 ## Security status
 

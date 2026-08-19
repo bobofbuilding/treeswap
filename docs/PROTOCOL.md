@@ -8,6 +8,8 @@ TreeSwap coordinates full-fill swaps between Lightning sats and BIT on Ethereum 
 
 The product displays `1 BIT = 100 sats` as a project reference value. The BIT contract does not enforce that price. TreeSwap never promises unconditional redemption at par; users accept exact integer amounts from short-lived solver quotes.
 
+The user experience is invoice-first. BIT → Lightning starts with an exact, amount-bearing BOLT 11 invoice supplied by the user. Lightning → BIT fixes the BIT amount and Ethereum beneficiary before the selected solver creates the hold invoice. Amountless invoices remain unsupported in v1.
+
 ## 2. Minimal participants
 
 | Participant | Responsibility |

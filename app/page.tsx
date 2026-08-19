@@ -4,14 +4,17 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import {
   calculateLiquidityPlan,
-  calculateQuote,
+  calculateRequiredInput,
+  hasMainnetBolt11Shape,
+  normalizeBolt11,
   parseAmount,
-  PAR_SATS,
+  parseBolt11AmountSats,
+  roundUpAmount,
   sanitizeAmount,
 } from "@/lib/product.mjs";
 
 type Direction = "lightning-to-bit" | "bit-to-lightning";
-type View = "swap" | "pool";
+type View = "pay-invoice" | "get-bit" | "pool";
 
 type Offer = {
   name: string;
@@ -23,6 +26,8 @@ type Offer = {
 };
 
 const BIT_CONTRACT = "0x57A447E4d5e18A9423408C365963A73F08B9d18C";
+const DEMO_INVOICE = "lnbc2500u1qpzry9x8gf2tvdw0s3jn54khce6mua7l";
+const DEMO_ADDRESS = "0x1111111111111111111111111111111111111111";
 const offerBook: Record<Direction, Offer[]> = {
   "lightning-to-bit": [
     { name: "Rootline", kind: "Solver", feeBps: 18, routeFee: 0, speed: "~12 sec", color: "mint" },
@@ -37,10 +42,10 @@ const offerBook: Record<Direction, Offer[]> = {
 };
 
 const intentSteps = [
-  { title: "Swap terms signed", note: "Amounts, fees, recipient, and expiry are fixed" },
-  { title: "Selected quote locked", note: "One solver is bound to the terms" },
-  { title: "Payment hash matched", note: "Both legs share one secret" },
-  { title: "Assets released", note: "Preimage settles the swap" },
+  { title: "Invoice checked", note: "Amount, network, expiry, and payment hash are fixed" },
+  { title: "Solver quote locked", note: "One signed, exact-output quote is selected" },
+  { title: "Payment hash matched", note: "The Lightning and BIT legs share one secret" },
+  { title: "Invoice settled", note: "The preimage releases the destination asset" },
 ];
 
 function numberFormat(value: number, maximumFractionDigits = 0) {
@@ -54,32 +59,43 @@ function shortAddress(value: string) {
 }
 
 export default function Home() {
-  const [view, setView] = useState<View>("swap");
-  const [direction, setDirection] = useState<Direction>("lightning-to-bit");
-  const [amount, setAmount] = useState("250000");
+  const [view, setView] = useState<View>("pay-invoice");
+  const [invoice, setInvoice] = useState("");
+  const [receiveBitAmount, setReceiveBitAmount] = useState("2500");
+  const [receiveAddress, setReceiveAddress] = useState("");
   const [selectedOffer, setSelectedOffer] = useState(0);
   const [intentOpen, setIntentOpen] = useState(false);
   const [intentPhase, setIntentPhase] = useState(0);
+  const [paymentStarted, setPaymentStarted] = useState(false);
   const [lightningLiquidity, setLightningLiquidity] = useState("5000000");
   const [bitLiquidity, setBitLiquidity] = useState("50000");
   const [poolReceipt, setPoolReceipt] = useState(false);
 
+  const direction: Direction = view === "get-bit" ? "lightning-to-bit" : "bit-to-lightning";
+  const isPayInvoice = view === "pay-invoice";
   const offers = offerBook[direction];
-  const inputAmount = parseAmount(amount);
   const activeOffer = offers[selectedOffer] ?? offers[0];
-  const activeQuote = calculateQuote(
+  const decodedInvoiceAmount = parseBolt11AmountSats(invoice);
+  const desiredOutput = isPayInvoice
+    ? decodedInvoiceAmount ?? 0
+    : parseAmount(receiveBitAmount);
+  const requiredInput = calculateRequiredInput(
     direction,
-    inputAmount,
+    desiredOutput,
     activeOffer.feeBps,
     activeOffer.routeFee,
   );
-  const inputIsSats = activeQuote.inputIsSats;
+  const inputIsSats = direction === "lightning-to-bit";
   const inputAsset = inputIsSats ? "sats" : "BIT";
-  const outputAsset = inputIsSats ? "BIT" : "sats";
-  const parOutput = activeQuote.referenceOutput;
-  const outputAmount = activeQuote.output;
+  const displayInput = roundUpAmount(requiredInput, inputIsSats ? 0 : 6);
   const feeLabel = `${(activeOffer.feeBps / 100).toFixed(2)}%`;
-  const outputDigits = inputIsSats ? 2 : 0;
+  const inputDigits = inputIsSats ? 0 : 6;
+  const invoiceHasShape = hasMainnetBolt11Shape(invoice);
+  const receiveAddressHasShape = /^0x[0-9a-fA-F]{40}$/.test(receiveAddress);
+  const canReview = isPayInvoice
+    ? invoiceHasShape && desiredOutput > 0
+    : receiveAddressHasShape && desiredOutput > 0;
+  const generatedInvoice = `lnbc${Math.max(Math.ceil(displayInput * 10), 1)}n1qpzry9x8gf2tvdw0s3jn54khce6mua7l`;
 
   const {
     lightningReserve,
@@ -91,28 +107,26 @@ export default function Home() {
   } = calculateLiquidityPlan(parseAmount(lightningLiquidity), parseAmount(bitLiquidity));
 
   useEffect(() => {
-    if (!intentOpen || intentPhase >= intentSteps.length) return;
+    if (!intentOpen || !paymentStarted || intentPhase >= intentSteps.length) return;
     const timer = window.setTimeout(() => {
       setIntentPhase((phase) => Math.min(phase + 1, intentSteps.length));
     }, 1050);
     return () => window.clearTimeout(timer);
-  }, [intentOpen, intentPhase]);
+  }, [intentOpen, intentPhase, paymentStarted]);
 
   function selectView(next: View) {
     setView(next);
+    setSelectedOffer(0);
     setPoolReceipt(false);
   }
 
-  function flipDirection() {
-    const next = direction === "lightning-to-bit" ? "bit-to-lightning" : "lightning-to-bit";
-    const converted = direction === "lightning-to-bit" ? inputAmount / PAR_SATS : inputAmount * PAR_SATS;
-    setDirection(next);
-    setAmount(String(Math.max(Math.round(converted * 100) / 100, 0)));
-    setSelectedOffer(0);
+  function loadDemoInvoice() {
+    setInvoice(DEMO_INVOICE);
   }
 
   function beginIntent() {
     setIntentPhase(0);
+    setPaymentStarted(false);
     setIntentOpen(true);
   }
 
@@ -140,19 +154,36 @@ export default function Home() {
       <section className="trade-stage" id="trade">
         <header className="trade-intro">
           <p className="eyebrow">BITCOIN LIGHTNING ↔ BIT</p>
-          <h1>Swap sats and BIT.</h1>
-          <p>Compare signed solver quotes. Review one clear price.</p>
+          <h1>Swap through an invoice.</h1>
+          <p>Paste an invoice to pay with BIT, or create one to receive BIT.</p>
         </header>
 
-        <section className="exchange-card" aria-label={view === "swap" ? "TreeSwap quote builder" : "Solver liquidity planner"}>
+        <section
+          className="exchange-card"
+          aria-label={
+            view === "pool"
+              ? "Solver liquidity planner"
+              : isPayInvoice
+                ? "Pay a Lightning invoice with BIT"
+                : "Create a Lightning invoice to receive BIT"
+          }
+        >
           <div className="card-tabs" role="group" aria-label="TreeSwap tools">
             <button
               type="button"
-              aria-pressed={view === "swap"}
-              className={view === "swap" ? "active" : ""}
-              onClick={() => selectView("swap")}
+              aria-pressed={view === "pay-invoice"}
+              className={view === "pay-invoice" ? "active" : ""}
+              onClick={() => selectView("pay-invoice")}
             >
-              Swap
+              Pay invoice
+            </button>
+            <button
+              type="button"
+              aria-pressed={view === "get-bit"}
+              className={view === "get-bit" ? "active" : ""}
+              onClick={() => selectView("get-bit")}
+            >
+              Get BIT
             </button>
             <button
               type="button"
@@ -160,51 +191,128 @@ export default function Home() {
               className={view === "pool" ? "active" : ""}
               onClick={() => selectView("pool")}
             >
-              Solver liquidity
+              Liquidity
             </button>
-            <a href="#security" aria-label="Read TreeSwap safety requirements">Safety ↗</a>
           </div>
 
-          {view === "swap" ? (
+          {view !== "pool" ? (
             <div className="swap-view">
-              <div className="amount-panel">
-                <div className="panel-label"><label htmlFor="swap-amount">You pay</label><span>Prototype balance</span></div>
-                <div className="amount-row">
-                  <input
-                    id="swap-amount"
-                    inputMode="decimal"
-                    value={amount}
-                    onChange={(event) => setAmount(sanitizeAmount(event.target.value))}
-                    aria-label={`Amount in ${inputAsset}`}
-                  />
-                  <span className={`asset-chip ${inputIsSats ? "btc" : "bit"}`}>
-                    <i>{inputIsSats ? "₿" : "B"}</i>{inputAsset}
-                  </span>
-                </div>
-              </div>
+              {isPayInvoice ? (
+                <>
+                  <div className="invoice-panel">
+                    <div className="invoice-label">
+                      <label htmlFor="lightning-invoice">Lightning invoice</label>
+                      <button type="button" onClick={loadDemoInvoice}>Use demo</button>
+                    </div>
+                    <textarea
+                      id="lightning-invoice"
+                      value={invoice}
+                      onChange={(event) => setInvoice(event.target.value.slice(0, 4096))}
+                      placeholder="Paste a mainnet BOLT 11 invoice (lnbc…)"
+                      rows={3}
+                      spellCheck={false}
+                    />
+                    <div className={`invoice-status ${invoice && (!invoiceHasShape || !decodedInvoiceAmount) ? "error" : ""}`}>
+                      <i />
+                      <span>
+                        {!invoice
+                          ? "Paste an invoice. Nothing is sent yet."
+                          : !invoiceHasShape
+                            ? "This does not look like a mainnet BOLT 11 invoice."
+                            : !decodedInvoiceAmount
+                              ? "Amountless invoices are not supported. The amount must be encoded."
+                              : "Basic invoice shape recognized. Full verification is required before payment."}
+                      </span>
+                    </div>
+                  </div>
 
-              <button type="button" className="direction-button" onClick={flipDirection} aria-label="Reverse swap direction">↓</button>
+                  <div className="amount-panel invoice-amount-panel">
+                    <div className="panel-label">
+                      <span>Invoice receives</span>
+                      <span>Read from invoice</span>
+                    </div>
+                    <div className="amount-row">
+                      <strong>{decodedInvoiceAmount ? numberFormat(decodedInvoiceAmount) : "Amount required"}</strong>
+                      <span className="asset-chip btc"><i>₿</i>sats</span>
+                    </div>
+                  </div>
 
-              <div className="amount-panel receive-panel">
-                <div className="panel-label"><span>You receive</span><span>Exact quote</span></div>
-                <div className="amount-row">
-                  <strong>{numberFormat(outputAmount, outputDigits)}</strong>
-                  <span className={`asset-chip ${inputIsSats ? "bit" : "btc"}`}>
-                    <i>{inputIsSats ? "B" : "₿"}</i>{outputAsset}
-                  </span>
-                </div>
-              </div>
+                  <div className="invoice-flow-arrow" aria-hidden="true">↓</div>
+
+                  <div className="amount-panel receive-panel">
+                    <div className="panel-label"><span>You lock</span><span>Exact solver quote</span></div>
+                    <div className="amount-row">
+                      <strong>{numberFormat(displayInput, inputDigits)}</strong>
+                      <span className="asset-chip bit"><i>B</i>BIT</span>
+                    </div>
+                  </div>
+                </>
+              ) : (
+                <>
+                  <div className="amount-panel">
+                    <div className="panel-label"><label htmlFor="bit-receive-amount">You receive</label><span>Exact amount</span></div>
+                    <div className="amount-row">
+                      <input
+                        id="bit-receive-amount"
+                        inputMode="decimal"
+                        value={receiveBitAmount}
+                        onChange={(event) => setReceiveBitAmount(sanitizeAmount(event.target.value))}
+                        aria-label="BIT to receive"
+                      />
+                      <span className="asset-chip bit"><i>B</i>BIT</span>
+                    </div>
+                  </div>
+
+                  <div className="address-panel">
+                    <div className="invoice-label">
+                      <label htmlFor="bit-receive-address">BIT receive address</label>
+                      <button type="button" onClick={() => setReceiveAddress(DEMO_ADDRESS)}>Use demo</button>
+                    </div>
+                    <input
+                      id="bit-receive-address"
+                      value={receiveAddress}
+                      onChange={(event) => setReceiveAddress(event.target.value.trim().slice(0, 42))}
+                      placeholder="0x…"
+                      spellCheck={false}
+                    />
+                    <div className={`invoice-status ${receiveAddress && !receiveAddressHasShape ? "error" : ""}`}>
+                      <i />
+                      <span>
+                        {!receiveAddress
+                          ? "This address is bound before the invoice can be paid."
+                          : receiveAddressHasShape
+                            ? "Recipient fixed for this quote preview."
+                            : "Enter a 42-character Ethereum address."}
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="invoice-flow-arrow" aria-hidden="true">↓</div>
+
+                  <div className="amount-panel receive-panel">
+                    <div className="panel-label"><span>Lightning invoice</span><span>Created after review</span></div>
+                    <div className="amount-row">
+                      <strong>{numberFormat(displayInput)}</strong>
+                      <span className="asset-chip btc"><i>₿</i>sats</span>
+                    </div>
+                  </div>
+                </>
+              )}
 
               <details className="quote-drawer">
                 <summary>
                   <span className={`solver-dot ${activeOffer.color}`} />
-                  <span className="summary-copy"><strong>{activeOffer.name}</strong><small>Best of {offers.length} signed quotes</small></span>
+                  <span className="summary-copy">
+                    <strong>{activeOffer.name}</strong>
+                    <small>{selectedOffer === 0 ? `Best received of ${offers.length}` : `Selected from ${offers.length}`} signed quotes</small>
+                  </span>
                   <span className="summary-price"><strong>{feeLabel}</strong><small>expires 00:24</small></span>
                   <span className="chevron">⌄</span>
                 </summary>
                 <div className="offer-list">
                   {offers.map((offer, index) => {
-                    const offerOutput = calculateQuote(direction, inputAmount, offer.feeBps, offer.routeFee).output;
+                    const offerInput = calculateRequiredInput(direction, desiredOutput, offer.feeBps, offer.routeFee);
+                    const displayOfferInput = roundUpAmount(offerInput, inputIsSats ? 0 : 6);
                     return (
                       <button
                         type="button"
@@ -214,7 +322,7 @@ export default function Home() {
                       >
                         <span className={`solver-dot ${offer.color}`} />
                         <span className="offer-name"><strong>{offer.name}</strong><small>{offer.kind} · {offer.speed}</small></span>
-                        <span className="offer-price"><strong>{numberFormat(offerOutput, outputDigits)} {outputAsset}</strong><small>{(offer.feeBps / 100).toFixed(2)}% fee</small></span>
+                        <span className="offer-price"><strong>{numberFormat(displayOfferInput, inputDigits)} {inputAsset}</strong><small>{(offer.feeBps / 100).toFixed(2)}% fee</small></span>
                         {index === 0 && <span className="best-tag">BEST</span>}
                       </button>
                     );
@@ -223,19 +331,20 @@ export default function Home() {
               </details>
 
               <details className="swap-details">
-                <summary><span>Swap details</span><strong>1 BIT = 100 sats <i>⌄</i></strong></summary>
+                <summary><span>Invoice details</span><strong>1 BIT = 100 sats <i>⌄</i></strong></summary>
                 <div className="detail-rows">
-                  <div><span>Reference conversion</span><strong>{numberFormat(parOutput, outputDigits)} {outputAsset}</strong></div>
+                  <div><span>{isPayInvoice ? "Invoice receives" : "Invoice amount"}</span><strong>{numberFormat(isPayInvoice ? desiredOutput : displayInput, 0)} sats</strong></div>
+                  <div><span>{isPayInvoice ? "BIT locked" : "BIT recipient"}</span><strong>{isPayInvoice ? `${numberFormat(displayInput, 6)} BIT` : receiveAddressHasShape ? shortAddress(receiveAddress) : "Required"}</strong></div>
                   <div><span>Solver fee</span><strong>{feeLabel}</strong></div>
-                  {!inputIsSats && <div><span>Estimated Lightning routing</span><strong>{activeOffer.routeFee} sats</strong></div>}
-                  <div><span>Settlement</span><strong>One payment hash</strong></div>
+                  {isPayInvoice && <div><span>Estimated Lightning routing</span><strong>{activeOffer.routeFee} sats</strong></div>}
+                  <div><span>Invoice verification</span><strong>Required before live use</strong></div>
                 </div>
               </details>
 
-              <button type="button" className="primary-action" onClick={beginIntent} disabled={inputAmount <= 0}>
-                Review swap <span>→</span>
+              <button type="button" className="primary-action" onClick={beginIntent} disabled={!canReview}>
+                {isPayInvoice ? "Review invoice payment" : "Create Lightning invoice"} <span>→</span>
               </button>
-              <p className="microcopy">Simulation only. No signature or payment will be requested.</p>
+              <p className="microcopy">Simulation only. No BIT will be locked and no invoice will be paid.</p>
             </div>
           ) : (
             <div className="pool-view">
@@ -307,8 +416,8 @@ export default function Home() {
         </section>
 
         <div className="trade-trust" aria-label="Swap guarantees">
-          <span><i>✓</i> Best of 3 quotes</span>
-          <span><i>✓</i> Exact output</span>
+          <span><i>✓</i> Invoice-first</span>
+          <span><i>✓</i> Best received quote</span>
           <span><i>✓</i> No real funds</span>
         </div>
       </section>
@@ -316,13 +425,13 @@ export default function Home() {
       <section className="mechanism" id="mechanism">
         <div className="section-heading">
           <p className="eyebrow">HOW IT WORKS</p>
-          <h2>One swap. Three steps.</h2>
+          <h2>Invoice in. Quote out.</h2>
           <p>There is no shared public liquidity pool. Independent solvers compete to fill a signed request.</p>
         </div>
         <div className="mechanism-grid">
-          <article><span>01</span><h3>Enter an amount</h3><p>Choose Lightning sats or BIT and state the exact outcome you want.</p></article>
-          <article><span>02</span><h3>Pick a quote</h3><p>Compare short-lived, all-in prices from independent solvers.</p></article>
-          <article><span>03</span><h3>Settle together</h3><p>One payment secret completes both legs—or the timeout returns the funds.</p></article>
+          <article><span>01</span><h3>Paste or create</h3><p>Bring an invoice to pay with BIT, or create one to receive BIT.</p></article>
+          <article><span>02</span><h3>Pick a quote</h3><p>Compare short-lived, all-in prices for the exact invoice amount.</p></article>
+          <article><span>03</span><h3>Pay once</h3><p>One payment hash binds the invoice and BIT escrow—or timeout returns the funds.</p></article>
         </div>
       </section>
 
@@ -372,26 +481,66 @@ export default function Home() {
         <div className="modal-backdrop" role="presentation" onMouseDown={() => setIntentOpen(false)}>
           <section className="intent-modal" role="dialog" aria-modal="true" aria-labelledby="intent-title" onMouseDown={(event) => event.stopPropagation()}>
             <button type="button" className="modal-close" onClick={() => setIntentOpen(false)} aria-label="Close simulation">×</button>
-            <span className="modal-kicker">SANDBOX SETTLEMENT</span>
-            <h2 id="intent-title">{intentPhase >= intentSteps.length ? "Intent settled." : "Following the secret…"}</h2>
-            <p>{inputIsSats ? `${numberFormat(inputAmount)} sats → ${numberFormat(outputAmount, 2)} BIT` : `${numberFormat(inputAmount, 2)} BIT → ${numberFormat(outputAmount)} sats`}</p>
-            <div className="intent-path" aria-label="Intent settlement progress">
-              {intentSteps.map((step, index) => {
-                const complete = intentPhase > index;
-                const active = intentPhase === index;
-                return (
-                  <div className={`${complete ? "complete" : ""} ${active ? "current" : ""}`} key={step.title}>
-                    <span>{complete ? "✓" : index + 1}</span>
-                    <div><strong>{step.title}</strong><small>{step.note}</small></div>
-                  </div>
-                );
-              })}
-            </div>
-            <div className="hash-card"><span>Shared payment hash</span><code>7ea4…c91b</code></div>
-            {intentPhase >= intentSteps.length ? (
-              <button type="button" className="primary-action" onClick={() => setIntentOpen(false)}>Done <span>✓</span></button>
+            <span className="modal-kicker">INVOICE CHECKOUT · PROTOTYPE</span>
+            <h2 id="intent-title">
+              {!paymentStarted
+                ? isPayInvoice
+                  ? "Pay this invoice with BIT."
+                  : "Pay this invoice to receive BIT."
+                : intentPhase >= intentSteps.length
+                  ? "Invoice settled."
+                  : "Following the payment hash…"}
+            </h2>
+            <p>
+              {isPayInvoice
+                ? `${numberFormat(displayInput, 6)} BIT pays a ${numberFormat(desiredOutput)} sat invoice.`
+                : `${numberFormat(displayInput)} sats releases ${numberFormat(desiredOutput, 2)} BIT.`}
+            </p>
+
+            {!paymentStarted ? (
+              <>
+                <div className="invoice-code-card">
+                  <span>{isPayInvoice ? "Invoice to be paid" : "Prototype invoice to pay"}</span>
+                  <code>{isPayInvoice ? normalizeBolt11(invoice) : generatedInvoice}</code>
+                </div>
+                <div className="checkout-rows">
+                  <div><span>Selected solver</span><strong>{activeOffer.name}</strong></div>
+                  <div><span>Invoice amount</span><strong>{numberFormat(isPayInvoice ? desiredOutput : displayInput)} sats</strong></div>
+                  <div><span>BIT amount</span><strong>{numberFormat(isPayInvoice ? displayInput : desiredOutput, 6)} BIT</strong></div>
+                  <div><span>Solver fee</span><strong>{feeLabel}</strong></div>
+                </div>
+                <div className="checkout-warning">
+                  Prototype preview only. A live flow must verify the invoice checksum, signature, expiry, network, amount, and payment hash before locking funds.
+                </div>
+                <button
+                  type="button"
+                  className="primary-action"
+                  onClick={() => { setIntentPhase(0); setPaymentStarted(true); }}
+                >
+                  Simulate invoice payment <span>→</span>
+                </button>
+              </>
             ) : (
-              <div className="settling-line"><i /> Simulating settlement</div>
+              <>
+                <div className="intent-path" aria-label="Invoice settlement progress">
+                  {intentSteps.map((step, index) => {
+                    const complete = intentPhase > index;
+                    const active = intentPhase === index;
+                    return (
+                      <div className={`${complete ? "complete" : ""} ${active ? "current" : ""}`} key={step.title}>
+                        <span>{complete ? "✓" : index + 1}</span>
+                        <div><strong>{step.title}</strong><small>{step.note}</small></div>
+                      </div>
+                    );
+                  })}
+                </div>
+                <div className="hash-card"><span>Shared payment hash</span><code>7ea4…c91b</code></div>
+                {intentPhase >= intentSteps.length ? (
+                  <button type="button" className="primary-action" onClick={() => setIntentOpen(false)}>Done <span>✓</span></button>
+                ) : (
+                  <div className="settling-line"><i /> Simulating invoice settlement</div>
+                )}
+              </>
             )}
           </section>
         </div>

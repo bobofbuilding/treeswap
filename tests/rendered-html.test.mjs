@@ -31,13 +31,13 @@ test("server-renders the TreeSwap prototype", async () => {
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
 
   const html = await response.text();
-  assert.match(html, /<title>TreeSwap \| Bitcoin Lightning ↔ BIT Swaps<\/title>/i);
-  assert.match(html, /Swap sats and BIT/);
-  assert.match(html, /Review swap/);
-  assert.match(html, /Best of .*signed quotes/);
+  assert.match(html, /<title>TreeSwap \| Pay Lightning Invoices with BIT<\/title>/i);
+  assert.match(html, /Swap through an invoice/);
+  assert.match(html, /Review invoice payment/);
+  assert.match(html, /Best received of .*signed quotes/);
   assert.match(html, /1 BIT = 100 sats/);
   assert.match(html, /No wallets connected · No real funds/);
-  assert.match(html, /One swap\. Three steps/i);
+  assert.match(html, /Invoice in\. Quote out/i);
   assert.match(html, /There is no shared public liquidity pool/i);
   assert.match(html, /Four checks block launch/i);
   assert.match(html, /application\/ld\+json/i);
@@ -56,6 +56,8 @@ test("keeps the financial prototype explicitly non-production", async () => {
 
   assert.match(page, /No real funds/);
   assert.match(page, /Simulation only/);
+  assert.match(page, /Amountless invoices are not supported/);
+  assert.match(page, /checksum, signature, expiry/);
   assert.match(page, /short-lived, all-in prices/i);
   assert.match(page, /No shared LP pool/i);
   assert.match(layout, /metadataBase/);
@@ -65,6 +67,7 @@ test("keeps the financial prototype explicitly non-production", async () => {
   assert.match(protocol, /not audited and not ready for real funds/i);
   assert.match(protocol, /1 BIT = 100 sats/);
   assert.match(protocol, /There is no central limit order book/i);
+  assert.match(protocol, /Amountless invoices remain unsupported/i);
   assert.match(threatModel, /TS-C01 — Fixed-par inventory drain/);
   assert.match(threatModel, /TS-C04 — Relay can suppress or reorder quotes/);
   assert.match(license, /MIT License/);
