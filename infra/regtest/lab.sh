@@ -1115,8 +1115,9 @@ smoke_stale_chain_header() {
   ensure_runtime_env
   start_lab >/dev/null
   local stale_container="treeswap-regtest-stale-payer"
-  local height_before height_after info best_header_timestamp header_age_seconds
+  local height_before height_after info
   local invoice payment_request payment_hash invoice_digest intent_digest request_id operation envelope result decode_result
+  local baseline_id baseline_operation baseline_envelope baseline_result
 
   trap 'docker rm -f "${stale_container:-treeswap-regtest-stale-payer}" >/dev/null 2>&1 || true' EXIT
   docker rm -f "$stale_container" >/dev/null 2>&1 || true
@@ -1125,19 +1126,6 @@ smoke_stale_chain_header() {
   jq -e '.synced_to_chain == true and .wallet_synced == true and (.best_header_timestamp | tonumber) > 0' \
     <<<"$info" >/dev/null
   height_before=$(jq -er '.block_height | tonumber' <<<"$info")
-  sleep 3
-  info=$(compose exec -T alice lncli --network=regtest getinfo)
-  height_after=$(jq -er '.block_height | tonumber' <<<"$info")
-  if (( height_after != height_before )); then
-    echo "regtest advanced during the deliberate no-block interval" >&2
-    return 1
-  fi
-  best_header_timestamp=$(jq -er '.best_header_timestamp | tonumber' <<<"$info")
-  header_age_seconds=$(($(date +%s) - best_header_timestamp))
-  if (( header_age_seconds <= 1 )); then
-    echo "best header did not cross the disposable stale-header threshold" >&2
-    return 1
-  fi
 
   compose --profile adapter run --rm -d --name "$stale_container" \
     -e MAX_CHAIN_HEADER_AGE_SECONDS=1 \
@@ -1166,6 +1154,23 @@ smoke_stale_chain_header() {
     jq -er '.payment_hash | ascii_downcase | "0x" + .')
   invoice_digest="0x$(printf '%s' "$payment_request" | openssl dgst -sha256 -binary | xxd -p -c 256)"
   intent_digest="0x$(openssl rand -hex 32)"
+  baseline_id="0x$(openssl rand -hex 32)"
+  baseline_operation=$(jq -cn --arg paymentRequest "$payment_request" '{paymentRequest:$paymentRequest}')
+  baseline_envelope=$(sign_adapter_authorization /lnrpc.Lightning/DecodePayReq \
+    "$baseline_id" "$intent_digest" "$payment_hash" "$invoice_digest" 10000 "$baseline_operation")
+  baseline_result=$(printf '%s\n' "$baseline_envelope" |
+    docker exec -i "$stale_container" node /app/infra/lightning-adapter/client.mjs)
+  jq -e --arg paymentHash "$payment_hash" \
+    '.result.paymentHash == $paymentHash and .result.amountSats == "10000"' <<<"$baseline_result" >/dev/null
+
+  sleep 3
+  info=$(compose exec -T alice lncli --network=regtest getinfo)
+  height_after=$(jq -er '.block_height | tonumber' <<<"$info")
+  if (( height_after != height_before )); then
+    echo "regtest advanced during the deliberate no-block interval" >&2
+    return 1
+  fi
+
   request_id="0x$(openssl rand -hex 32)"
   operation=$(jq -cn --arg paymentRequest "$payment_request" \
     '{paymentRequest:$paymentRequest,timeoutSeconds:30,feeLimitSats:"10"}')

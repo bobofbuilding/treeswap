@@ -23,6 +23,7 @@ const policy = {
   maxDailyValueSats: 500_000n,
   maxInFlightSats: 150_000n,
   maxChainHeaderAgeSeconds: 3_600,
+  maxChainHeaderFutureSeconds: 300,
 };
 const transport = {
   tlsVerified: true,
@@ -34,6 +35,7 @@ const service = {
   syncedToChain: true,
   walletSynced: true,
   headerAgeSeconds: 30,
+  headerFutureSeconds: 0,
   capacityEpoch: 7,
   inFlightSats: 25_000n,
   availableSats: 250_000n,
@@ -117,6 +119,9 @@ test("fails closed on TLS pin, private-network, health, or capacity changes", ()
   const stale = authorize({ service: { ...service, healthy: false, headerAgeSeconds: 3_601 } });
   assert.equal(stale.allowed, false);
   assert.match(stale.reasons.join("; "), /best chain header is stale/);
+  const future = authorize({ service: { ...service, healthy: false, headerFutureSeconds: 301 } });
+  assert.equal(future.allowed, false);
+  assert.match(future.reasons.join("; "), /too far in the future/);
   assert.equal(authorize({ service: { ...service, capacityEpoch: 8 } }).allowed, false);
 });
 

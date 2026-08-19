@@ -24,7 +24,7 @@ Before every RPC, `authorizeLightningRpc` independently requires:
 
 1. an active, unexpired, non-browser credential for the exact service role and URI;
 2. verified private-network TLS with the pinned certificate;
-3. a healthy node whose chain and wallet are synced and whose best-header timestamp is inside the configured age ceiling, with at least one active channel, enough direction-specific local or remote liquidity, and the current capacity epoch;
+3. a healthy node whose chain and wallet are synced, whose best-header timestamp is inside configured past-age and future-skew limits, and whose observed height/header has not stopped progressing beyond the age ceiling, with at least one active channel, enough direction-specific local or remote liquidity, and the current capacity epoch;
 4. an unused adapter request ID;
 5. the accepted intent's exact digest, payment hash, invoice digest, and whole-satoshi amount;
 6. per-payment, daily-value, and in-flight caps; and
@@ -44,7 +44,9 @@ The audit record contains hashes, integer amount, method, decision, and reason c
 
 `npm run regtest:policy-fault-smoke` proves excessive fee and per-payment requests never reach LND, saturates the node with two real held HTLCs and enforces the aggregate in-flight cap, rejects while the only channel is offline, recovers after the peer and channel return, and refuses to start a disposable adapter with a mismatched TLS pin. Each pre-dispatch rejection is followed by read-only `NOT_FOUND` tracking once the service is healthy.
 
-`npm run regtest:stale-chain-smoke` proves the adapter does not trust LND's chain-sync boolean alone. It bounds the real `best_header_timestamp`, requires `wallet_synced`, rejects an exact signed payment after a deliberate no-block interval at a compressed threshold, and proves through read-only tracking that no payment reached LND. The normally configured pinned adapter remains healthy on the same node.
+`npm run regtest:stale-chain-smoke` proves the adapter does not trust LND's chain-sync boolean or timestamp age alone. The adapter requires `wallet_synced`, bounds past age and future skew, and tracks local time without height/header progress. After one read-only baseline and a deliberate no-block interval at a compressed threshold, it rejects an exact signed payment and proves through read-only tracking that no payment reached LND. This remains deterministic with a future-dated synthetic regtest header, while the normally configured pinned adapter remains healthy on the same node.
+
+Production should set `MAX_CHAIN_HEADER_AGE_SECONDS` to the reviewed maximum no-progress interval and `MAX_CHAIN_HEADER_FUTURE_SECONDS` to a deliberately small fail-closed skew, recommended at no more than 300 seconds. Regtest uses 3,600 and 7,200 seconds respectively because rapid synthetic mining can create consensus-valid timestamps far ahead of wall time; those lab values are not production defaults.
 
 `npm run regtest:unsynced-chain-smoke` pauses the real payer LND node while regtest advances 500 blocks, observes a genuine false chain- or wallet-sync signal during catch-up, rejects an exact signed payment, and proves zero dispatch after both sync signals and the active channel recover. It passes across three consecutive warm-state runs.
 

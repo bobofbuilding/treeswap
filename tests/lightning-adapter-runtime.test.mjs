@@ -27,6 +27,7 @@ const policy = {
   maxPendingChannels: 1,
   minimumActiveChannels: 1,
   maxChainHeaderAgeSeconds: 3_600,
+  maxChainHeaderFutureSeconds: 300,
   healthTimeoutMs: 1_000,
   dispatchTimeoutMs: 2_000,
   minimumInvoiceExpirySeconds: 300,
@@ -102,7 +103,7 @@ function authorization(method, operation, overrides = {}) {
   }, privateKey);
 }
 
-async function runtime(role, lnd = new MockLnd()) {
+async function runtime(role, lnd = new MockLnd(), now = () => NOW + 1, policyOverrides = {}) {
   const directory = await mkdtemp(join(tmpdir(), "treeswap-runtime-"));
   const journal = await LightningActionJournal.open(join(directory, "actions.jsonl"));
   return {
@@ -122,8 +123,8 @@ async function runtime(role, lnd = new MockLnd()) {
       keyId: "coordinator-regtest-1",
       lnd,
       journal,
-      policy,
-      now: () => NOW + 1,
+      policy: { ...policy, ...policyOverrides },
+      now,
     }),
   };
 }
@@ -196,4 +197,48 @@ test("rejects a stale best header or unsynced wallet before payment dispatch", a
     await assert.rejects(() => adapter.execute(envelope), /unhealthy or unsynced|best chain header is stale|wallet is unsynced/);
     assert.equal(lnd.calls.some(([name]) => name === "send"), false);
   }
+});
+
+test("rejects locally observed header stagnation even when the reported timestamp is in the future", async () => {
+  let observedAt = NOW + 1;
+  const lnd = new MockLnd();
+  lnd.info = {
+    synced_to_chain: true,
+    wallet_synced: true,
+    best_header_timestamp: String(NOW + 5),
+    block_height: 900_000,
+  };
+  const { adapter } = await runtime("payer", lnd, () => observedAt, {
+    maxChainHeaderAgeSeconds: 1,
+    maxChainHeaderFutureSeconds: 300,
+  });
+  await adapter.execute(authorization("/lnrpc.Lightning/DecodePayReq", {
+    paymentRequest: PAYMENT_REQUEST,
+  }, { requestId: id("stalled-header-baseline").toLowerCase() }));
+  observedAt += 2;
+  const envelope = authorization("/routerrpc.Router/SendPaymentV2", {
+    paymentRequest: PAYMENT_REQUEST,
+    timeoutSeconds: 10,
+    feeLimitSats: "10",
+  }, { requestId: id("stalled-header-payment").toLowerCase() });
+  await assert.rejects(() => adapter.execute(envelope), /best chain header is stale/);
+  assert.equal(lnd.calls.some(([name]) => name === "send"), false);
+});
+
+test("rejects a header beyond the configured future-skew limit", async () => {
+  const lnd = new MockLnd();
+  lnd.info = {
+    synced_to_chain: true,
+    wallet_synced: true,
+    best_header_timestamp: String(NOW + 302),
+    block_height: 900_000,
+  };
+  const { adapter } = await runtime("payer", lnd);
+  const envelope = authorization("/routerrpc.Router/SendPaymentV2", {
+    paymentRequest: PAYMENT_REQUEST,
+    timeoutSeconds: 10,
+    feeLimitSats: "10",
+  }, { requestId: id("future-header-payment").toLowerCase() });
+  await assert.rejects(() => adapter.execute(envelope), /too far in the future/);
+  assert.equal(lnd.calls.some(([name]) => name === "send"), false);
 });
