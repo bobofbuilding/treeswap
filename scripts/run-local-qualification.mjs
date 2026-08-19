@@ -1,0 +1,138 @@
+import { spawnSync } from "node:child_process";
+import { chmod, lstat, mkdir, readFile, writeFile } from "node:fs/promises";
+import { basename, dirname, join, relative, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import { buildQualificationEvidence, hashQualificationFile } from "../lib/qualification-evidence.mjs";
+
+const repository = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+process.chdir(repository);
+
+function capture(command, args) {
+  const result = spawnSync(command, args, { cwd: repository, encoding: "utf8" });
+  if (result.status !== 0) throw new Error(`${command} ${args.join(" ")} failed`);
+  return result.stdout.trim();
+}
+
+function runCampaign(name, command, args) {
+  process.stdout.write(`\n[qualification] ${name}\n`);
+  const result = spawnSync(command, args, { cwd: repository, stdio: "inherit", env: process.env });
+  if (result.status !== 0) throw new Error(`qualification campaign failed: ${name}`);
+  return Object.freeze({ name, status: "passed" });
+}
+
+function outputName() {
+  if (process.argv.length === 2) return `local-qualification-${new Date().toISOString().replaceAll(":", "-")}.json`;
+  if (process.argv.length !== 4 || process.argv[2] !== "--out-name") {
+    throw new Error("Usage: node scripts/run-local-qualification.mjs [--out-name evidence.json]");
+  }
+  const name = process.argv[3];
+  if (basename(name) !== name || !/^[a-z0-9][a-z0-9._-]{0,100}\.json$/.test(name)) {
+    throw new Error("evidence output name must be one safe JSON filename");
+  }
+  return name;
+}
+
+const requestedOutputName = outputName();
+const status = capture("git", ["status", "--porcelain", "--untracked-files=all"]);
+if (status) throw new Error("qualification requires a clean source tree");
+const branch = capture("git", ["branch", "--show-current"]);
+const sourceCommit = capture("git", ["rev-parse", "HEAD"]);
+const publishedCommit = capture("git", ["rev-parse", "origin/main"]);
+if (branch !== "main" || sourceCommit !== publishedCommit) {
+  throw new Error("qualification requires the exact locally known origin/main commit");
+}
+
+const configurationFiles = [
+  "package.json",
+  "package-lock.json",
+  "foundry.toml",
+  "infra/regtest/compose.yml",
+  "infra/regtest/lab.sh",
+  "infra/lightning-adapter/Dockerfile",
+  "infra/lightning-adapter/server.mjs",
+  "infra/coordinator/Dockerfile",
+  "infra/coordinator/runtime/package-lock.json",
+  "lib/lightning-adapter-policy.mjs",
+  "lib/lightning-adapter-runtime.mjs",
+  "lib/lnd-rest-client.mjs",
+  "lib/coordinator-store.mjs",
+  "lib/coordinator-action-runner.mjs",
+  "lib/evm-action-runner.mjs",
+  "lib/settlement-policy.mjs",
+];
+const configurationHashes = {};
+for (const path of configurationFiles) {
+  configurationHashes[path] = hashQualificationFile(await readFile(join(repository, path)));
+}
+const composeSource = await readFile(join(repository, "infra/regtest/compose.yml"), "utf8");
+const pinnedImages = [...new Set([...composeSource.matchAll(/^\s*image:\s*([^\s]+@sha256:[0-9a-f]{64})\s*$/gm)]
+  .map((match) => match[1]))];
+
+const campaigns = [
+  ["web:lint", "npm", ["run", "lint"]],
+  ["web:security-tests", "npm", ["test"]],
+  ["web:vercel-build", "npm", ["run", "vercel-build"]],
+  ["contracts:format", "forge", ["fmt", "--check"]],
+  ["contracts:test", "forge", ["test"]],
+  ["coordinator:evm-faults", "npm", ["run", "test:coordinator-evm"]],
+  ["lightning:credential-lifecycle", "npm", ["run", "regtest:credential-smoke"]],
+  ["lightning:adapter-hold", "npm", ["run", "regtest:adapter-smoke"]],
+  ["lightning:invoice-faults", "npm", ["run", "regtest:invoice-fault-smoke"]],
+  ["lightning:policy-faults", "npm", ["run", "regtest:policy-fault-smoke"]],
+  ["lightning:htlc-cutoff", "npm", ["run", "regtest:htlc-cutoff-smoke"]],
+  ["coordinator:payer-lost-response", "npm", ["run", "regtest:coordinator-smoke"]],
+  ["coordinator:invoice-lost-response", "npm", ["run", "regtest:coordinator-invoice-smoke"]],
+];
+const startedAt = new Date().toISOString();
+const results = [];
+let campaignError = null;
+try {
+  for (const [name, command, args] of campaigns) results.push(runCampaign(name, command, args));
+} catch (error) {
+  campaignError = error;
+} finally {
+  const stopped = spawnSync("npm", ["run", "regtest:down"], {
+    cwd: repository,
+    stdio: "inherit",
+    env: process.env,
+  });
+  if (stopped.status !== 0 && !campaignError) campaignError = new Error("regtest cleanup failed");
+}
+if (campaignError) throw campaignError;
+if (capture("git", ["status", "--porcelain", "--untracked-files=all"]) || capture("git", ["rev-parse", "HEAD"]) !== sourceCommit) {
+  throw new Error("qualification campaigns changed the source tree");
+}
+
+const evidence = buildQualificationEvidence({
+  branch,
+  sourceCommit,
+  startedAt,
+  finishedAt: new Date().toISOString(),
+  runtimeVersions: {
+    node: process.version,
+    docker: capture("docker", ["version", "--format", "{{.Server.Version}}"]),
+    dockerCompose: capture("docker", ["compose", "version", "--short"]),
+    forge: capture("forge", ["--version"]).split("\n", 1)[0],
+  },
+  pinnedImages,
+  configurationHashes,
+  campaigns: results,
+});
+
+const outputDirectory = join(repository, "outputs");
+try {
+  const state = await lstat(outputDirectory);
+  if (!state.isDirectory() || state.isSymbolicLink()) throw new Error("outputs must be a real directory");
+} catch (error) {
+  if (error?.code !== "ENOENT") throw error;
+  await mkdir(outputDirectory, { mode: 0o700 });
+}
+await chmod(outputDirectory, 0o700);
+const outputPath = join(outputDirectory, requestedOutputName);
+await writeFile(outputPath, `${JSON.stringify(evidence, null, 2)}\n`, { flag: "wx", mode: 0o600 });
+await chmod(outputPath, 0o600);
+process.stdout.write(`${JSON.stringify({
+  status: "passed",
+  evidenceDigest: evidence.evidenceDigest,
+  output: relative(repository, outputPath),
+})}\n`);

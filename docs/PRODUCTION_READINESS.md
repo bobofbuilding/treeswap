@@ -66,7 +66,9 @@ The command refuses to overwrite an existing file and never records the RPC URL.
 - [ ] Inject delayed and fast Bitcoin blocks, LND restart, lost responses, idempotent retry, force close, unsynced state, TLS pin change, credential rotation, and credential revocation. Accepted-state LND restart, one-dispatch payer and invoice recovery, root-key revocation, live in-flight saturation, channel-offline recovery, and TLS-pin mismatch now pass.
   - [x] Rapid blocks reach the live HTLC boundary; the adapter rejects settlement at a 24-block reserve, six blocks before the auto-cancel boundary observed in pinned LND.
 - [ ] Prove that the computed Lightning cutoff always precedes the EVM refund boundary by the published margin. Pure ordering and the live Lightning-height boundary pass; combined EVM/Lightning fork or testnet evidence remains.
-- [ ] Produce a secret-free evidence bundle containing versions, configuration hashes, test results, and timestamps—never macaroons, invoices, or preimages.
+- [ ] Produce a secret-free evidence bundle from the final published release commit containing versions, configuration hashes, test results, and timestamps—never macaroons, invoices, or preimages.
+  - [x] A fail-closed generator requires clean published `main`, reruns every local qualification campaign, records no command output or environment data, rejects secret-bearing fields, and writes a non-overwriting mode-`0600` artifact under ignored `outputs/`.
+  - [ ] Attach the final release artifact digest, reviewer, and date to the signed deployment manifest.
 
 The current adapter boundary, live lab, and remaining fault matrix are documented in [Lightning adapter](./LIGHTNING_ADAPTER.md) and [Lightning regtest lab](./LIGHTNING_REGTEST.md).
 

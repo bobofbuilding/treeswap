@@ -22,6 +22,7 @@ npm run regtest:policy-fault-smoke
 npm run regtest:htlc-cutoff-smoke
 npm run regtest:coordinator-smoke
 npm run regtest:coordinator-invoice-smoke
+npm run qualify:local
 npm run regtest:status
 npm run regtest:down
 ```
@@ -50,12 +51,18 @@ For all six node/role pairs, the bootstrap reads the baked macaroon back, requir
 
 `regtest:coordinator-invoice-smoke` gives the same credential-free coordinator a transient matching preimage for a real accepted 10,000-sat hold invoice. It settles through the invoice adapter, discards the successful response, reopens in `UNKNOWN`, and recovers `SETTLED` with one preimage-free signed lookup. It requires one dispatch and scans the closed SQLite database, WAL, and shared-memory files for both the raw and textual preimage. The original payer must succeed, and no replacement action is issued. Its reservation input is also simulated.
 
+## Local qualification evidence
+
+`npm run qualify:local` requires a clean `main` whose commit exactly matches the locally known `origin/main`. It reruns lint, both web builds, all application/security tests, contract formatting and tests, the EVM coordinator fault campaign, and every Lightning campaign above. Any failure prevents evidence creation, and the lab is stopped in all cases.
+
+On success it writes one new mode-`0600` JSON record under ignored `outputs/`. The record contains only the published commit, UTC start/finish times, runtime versions, immutable external image identifiers, SHA-256 configuration hashes, campaign names/pass states, explicit limitations, and its own deterministic digest. It contains no command output, environment value, path, invoice, payment hash, preimage, macaroon, RPC URL, private key, wallet seed, or email. The command refuses a dirty/unpublished tree, mutable external image, failed campaign, unsafe filename, symlinked output directory, or overwrite. This local record is evidence—not funding authorization, independent review, public-testnet evidence, or a deployment manifest.
+
 ## Remaining campaigns
 
 - Standard-invoice route failure and explicit duplicate request. Success, excessive-fee and amount rejection, no-dispatch tracking, and lost-response reconciliation now pass; invoice-settlement lost-response recovery also passes.
 - Hold-invoice cancel, expiry, wrong preimage, late settle, signed-action replay, restart while accepted, and the 24-block HTLC cutoff under rapid block advancement now pass.
 - Prolonged block delay, force close, unsynced node, and stale capacity epoch. Rapid blocks, accepted-state LND restart, channel-offline rejection/recovery, and live in-flight-cap saturation now pass.
 - Real certificate rotation, overlap credential rotation, and stateless initialization. TLS-pin mismatch, exact grant manifests, timeout enforcement, root-key revocation, and representative forbidden-RPC categories now pass.
-- Secret-free evidence export with binary/config hashes and exact test timestamps.
+- Promote a clean published-checkpoint qualification record into the reviewed release manifest. The secret-free generator and schema are implemented; a record from the final release commit remains required.
 
 This lab is local evidence, not permission to fund testnet or mainnet.

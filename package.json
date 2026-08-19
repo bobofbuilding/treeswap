@@ -27,6 +27,7 @@
     "regtest:htlc-cutoff-smoke": "bash infra/regtest/lab.sh htlc-cutoff-smoke",
     "regtest:coordinator-smoke": "bash infra/regtest/lab.sh coordinator-smoke",
     "regtest:coordinator-invoice-smoke": "bash infra/regtest/lab.sh coordinator-invoice-smoke",
+    "qualify:local": "node scripts/run-local-qualification.mjs",
     "regtest:status": "bash infra/regtest/lab.sh status",
     "regtest:down": "bash infra/regtest/lab.sh down"
   },
