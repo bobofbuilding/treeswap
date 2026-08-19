@@ -21,6 +21,7 @@ npm run regtest:invoice-fault-smoke
 npm run regtest:policy-fault-smoke
 npm run regtest:stale-chain-smoke
 npm run regtest:unsynced-chain-smoke
+npm run regtest:force-close-smoke
 npm run regtest:route-fault-smoke
 npm run regtest:htlc-cutoff-smoke
 npm run regtest:coordinator-smoke
@@ -52,6 +53,8 @@ For all six node/role pairs, the bootstrap reads the baked macaroon back, requir
 
 `regtest:unsynced-chain-smoke` pauses the real Alice LND process, advances Bitcoin regtest by 500 blocks, and resumes Alice into a genuine catch-up state. The campaign observes `synced_to_chain=false` or `wallet_synced=false`, requires the adapter to reject an exact signed payment non-ambiguously, waits for both flags and the channel to recover, and uses read-only tracking to prove zero dispatch. The recovered adapter then decodes the same invoice. Three consecutive warm-state runs pass.
 
+`regtest:force-close-smoke` unilaterally closes Alice's only active channel and requires an exact signed payment to be rejected before dispatch while the channel is in LND's waiting-close state. It confirms the commitment transaction, reads the pinned node's actual CSV maturity, advances through that maturity, confirms the resulting sweep, and requires all pending-close exposure to clear. Only then does it open and confirm a fresh balanced private channel, prove the rejected payment is `NOT_FOUND`, and decode the same invoice through the recovered adapter. Three consecutive warm-state runs pass without accumulating pending closes.
+
 `regtest:route-fault-smoke` starts a third synced LND node with no channels and obtains a standard 10,000-sat invoice from it. Alice's healthy adapter dispatches exactly once and must receive terminal `FAILED` with `NO_ROUTE`. Pinned LND may subsequently track that attempt as the exact bound `FAILED` payment or return non-ambiguous, hash-redacted `NOT_FOUND`; neither observation permits another send. The exact authorization replay and a fresh authorization that reuses the payment hash must both fail at the adapter. A lab-only administrative count confirms LND still has exactly one matching payment record. The zero-state campaign and five consecutive warm-state campaigns pass.
 
 `regtest:htlc-cutoff-smoke` accepts a real hold payment with an 80-block final CLTV, derives its actual HTLC expiry height, and mines enough blocks rapidly for both LND nodes to reach exactly the configured 24-block reserve. The invoice must still be `ACCEPTED`; the adapter must reject even the correct preimage specifically because the HTLC is inside its settlement margin; cancellation must release the original payer as failed. An earlier trial showed pinned LND auto-canceling at 18 blocks, which is why the TreeSwap reserve was raised to 24 rather than relying on the node's terminal boundary.
@@ -72,7 +75,7 @@ Published checkpoint `4952ea8d463ff8c850c2a40434ed9acf7c47e537` completed all 17
 
 - Standard-invoice success, genuine no-route failure, exact-request replay, same-hash duplicate exposure rejection, excessive-fee and amount rejection, no-dispatch tracking, and both payer/invoice lost-response reconciliations now pass.
 - Hold-invoice cancel, expiry, wrong preimage, late settle, signed-action replay, restart while accepted, and the 24-block HTLC cutoff under rapid block advancement now pass.
-- Force close, stale capacity epoch, and production-duration delay remain. Rapid blocks, genuine 500-block unsynced-node catch-up, compressed-threshold stale-header rejection with zero dispatch, accepted-state LND restart, channel-offline rejection/recovery, and live in-flight-cap saturation now pass.
+- Stale capacity epoch and production-duration delay remain. Rapid blocks, genuine 500-block unsynced-node catch-up, full force-close/CSV-sweep/channel-replacement recovery, compressed-threshold stale-header rejection with zero dispatch, accepted-state LND restart, channel-offline rejection/recovery, and live in-flight-cap saturation now pass.
 - Real certificate rotation, overlap credential rotation, and stateless initialization. TLS-pin mismatch, exact grant manifests, timeout enforcement, root-key revocation, and representative forbidden-RPC categories now pass.
 - Promote a clean published-checkpoint qualification record into the reviewed release manifest. The secret-free generator and schema are implemented; a record from the final release commit remains required.
 

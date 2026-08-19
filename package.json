@@ -27,6 +27,7 @@
     "regtest:policy-fault-smoke": "bash infra/regtest/lab.sh policy-fault-smoke",
     "regtest:stale-chain-smoke": "bash infra/regtest/lab.sh stale-chain-smoke",
     "regtest:unsynced-chain-smoke": "bash infra/regtest/lab.sh unsynced-chain-smoke",
+    "regtest:force-close-smoke": "bash infra/regtest/lab.sh force-close-smoke",
     "regtest:route-fault-smoke": "bash infra/regtest/lab.sh route-fault-smoke",
     "regtest:htlc-cutoff-smoke": "bash infra/regtest/lab.sh htlc-cutoff-smoke",
     "regtest:coordinator-smoke": "bash infra/regtest/lab.sh coordinator-smoke",

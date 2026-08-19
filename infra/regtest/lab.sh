@@ -1265,6 +1265,125 @@ smoke_unsynced_chain_catchup() {
   echo "Unsynced-node smoke passed: a real 500-block backlog forced catch-up rejection, zero dispatch, and healthy adapter recovery."
 }
 
+smoke_force_close_recovery() {
+  ensure_runtime_env
+  start_lab >/dev/null
+  local channel_point miner_address invoice payment_request payment_hash invoice_digest intent_digest
+  local request_id operation envelope force_result active_channels pending_state bob_pending_state pending_count maturity_blocks
+  local decode_result recovered=false
+
+  channel_point=$(compose exec -T alice lncli --network=regtest listchannels |
+    jq -er '.channels[] | select(.active == true) | .channel_point' | head -1)
+  miner_address=$(compose exec -T bob lncli --network=regtest newaddress p2tr | jq -er .address)
+  invoice=$(compose exec -T bob lncli --network=regtest addinvoice \
+    --amt=10000 --memo=treeswap-force-close --expiry=600 --private)
+  payment_request=$(jq -er '.payment_request' <<<"$invoice")
+  payment_hash=$(compose exec -T alice lncli --network=regtest \
+    --macaroonpath=/root/.lnd/treeswap/payer.macaroon decodepayreq "$payment_request" |
+    jq -er '.payment_hash | ascii_downcase | "0x" + .')
+  invoice_digest="0x$(printf '%s' "$payment_request" | openssl dgst -sha256 -binary | xxd -p -c 256)"
+  intent_digest="0x$(openssl rand -hex 32)"
+  request_id="0x$(openssl rand -hex 32)"
+  operation=$(jq -cn --arg paymentRequest "$payment_request" \
+    '{paymentRequest:$paymentRequest,timeoutSeconds:30,feeLimitSats:"10"}')
+  envelope=$(sign_adapter_authorization /routerrpc.Router/SendPaymentV2 \
+    "$request_id" "$intent_digest" "$payment_hash" "$invoice_digest" 10000 "$operation")
+
+  compose exec -T alice lncli --network=regtest closechannel --force \
+    --chan_point "$channel_point" >/dev/null 2>&1
+  active_channels=1
+  pending_count=0
+  for _ in $(seq 1 60); do
+    active_channels=$(compose exec -T alice lncli --network=regtest listchannels 2>/dev/null |
+      jq '[.channels[] | select(.active == true)] | length' || true)
+    pending_state=$(compose exec -T alice lncli --network=regtest pendingchannels 2>/dev/null || true)
+    pending_count=$(jq '(.waiting_close_channels | length) + (.pending_force_closing_channels | length)' \
+      <<<"$pending_state" 2>/dev/null || echo 0)
+    if (( active_channels == 0 && pending_count > 0 )); then
+      break
+    fi
+    sleep 1
+  done
+  if (( active_channels != 0 || pending_count == 0 )); then
+    echo "force-close did not remove the only active channel into a pending close" >&2
+    return 1
+  fi
+
+  if force_result=$(printf '%s\n' "$envelope" | call_signed_adapter payer-adapter); then
+    echo "payer adapter dispatched while its only channel was force-closing" >&2
+    return 1
+  fi
+  if ! jq -e '.ambiguous == false and (.error | test("service is unhealthy or unsynced"))' \
+    <<<"$force_result" >/dev/null; then
+    echo "force-close adapter rejection was unexpected" >&2
+    jq -c '{error,errorCode,ambiguous}' <<<"$force_result" >&2
+    return 1
+  fi
+
+  compose exec -T bitcoind bitcoin-cli -regtest \
+    -rpcuser="$BITCOIND_RPC_USER" -rpcpassword="$BITCOIND_RPC_PASSWORD" \
+    generatetoaddress 6 "$miner_address" >/dev/null
+  wait_for_chain_sync alice
+  wait_for_chain_sync bob
+  for _ in $(seq 1 60); do
+    pending_state=$(compose exec -T alice lncli --network=regtest pendingchannels 2>/dev/null || true)
+    if jq -e '(.pending_force_closing_channels | length) > 0' <<<"$pending_state" >/dev/null 2>&1; then
+      break
+    fi
+    sleep 1
+  done
+  bob_pending_state=$(compose exec -T bob lncli --network=regtest pendingchannels)
+  maturity_blocks=$(jq -ern --argjson alice "$pending_state" --argjson bob "$bob_pending_state" \
+    '[($alice.pending_force_closing_channels[]?.blocks_til_maturity | tonumber), ($bob.pending_force_closing_channels[]?.blocks_til_maturity | tonumber)] | max')
+  if (( maturity_blocks <= 0 )); then
+    echo "force-close did not expose a positive CSV maturity" >&2
+    return 1
+  fi
+  compose exec -T bitcoind bitcoin-cli -regtest \
+    -rpcuser="$BITCOIND_RPC_USER" -rpcpassword="$BITCOIND_RPC_PASSWORD" \
+    generatetoaddress "$((maturity_blocks + 1))" "$miner_address" >/dev/null
+
+  for _ in $(seq 1 30); do
+    pending_state=$(compose exec -T alice lncli --network=regtest pendingchannels 2>/dev/null || true)
+    bob_pending_state=$(compose exec -T bob lncli --network=regtest pendingchannels 2>/dev/null || true)
+    pending_count=$(jq -rn --argjson alice "$pending_state" --argjson bob "$bob_pending_state" \
+      '(($alice.waiting_close_channels | length) + ($alice.pending_force_closing_channels | length) + ($bob.waiting_close_channels | length) + ($bob.pending_force_closing_channels | length))' \
+      2>/dev/null || echo 1)
+    if (( pending_count == 0 )); then
+      recovered=true
+      break
+    fi
+    if jq -en --argjson alice "$pending_state" --argjson bob "$bob_pending_state" \
+      'any(([$alice.pending_force_closing_channels[]?, $bob.pending_force_closing_channels[]?])[]?; (.blocks_til_maturity | tonumber) <= 0)' \
+      >/dev/null 2>&1; then
+      compose exec -T bitcoind bitcoin-cli -regtest \
+        -rpcuser="$BITCOIND_RPC_USER" -rpcpassword="$BITCOIND_RPC_PASSWORD" \
+        generatetoaddress 1 "$miner_address" >/dev/null
+    fi
+    sleep 1
+  done
+  if [[ "$recovered" != true ]]; then
+    echo "force-close outputs did not mature and sweep" >&2
+    return 1
+  fi
+
+  wait_for_chain_sync alice
+  wait_for_chain_sync bob
+  fund_private_channel
+  wait_for_active_channel alice
+  wait_for_active_channel bob
+  assert_adapter_payment_not_found "$intent_digest" "$payment_hash" "$invoice_digest" 10000
+  request_id="0x$(openssl rand -hex 32)"
+  decode_result=$(call_adapter payer-adapter /lnrpc.Lightning/DecodePayReq \
+    "$request_id" "$intent_digest" "$payment_hash" "$invoice_digest" 10000 \
+    "$(jq -cn --arg paymentRequest "$payment_request" '{paymentRequest:$paymentRequest}')")
+  jq -e --arg paymentHash "$payment_hash" \
+    '.result.paymentHash == $paymentHash and .result.amountSats == "10000"' <<<"$decode_result" >/dev/null
+
+  unset payment_request envelope
+  echo "Force-close smoke passed: new exposure stopped, the CSV close fully swept, zero dispatch was proven, and a fresh balanced channel restored service."
+}
+
 smoke_route_and_duplicate_failure() {
   ensure_runtime_env
   start_lab >/dev/null
@@ -1649,6 +1768,7 @@ case "${1:-}" in
   policy-fault-smoke) smoke_policy_faults ;;
   stale-chain-smoke) smoke_stale_chain_header ;;
   unsynced-chain-smoke) smoke_unsynced_chain_catchup ;;
+  force-close-smoke) smoke_force_close_recovery ;;
   route-fault-smoke) smoke_route_and_duplicate_failure ;;
   htlc-cutoff-smoke) smoke_htlc_cutoff ;;
   coordinator-smoke) smoke_coordinator_reconciliation ;;
@@ -1657,7 +1777,7 @@ case "${1:-}" in
   down) stop_lab ;;
   destroy) destroy_lab ;;
   *)
-    echo "Usage: $0 {up|smoke|adapter-smoke|credential-smoke|invoice-fault-smoke|policy-fault-smoke|stale-chain-smoke|unsynced-chain-smoke|route-fault-smoke|htlc-cutoff-smoke|coordinator-smoke|coordinator-invoice-smoke|status|down|destroy}" >&2
+    echo "Usage: $0 {up|smoke|adapter-smoke|credential-smoke|invoice-fault-smoke|policy-fault-smoke|stale-chain-smoke|unsynced-chain-smoke|force-close-smoke|route-fault-smoke|htlc-cutoff-smoke|coordinator-smoke|coordinator-invoice-smoke|status|down|destroy}" >&2
     exit 2
     ;;
 esac
