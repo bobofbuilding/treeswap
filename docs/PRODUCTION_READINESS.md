@@ -75,11 +75,11 @@ The command refuses to overwrite an existing file and never records the RPC URL.
   - [x] Prove an exact replacement credential works concurrently, remains live after deterministic old-root revocation, and permits baseline recovery without leaving the temporary root or credential behind.
   - [x] Prove a real LND certificate/key rotation invalidates the old pin, preserves the node/channel, dispatches no payment, and recovers only after explicit peer reconnection and new-pin rollout, with rollback on failure.
   - [x] Prove fresh adapter state and restart cannot authorize exposure until a higher real block and new hash are durably observed; clock/height/hash/header conflicts remain latched until later progress.
-  - [ ] Prove the production-duration block-delay threshold without compressing the configured interval.
+  - [x] The uncompressed 3,600-second block-delay threshold passed on published commit `986b301598a30f19a3b2ed780180cc09893e10c4`: 3,603 monotonic seconds, 119 continuous observations, restart persistence after 1,811 seconds, deterministic no-progress rejection, and zero target-payment dispatch.
 - [ ] Prove that the computed Lightning cutoff always precedes the EVM refund boundary by the published margin. Pure ordering and the live Lightning-height boundary pass; combined EVM/Lightning fork or testnet evidence remains.
 - [ ] Produce a secret-free evidence bundle from the final published release commit containing versions, configuration hashes, test results, and timestamps—never macaroons, invoices, or preimages.
   - [x] A fail-closed generator requires clean published `main`, reruns every local qualification campaign, records no command output or environment data, rejects secret-bearing fields, and writes a non-overwriting mode-`0600` artifact under ignored `outputs/`.
-  - [x] Published checkpoint `f0108cca98418a08fb0ce363ea9928265f8be439` passed all 23 local campaigns and hosted CI; its independently rebuilt local-only digest is `sha256:037fa405d9e89a2002a50b3fb11d1304d59b8d6c3a0639707347b192fe1eb8c1`.
+  - [x] Published checkpoint `986b301598a30f19a3b2ed780180cc09893e10c4` passed all 24 local campaigns and [hosted CI](https://github.com/bobofbuilding/treeswap/actions/runs/32297757723); its independently rebuilt local-only digest is `sha256:7789b8eee928210dadedad18eb26b7622bea2b5a799f5ef49b7258b4a937e8fe`.
   - [ ] Attach the final release artifact digest, reviewer, and date to the signed deployment manifest.
 
 The current adapter boundary, live lab, and remaining fault matrix are documented in [Lightning adapter](./LIGHTNING_ADAPTER.md) and [Lightning regtest lab](./LIGHTNING_REGTEST.md).
