@@ -208,7 +208,11 @@ Signed relay identifiers now fail unless their original bytes are already canoni
 
 ### TS-M08 — Privacy leakage
 
+**Status:** Two-stage minimum-disclosure policy implemented; production storage deletion remains a deployment gate
+
 A public intent can expose payment hashes, amounts, timing, Ethereum addresses, and Lightning route hints. Publish the minimum needed to price an intent; reveal the full invoice only to the reserved taker, minimize retention, and document the cross-network linkage created by settlement.
+
+Quote discovery now has an explicit blind projection: an unlinkable pricing identifier, direction, exact output and unit, chain, caps, capacity epoch, and short expiry. It rejects wallet addresses, payment hashes, invoice digests, invoices, payees, route hints, signatures, and email anywhere in the public object. Only the chosen solver may receive the private settlement packet, and only through an authenticated, encrypted channel bound to that solver. Audit projection redacts cross-network identifiers and executable retention deadlines cover pricing data, unselected quotes, private packets, pending email, and minimal receipts. The exact amount is necessarily disclosed for executable pricing, and final settlement remains linkable; the product makes no anonymity claim. See [Privacy boundary](./PRIVACY.md). A production database must enforce and evidence deletion before live swaps open.
 
 ### TS-M09 — Governance capture
 
