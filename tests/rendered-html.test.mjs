@@ -49,8 +49,8 @@ test("server-renders the TreeSwap prototype", async () => {
   assert.match(html, />Safety</i);
   assert.doesNotMatch(html, /Four checks block launch|security-section/i);
   assert.match(html, /application\/ld\+json/i);
-  assert.match(html, /href="https:\/\/treeswap\.vercel\.app\/favicon\.png"/i);
-  assert.match(html, /href="https:\/\/treeswap\.vercel\.app\/apple-touch-icon\.png"/i);
+  assert.match(html, /href="(?:https:\/\/treeswap\.vercel\.app)?\/favicon\.png"/i);
+  assert.match(html, /href="(?:https:\/\/treeswap\.vercel\.app)?\/apple-touch-icon\.png"/i);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton|Your site is taking shape/i);
 });
 

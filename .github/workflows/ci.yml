@@ -18,6 +18,8 @@ jobs:
           node-version: 22.22.0
           cache: npm
       - run: npm ci
+      - run: npm audit --omit=dev --audit-level=moderate
+      - run: npm audit --audit-level=high
       - run: npm run lint
       - run: npm test
       - run: npm run vercel-build
@@ -56,10 +58,12 @@ jobs:
         with:
           version: stable
       - run: npm ci --ignore-scripts
-      - run: npm audit --prefix infra/coordinator/runtime --omit=dev --audit-level=high
+      - run: npm audit --prefix infra/coordinator/runtime --omit=dev --audit-level=moderate
       - run: node --check lib/coordinator-store.mjs
       - run: node --check lib/coordinator-action-runner.mjs
       - run: node --check lib/evm-action-runner.mjs
+      - run: node --check lib/deployment-observer.mjs
+      - run: node --check lib/deployment-policy.mjs
       - run: node --check lib/qualification-evidence.mjs
       - run: node --check lib/solver-capability.mjs
       - run: node --check lib/solver-endpoint-transport.mjs
@@ -75,11 +79,14 @@ jobs:
       - run: node --check infra/evm/escrow-reorg-smoke.mjs
       - run: node --check infra/evm/outbox-fault-smoke.mjs
       - run: node --check infra/evm/safety-monitor-smoke.mjs
+      - run: node --check infra/evm/deployment-rehearsal-smoke.mjs
       - run: bash -n scripts/run-evm-outbox-fault-smoke.sh
       - run: bash -n scripts/run-safety-monitor-smoke.sh
+      - run: bash -n scripts/run-deployment-rehearsal-smoke.sh
       - run: node --check scripts/run-local-qualification.mjs
       - run: npm run test:coordinator-evm
       - run: npm run test:evm-outbox-faults
       - run: npm run test:safety-monitor
+      - run: npm run test:deployment-rehearsal
       - run: npm run test:escrow-reorg
       - run: npm run test:coordinator-runtime

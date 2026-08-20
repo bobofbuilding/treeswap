@@ -20,6 +20,7 @@ The prototype assumes a business par value of **1 BIT = 100 sats**. This value i
 - Liquidity operations plan in [`docs/LIQUIDITY_FUNDING.md`](docs/LIQUIDITY_FUNDING.md)
 - Fail-closed market, proxy, finality, and inventory policy in [`docs/RISK_POLICY.md`](docs/RISK_POLICY.md)
 - Secret-free fail-closed monitoring and actual-gate halt evidence in [`docs/MONITORING.md`](docs/MONITORING.md)
+- Finalized read-only deployment observation and closed governance rehearsal in [`docs/GOVERNANCE.md`](docs/GOVERNANCE.md)
 - Deterministic cross-chain clock and payment-authorization policy in [`docs/SETTLEMENT_POLICY.md`](docs/SETTLEMENT_POLICY.md)
 - Multi-solver signed RFQ validation and deterministic received-set policy in [`docs/RFQ_POLICY.md`](docs/RFQ_POLICY.md)
 - Canonical integer units and BIT-only fee policy in [`docs/UNITS_AND_ROUNDING.md`](docs/UNITS_AND_ROUNDING.md) and [`docs/FEES.md`](docs/FEES.md)

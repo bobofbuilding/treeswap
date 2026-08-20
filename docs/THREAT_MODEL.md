@@ -24,7 +24,7 @@ Reviewed surfaces:
 | TS-C04 | Multi-solver signed received-set selection implemented | None; global-best availability is explicitly not claimed |
 | TS-H01 | Chain/contract/version/direction/nonce replay protection and ERC-1271 implemented | EOA-only SIWE remains an explicit account limitation |
 | TS-H02 | Dual-signed user exercise plus local atomic admission, capability expiry, authenticated endpoint response, capacity, and last-look accounting implemented | Deployed shared enforcement/readers, live reliability telemetry, objective bond decision |
-| TS-H03 | Closed expiring gate, token runtime checks, and local secret-free guardian-halt monitor implemented | Live continuous proxy monitor, pinned hashes, deployed multisigs, fork campaign |
+| TS-H03 | Closed expiring gate, token runtime checks, local guardian-halt monitor, and finalized closed-deployment observer implemented | Live continuous proxy monitor, independently observed hashes, deployed multisigs, public-testnet campaign |
 | TS-H04 | Integer units, rounding, overflow, dust, and conservation implemented | None |
 | TS-H05 | BIT-only signed capped fee accounting implemented | Pin deployed collector and caps |
 | TS-H06 | Public pool/shares/yield/rewards/partial fills disabled | Live solver reconciliation and failure drills |
@@ -39,7 +39,7 @@ Reviewed surfaces:
 | TS-M06 | Full BOLT 11 field and invoice-digest validation implemented | Isolated live decoder integration |
 | TS-M07 | Canonical identifiers, text-only rendering, safe logs, and response headers implemented | Production header/log verification |
 | TS-M08 | Blind pricing, selected-solver disclosure, redaction, and deletion policy implemented | Storage-layer deletion evidence |
-| TS-M09 | Immutable escrows, constrained gate, sealed registry, deployment policy, and local actual-gate alert ordering implemented | Deployed role-separated multisigs, continuous event monitoring, and external alert delivery |
+| TS-M09 | Immutable escrows, constrained gate, sealed registry, strict deployment policy, finalized topology observer, and local actual-gate alert ordering implemented | Deployed role-separated multisigs, independent providers/review, continuous event monitoring, and external alert delivery |
 | TS-M10 | Strict EOA SIWE and short rotated sessions implemented | Durable atomic production account storage, or disable accounts |
 | TS-M11 | Email delivery hard-disabled; pending data expires in 24 hours | None for swaps; a new reviewed release is required to send mail |
 | TS-M12 | Frozen one-shot wallet dispatch and unknown-outcome handling implemented | Trusted wallet confirmation remains the user security boundary |
@@ -147,7 +147,7 @@ V1 has no public order reservation. `TreeSwapBitVault` now requires the user and
 
 ### TS-H03 — BIT proxy upgrade or pause
 
-**Status:** Fail-closed, time-bounded onchain open gate, runtime token checks, and pinned mainnet-fork campaigns implemented; live monitor, reviewed manifest, multisig roles, and controlled reorg evidence remain deployment gates
+**Status:** Fail-closed, time-bounded onchain open gate, runtime token checks, pinned mainnet-fork campaigns, and a finalized local closed-deployment observer implemented; live monitor, reviewed manifest, production multisig roles, and public-testnet evidence remain deployment gates
 
 BIT is an ERC-1967 proxy and its current implementation is pausable and upgradeable. The recorded v1 pause blocks mint and redeem but not ordinary ERC-20 transfers. An implementation change could alter transfers, decimals, pause behavior, or trust assumptions.
 
@@ -253,11 +253,11 @@ Quote discovery now has an explicit blind projection: an unlinkable pricing iden
 
 ### TS-M09 — Governance capture
 
-**Status:** Resolved in contract architecture and deployment policy; live multisig deployment and monitoring remain a launch gate
+**Status:** Resolved in contract architecture, strict deployment policy, and a finalized local closed-deployment rehearsal; live multisig deployment, independent review, and monitoring remain launch gates
 
 An admin that can instantly change fees, upgrade escrow, redirect a treasury, or pause exits can steal or trap value. Prefer an immutable escrow; otherwise use a multisig, timelock, public change events, hard fee caps, and a pause that blocks only new opens/reservations.
 
-Both escrows are immutable, non-upgradeable, have constructor-fixed fee collectors and limits, and expose no administrator. The shared registry becomes irreversibly sealed to exactly two escrows. The open gate now rejects EOAs, a shared controller/guardian, reopen delays under 24 hours, and open windows over seven days. Its public events and automatic expiry cover every state transition, while halt affects new exposure only. A deployment manifest fails closed unless independent 2-of-3-or-stronger contract wallets, exact bytecode hashes, a reviewed commit, independent-review digest, registry seal, immutable escrow topology, BIT configuration, and fee caps all match. See [Governance and deployment boundary](./GOVERNANCE.md). Live wallets, signers, monitoring, and review evidence do not yet exist.
+Both escrows are immutable, non-upgradeable, have constructor-fixed fee collectors and limits, and expose no administrator. The shared registry becomes irreversibly sealed to exactly two escrows. The open gate rejects EOAs, a shared controller/guardian, reopen delays under 24 hours, and open windows over seven days. Its public events and automatic expiry cover every state transition, while halt affects new exposure only. A deployment manifest fails closed unless policy-matched source/review/code digests, exact unique owner lists, quorum separation, 2-of-3-or-stronger contract wallets, registry seal, immutable escrow topology, BIT configuration, reference/price limits, and fee caps all match. The finalized RPC observer reconstructs those facts instead of trusting declarations; its local rehearsal deliberately fails production policy and carries no funds. See [Governance and deployment boundary](./GOVERNANCE.md). Live wallets, signers, independent providers, monitoring, and review evidence do not yet exist.
 
 ### TS-M10 — SIWE replay, phishing, or session theft
 

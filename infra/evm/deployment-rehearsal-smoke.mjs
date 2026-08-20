@@ -1,0 +1,284 @@
+import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
+import { createServer } from "node:http";
+import { setTimeout as delay } from "node:timers/promises";
+import {
+  Contract,
+  ContractFactory,
+  HDNodeWallet,
+  JsonRpcProvider,
+  NonceManager,
+  id,
+  parseEther,
+} from "ethers";
+import { BIT_MAINNET_CONTRACT, createJsonRpcClient } from "../../lib/bit-deployment-observer.mjs";
+import { coordinatorCommitmentDigest } from "../../lib/coordinator-store.mjs";
+import {
+  compareDeploymentObservations,
+  observeDeploymentManifest,
+} from "../../lib/deployment-observer.mjs";
+import { validateDeploymentManifest } from "../../lib/deployment-policy.mjs";
+
+const RPC_URL = process.env.DEPLOYMENT_REHEARSAL_RPC_URL;
+const MNEMONIC = process.env.DEPLOYMENT_REHEARSAL_MNEMONIC;
+const SOURCE_COMMIT = String(process.env.DEPLOYMENT_REHEARSAL_SOURCE_COMMIT ?? "");
+const PROXY_PORT = Number(process.env.DEPLOYMENT_REHEARSAL_PROXY_PORT);
+const ANVIL_VERSION = String(process.env.DEPLOYMENT_REHEARSAL_ANVIL_VERSION ?? "");
+const CHAIN_ID = 31_337n;
+const NO_REVIEW_DIGEST = id("treeswap-deployment-rehearsal:no-independent-review").toLowerCase();
+const MAINNET_BIT_IMPLEMENTATION = "0xa27b118c0770939295f052aE1b003366E5eF806F";
+
+if (!RPC_URL || !MNEMONIC) throw new Error("deployment rehearsal requires an ephemeral RPC URL and mnemonic");
+if (!/^[0-9a-f]{40}$/.test(SOURCE_COMMIT)) throw new Error("deployment rehearsal source commit is invalid");
+if (!Number.isSafeInteger(PROXY_PORT) || PROXY_PORT < 1_024 || PROXY_PORT > 65_535) {
+  throw new Error("deployment rehearsal proxy port is invalid");
+}
+if (!/^anvil Version: [0-9.]+/.test(ANVIL_VERSION)) throw new Error("Anvil version is not pinned in evidence");
+
+async function artifact(path) {
+  return JSON.parse(await readFile(new URL(path, import.meta.url), "utf8"));
+}
+
+async function deploy(signer, artifactValue, args = []) {
+  const factory = new ContractFactory(artifactValue.abi, artifactValue.bytecode.object, signer);
+  const contract = await factory.deploy(...args);
+  await contract.waitForDeployment();
+  return contract;
+}
+
+async function waitForFinality(provider, blockNumber, attempts = 120) {
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const finalized = await provider.send("eth_getBlockByNumber", ["finalized", false]);
+    if (finalized && BigInt(finalized.number) >= BigInt(blockNumber)) return finalized;
+    await delay(250);
+  }
+  throw new Error("timed out waiting for deployment rehearsal finality");
+}
+
+async function startLoopbackProxy(targetUrl, port) {
+  const server = createServer(async (request, response) => {
+    try {
+      if (request.method !== "POST" || request.url !== "/") {
+        response.writeHead(404).end();
+        return;
+      }
+      const chunks = [];
+      let size = 0;
+      for await (const chunk of request) {
+        size += chunk.length;
+        if (size > 128 * 1024) throw new Error("request exceeded local evidence bound");
+        chunks.push(chunk);
+      }
+      const upstream = await fetch(targetUrl, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: Buffer.concat(chunks),
+        signal: AbortSignal.timeout(10_000),
+      });
+      const body = await upstream.text();
+      if (Buffer.byteLength(body) > 128 * 1024) throw new Error("response exceeded local evidence bound");
+      response.writeHead(upstream.status, { "content-type": "application/json" });
+      response.end(body);
+    } catch {
+      response.writeHead(502, { "content-type": "application/json" });
+      response.end(JSON.stringify({ error: "local evidence proxy failed" }));
+    }
+  });
+  await new Promise((resolve, reject) => {
+    server.once("error", reject);
+    server.listen(port, "127.0.0.1", resolve);
+  });
+  return server;
+}
+
+async function closeServer(server) {
+  if (!server) return;
+  await new Promise((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
+}
+
+const [walletArtifact, bitImplementationArtifact, bitProxyArtifact, gateArtifact, registryArtifact,
+  vaultArtifact, userEscrowArtifact] = await Promise.all([
+  artifact("../../contracts/out/DeploymentManifestProbe.sol/DeploymentManifestWalletProbe.json"),
+  artifact("../../contracts/out/DeploymentManifestProbe.sol/DeploymentManifestBitImplementation.json"),
+  artifact("../../contracts/out/DeploymentManifestProbe.sol/DeploymentManifestBitProxy.json"),
+  artifact("../../contracts/out/TreeSwapOpenGate.sol/TreeSwapOpenGate.json"),
+  artifact("../../contracts/out/TreeSwapPaymentHashRegistry.sol/TreeSwapPaymentHashRegistry.json"),
+  artifact("../../contracts/out/TreeSwapBitVault.sol/TreeSwapBitVault.json"),
+  artifact("../../contracts/out/TreeSwapUserEscrow.sol/TreeSwapUserEscrow.json"),
+]);
+
+const provider = new JsonRpcProvider(RPC_URL, CHAIN_ID, { staticNetwork: true });
+const wallets = Array.from({ length: 9 }, (_, index) => (
+  HDNodeWallet.fromPhrase(MNEMONIC, undefined, `m/44'/60'/0'/0/${index}`).connect(provider)
+));
+const deployer = new NonceManager(wallets[0]);
+let proxy;
+
+try {
+  assert.equal((await provider.getNetwork()).chainId, CHAIN_ID);
+  const bitImplementation = await deploy(deployer, bitImplementationArtifact);
+  const bitProxy = await deploy(deployer, bitProxyArtifact, [await bitImplementation.getAddress()]);
+  const controller = await deploy(deployer, walletArtifact, [wallets.slice(0, 3).map((item) => item.address), 2]);
+  const guardian = await deploy(deployer, walletArtifact, [wallets.slice(3, 6).map((item) => item.address), 2]);
+  const feeCollector = await deploy(deployer, walletArtifact, [wallets.slice(6, 9).map((item) => item.address), 2]);
+  const gate = await deploy(deployer, gateArtifact, [
+    await controller.getAddress(),
+    await guardian.getAddress(),
+    86_400,
+    172_800,
+  ]);
+  const registry = await deploy(deployer, registryArtifact, [await controller.getAddress()]);
+  const risk = [
+    100,
+    1_000,
+    100,
+    86_400,
+    1_800,
+    900,
+    172_800,
+    parseEther("10"),
+    parseEther("100"),
+  ];
+  const vault = await deploy(deployer, vaultArtifact, [
+    await bitProxy.getAddress(),
+    await feeCollector.getAddress(),
+    await gate.getAddress(),
+    await registry.getAddress(),
+    risk,
+  ]);
+  const userEscrow = await deploy(deployer, userEscrowArtifact, [
+    await bitProxy.getAddress(),
+    await feeCollector.getAddress(),
+    await gate.getAddress(),
+    await registry.getAddress(),
+    risk,
+  ]);
+
+  const controllerControl = new Contract(await controller.getAddress(), walletArtifact.abi, deployer);
+  for (const escrow of [await vault.getAddress(), await userEscrow.getAddress()]) {
+    await (await controllerControl.execute(
+      await registry.getAddress(),
+      registry.interface.encodeFunctionData("registerEscrow", [escrow]),
+    )).wait();
+  }
+  const sealReceipt = await (await controllerControl.execute(
+    await registry.getAddress(),
+    registry.interface.encodeFunctionData("seal"),
+  )).wait();
+  await waitForFinality(provider, sealReceipt.blockNumber);
+
+  const proxyUrl = `http://127.0.0.1:${PROXY_PORT}/`;
+  proxy = await startLoopbackProxy(RPC_URL, PROXY_PORT);
+  const addresses = {
+    bitProxy: await bitProxy.getAddress(),
+    controller: await controller.getAddress(),
+    feeCollector: await feeCollector.getAddress(),
+    gate: await gate.getAddress(),
+    guardian: await guardian.getAddress(),
+    paymentHashRegistry: await registry.getAddress(),
+    userEscrow: await userEscrow.getAddress(),
+    vault: await vault.getAddress(),
+  };
+  const observationInput = {
+    addresses,
+    reviewedBuildCommit: SOURCE_COMMIT,
+    independentReviewDigest: NO_REVIEW_DIGEST,
+    targetBlockNumber: sealReceipt.blockNumber,
+    observedAt: new Date("2026-08-20T09:00:00.000Z"),
+  };
+  const [primaryObservation, proxyObservation] = await Promise.all([
+    observeDeploymentManifest({
+      ...observationInput,
+      rpcCall: createJsonRpcClient(RPC_URL),
+      providerLabel: "local-anvil-primary",
+      providerIdentity: id("treeswap-deployment-rehearsal:primary").toLowerCase(),
+    }),
+    observeDeploymentManifest({
+      ...observationInput,
+      rpcCall: createJsonRpcClient(proxyUrl),
+      providerLabel: "local-anvil-proxy",
+      providerIdentity: id("treeswap-deployment-rehearsal:proxy").toLowerCase(),
+    }),
+  ]);
+  assert.deepEqual(compareDeploymentObservations(primaryObservation, proxyObservation), {
+    eligible: true,
+    reasons: [],
+  });
+
+  const manifest = primaryObservation.manifest;
+  const localPolicy = {
+    chainId: Number(CHAIN_ID),
+    reviewedBuildCommit: SOURCE_COMMIT,
+    independentReviewDigest: NO_REVIEW_DIGEST,
+    minResumeDelaySeconds: 86_400,
+    maxOpenDurationSeconds: 604_800,
+    absoluteMaxFeeBps: 500,
+    absoluteMaxPriceDeviationBps: 2_500,
+    referenceSatsPerBit: 100,
+    bitProxyAddress: manifest.bit.proxyAddress,
+    bitImplementationAddress: manifest.bit.implementationAddress,
+    codeHashes: {
+      controller: manifest.controller.codeHash,
+      guardian: manifest.guardian.codeHash,
+      feeCollector: manifest.feeCollector.codeHash,
+      gate: manifest.gate.codeHash,
+      vault: manifest.vault.codeHash,
+      userEscrow: manifest.userEscrow.codeHash,
+      paymentHashRegistry: manifest.paymentHashRegistry.codeHash,
+      bitProxy: manifest.bit.proxyCodeHash,
+      bitImplementation: manifest.bit.implementationCodeHash,
+    },
+  };
+  assert.deepEqual(validateDeploymentManifest(manifest, localPolicy), { approved: true, reasons: [] });
+
+  const captured = structuredClone(manifest);
+  captured.guardian.ownerAddresses = [...captured.controller.ownerAddresses];
+  const capturedResult = validateDeploymentManifest(captured, localPolicy);
+  assert.equal(capturedResult.approved, false);
+  assert.match(capturedResult.reasons.join("; "), /share an owner quorum/);
+
+  const productionPolicy = {
+    ...localPolicy,
+    chainId: 1,
+    independentReviewDigest: id("required independent production review").toLowerCase(),
+    bitProxyAddress: BIT_MAINNET_CONTRACT,
+    bitImplementationAddress: MAINNET_BIT_IMPLEMENTATION,
+  };
+  const productionResult = validateDeploymentManifest(manifest, productionPolicy);
+  assert.equal(productionResult.approved, false);
+  assert.match(productionResult.reasons.join("; "), /wrong deployment chain|review digest|BIT proxy|BIT implementation/);
+  assert.equal(await gate.isOpen(), false);
+  assert.equal(await registry.isSealed(), true);
+  assert.equal(await vault.totalAvailable(), 0n);
+  assert.equal(await vault.totalLocked(), 0n);
+  assert.equal(await userEscrow.totalLocked(), 0n);
+
+  const evidence = Object.freeze({
+    schema: "treeswap.deployment-rehearsal-smoke.v1",
+    chainId: String(CHAIN_ID),
+    executionClient: ANVIL_VERSION,
+    actualTreeSwapGateRegistryAndEscrows: true,
+    finalizedCanonicalRpcObservation: true,
+    comparedProviderIdentities: 2,
+    independentProviderBackends: false,
+    testOnlyRoleWallets: true,
+    disjointThreeOwnerTwoThresholdRoleSets: true,
+    gateDeployedClosed: manifest.gate.defaultClosed,
+    registrySealedToExactEscrows: manifest.paymentHashRegistry.approvedEscrows.length === 2,
+    exactEscrowTopologyObserved: true,
+    localRehearsalPolicyMatched: true,
+    capturedQuorumRejected: !capturedResult.approved,
+    productionPolicyApproved: productionResult.approved,
+    independentReviewIncluded: false,
+    productionMultisigsIncluded: false,
+    publicTestnetIncluded: false,
+    tokenBoundary: "test-only-eip1967-bit-probe",
+    solverInventoryWei: "0",
+    userLiabilitiesWei: "0",
+    fundingAuthorization: false,
+  });
+  process.stdout.write(`${JSON.stringify({ ...evidence, evidenceDigest: coordinatorCommitmentDigest(evidence) })}\n`);
+} finally {
+  await closeServer(proxy);
+  await provider.destroy();
+}
