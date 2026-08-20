@@ -29,6 +29,8 @@ The campaign starts two isolated Anvil `1.7.1` chains and a bounded loopback pro
 
 The deterministic campaign evidence digest is `0x9af0dadc8c5249949111b90eb0736fdb4fe2f683ef460d37fc69229faf4edd3b`.
 
+Published checkpoint `cd2a81c0f5ecc7ab1902a1fa576d71f4c7520509` passed 226 application/security tests, 74 direct pinned-runtime tests plus the bounded-filesystem rollback campaign, 68 contract tests, both build paths, this execution-client campaign, and [hosted CI](https://github.com/bobofbuilding/treeswap/actions/runs/32339918956). Its 27-campaign sealed qualification ran from `2026-08-20T06:32:18.096Z` through `2026-08-20T07:39:19.663Z` and independently reconstructs to `sha256:f0e362260e813c3880b4328800a074c8f57df1459ec6b37a045369a718d17e5a`. The ignored mode-`0600` record explicitly grants no funding authorization.
+
 ## Explicit limitations
 
 The two agreeing origins in the success path intentionally share one local Anvil backend, so the record states `independentProviderBackends: false`. The second isolated chain proves only the disagreement path. The campaign contains no public-testnet transaction, live BIT contract, independent provider, production key, or funding authorization.
