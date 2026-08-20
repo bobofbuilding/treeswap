@@ -1,6 +1,8 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import {
+  Contract,
   ContractFactory,
   HDNodeWallet,
   JsonRpcProvider,
@@ -24,7 +26,18 @@ if (!RPC_URL || !MNEMONIC || !ANVIL_VERSION) {
 }
 if (ANVIL_VERSION.length > 200 || /[\r\n]/.test(ANVIL_VERSION)) throw new Error("execution-client version is invalid");
 
+const TOKEN_MODE = process.env.ESCROW_REORG_TOKEN_MODE ?? "mock";
+if (!new Set(["mock", "live-bit"]).has(TOKEN_MODE)) throw new Error("escrow reorg token mode is invalid");
+
 const CHAIN_ID = 31_337;
+const LIVE_BIT_PROXY = "0x57A447E4d5e18A9423408C365963A73F08B9d18C";
+const LIVE_BIT_IMPLEMENTATION = "0xa27b118c0770939295f052aE1b003366E5eF806F";
+const LIVE_BIT_HOLDER = "0xFE0056580828C46B6A43243E386ea2234ad8f1Ca";
+const LIVE_BIT_FORK_BLOCK = 25_788_856;
+const LIVE_BIT_FORK_BLOCK_HASH = "0xf327faf6fee57fdf66e5973d19364e662da009ba266ab32899e242a2b22aef89";
+const LIVE_BIT_PROXY_CODE_HASH = "0xf5648c6316e00873ef8427290251866b3675668407ecf526bf3f467578ff9adc";
+const LIVE_BIT_IMPLEMENTATION_CODE_HASH = "0x506816a3d5cf9e4f486659231f21540e9985d7fbc8438dbb385accd2e532b120";
+const EIP1967_IMPLEMENTATION_SLOT = "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc";
 const UNSET = 0n;
 const LOCKED = 1n;
 const CLAIMED = 2n;
@@ -82,6 +95,20 @@ function wallet(index, provider) {
   return HDNodeWallet.fromPhrase(MNEMONIC, undefined, `m/44'/60'/0'/0/${index}`).connect(provider);
 }
 
+function publishedSource() {
+  const capture = (args) => execFileSync("git", args, { encoding: "utf8" }).trim();
+  if (capture(["status", "--porcelain", "--untracked-files=all"])) {
+    throw new Error("live-BIT reorg evidence requires a clean source tree");
+  }
+  const branch = capture(["branch", "--show-current"]);
+  const commit = capture(["rev-parse", "HEAD"]);
+  const publishedCommit = capture(["rev-parse", "origin/main"]);
+  if (branch !== "main" || commit !== publishedCommit || !/^[0-9a-f]{40}$/.test(commit)) {
+    throw new Error("live-BIT reorg evidence requires exact published main");
+  }
+  return Object.freeze({ branch, commit, clean: true, published: true });
+}
+
 async function artifact(path) {
   return JSON.parse(await readFile(new URL(path, import.meta.url), "utf8"));
 }
@@ -129,19 +156,60 @@ async function send(transaction) {
 
 const provider = new JsonRpcProvider(RPC_URL, CHAIN_ID, { staticNetwork: true, cacheTimeout: -1 });
 try {
-  const [mockBitArtifact, mockGateArtifact, registryArtifact, vaultArtifact, userEscrowArtifact] = await Promise.all([
+  const [mockBitArtifact, liveBitArtifact, mockGateArtifact, registryArtifact, vaultArtifact, userEscrowArtifact] = await Promise.all([
     artifact("../../contracts/out/TestBase.sol/MockBit.json"),
+    artifact("../../contracts/out/TreeSwapMainnetFork.t.sol/ILiveBit.json"),
     artifact("../../contracts/out/TestBase.sol/MockOpenGate.json"),
     artifact("../../contracts/out/TreeSwapPaymentHashRegistry.sol/TreeSwapPaymentHashRegistry.json"),
     artifact("../../contracts/out/TreeSwapBitVault.sol/TreeSwapBitVault.json"),
     artifact("../../contracts/out/TreeSwapUserEscrow.sol/TreeSwapUserEscrow.json"),
   ]);
-  const deployer = wallet(0, provider);
-  const user = wallet(1, provider);
-  const solver = wallet(2, provider);
-  const beneficiary = wallet(3, provider);
-  const collector = wallet(4, provider);
-  const bit = await deploy(mockBitArtifact, deployer);
+  const source = TOKEN_MODE === "live-bit" ? publishedSource() : null;
+  // The familiar first mnemonic accounts may already be contracts or delegated
+  // accounts in mainnet state. Use high deterministic indices on the live fork
+  // and prove every signature-bearing actor is still a plain EOA there.
+  const walletOffset = TOKEN_MODE === "live-bit" ? 1_000 : 0;
+  const deployer = wallet(walletOffset, provider);
+  const user = wallet(walletOffset + 1, provider);
+  const solver = wallet(walletOffset + 2, provider);
+  const beneficiary = wallet(walletOffset + 3, provider);
+  const collector = wallet(walletOffset + 4, provider);
+  if (TOKEN_MODE === "live-bit") {
+    for (const actor of [deployer, user, solver, beneficiary, collector]) {
+      assert.equal(await provider.getCode(actor.address), "0x", "live-fork actor unexpectedly has code");
+      await provider.send("anvil_setBalance", [actor.address, "0x56bc75e2d63100000"]);
+    }
+  }
+  let bit;
+  let liveBitEvidence = null;
+  if (TOKEN_MODE === "live-bit") {
+    const forkBlock = await rpcBlock(provider, LIVE_BIT_FORK_BLOCK);
+    assert.equal(forkBlock?.hash?.toLowerCase(), LIVE_BIT_FORK_BLOCK_HASH);
+    const proxyCodeHash = keccak256(await provider.getCode(LIVE_BIT_PROXY)).toLowerCase();
+    const implementationCodeHash = keccak256(await provider.getCode(LIVE_BIT_IMPLEMENTATION)).toLowerCase();
+    assert.equal(proxyCodeHash, LIVE_BIT_PROXY_CODE_HASH);
+    assert.equal(implementationCodeHash, LIVE_BIT_IMPLEMENTATION_CODE_HASH);
+    const implementationWord = await provider.getStorage(LIVE_BIT_PROXY, EIP1967_IMPLEMENTATION_SLOT);
+    assert.equal(`0x${implementationWord.slice(-40)}`.toLowerCase(), LIVE_BIT_IMPLEMENTATION.toLowerCase());
+    bit = new Contract(LIVE_BIT_PROXY, liveBitArtifact.abi, provider);
+    assert.equal(await bit.symbol(), "BIT");
+    assert.equal(await bit.decimals(), 18n);
+    assert.equal(await bit.paused(), false);
+    liveBitEvidence = Object.freeze({
+      sourceChainId: "1",
+      forkBlockNumber: String(LIVE_BIT_FORK_BLOCK),
+      forkBlockHash: LIVE_BIT_FORK_BLOCK_HASH,
+      proxyAddress: LIVE_BIT_PROXY,
+      proxyCodeHash,
+      implementationAddress: LIVE_BIT_IMPLEMENTATION,
+      implementationCodeHash,
+      symbol: "BIT",
+      decimals: "18",
+      paused: false,
+    });
+  } else {
+    bit = await deploy(mockBitArtifact, deployer);
+  }
   const gate = await deploy(mockGateArtifact, deployer);
   const registry = await deploy(registryArtifact, deployer, [deployer.address]);
   const risk = Object.freeze({
@@ -164,8 +232,20 @@ try {
   await send(registry.connect(deployer).registerEscrow(await vault.getAddress()));
   await send(registry.connect(deployer).registerEscrow(await userEscrow.getAddress()));
   await send(registry.connect(deployer).seal());
-  await send(bit.connect(deployer).mint(user.address, parseEther("1000")));
-  await send(bit.connect(deployer).mint(solver.address, parseEther("1000")));
+  if (TOKEN_MODE === "live-bit") {
+    await provider.send("anvil_setBalance", [LIVE_BIT_HOLDER, "0x56bc75e2d63100000"]);
+    await provider.send("anvil_impersonateAccount", [LIVE_BIT_HOLDER]);
+    try {
+      const holder = await provider.getSigner(LIVE_BIT_HOLDER);
+      await send(bit.connect(holder).transfer(user.address, parseEther("1000")));
+      await send(bit.connect(holder).transfer(solver.address, parseEther("1000")));
+    } finally {
+      await provider.send("anvil_stopImpersonatingAccount", [LIVE_BIT_HOLDER]);
+    }
+  } else {
+    await send(bit.connect(deployer).mint(user.address, parseEther("1000")));
+    await send(bit.connect(deployer).mint(solver.address, parseEther("1000")));
+  }
   await send(bit.connect(user).approve(await userEscrow.getAddress(), parseEther("1000")));
   await send(bit.connect(solver).approve(await vault.getAddress(), parseEther("1000")));
   await send(vault.connect(solver).deposit(parseEther("500")));
@@ -211,7 +291,7 @@ try {
           quote,
           preimage,
           intentDigest: (await userEscrow.hashSolverQuote(quote)).toLowerCase(),
-          open: () => send(userEscrow.connect(wallet(1, provider)).open(quote, signature)),
+          open: () => send(userEscrow.connect(wallet(walletOffset + 1, provider)).open(quote, signature)),
         });
       },
     },
@@ -247,7 +327,7 @@ try {
           quote,
           preimage,
           intentDigest: (await vault.hashSelectedQuote(quote)).toLowerCase(),
-          open: () => send(vault.connect(wallet(1, provider)).reserve(quote, userSignature, solverSignature)),
+          open: () => send(vault.connect(wallet(walletOffset + 1, provider)).reserve(quote, userSignature, solverSignature)),
         });
       },
     },
@@ -326,7 +406,7 @@ try {
     const beneficiaryBefore = await bit.balanceOf(beneficiary.address);
     const collectorBefore = await bit.balanceOf(collector.address);
     const claimReceipt = await send(
-      direction.contract.connect(wallet(0, provider)).claim(afterClaim.quote.quoteId, afterClaim.preimage),
+      direction.contract.connect(wallet(walletOffset, provider)).claim(afterClaim.quote.quoteId, afterClaim.preimage),
     );
     assert.equal(await direction.contract.swapState(afterClaim.quote.quoteId), CLAIMED);
     assert.equal(await bit.balanceOf(beneficiary.address), beneficiaryBefore + AMOUNT - FEE);
@@ -338,7 +418,7 @@ try {
     assert.equal(await bit.balanceOf(beneficiary.address), beneficiaryBefore);
     assert.equal(await bit.balanceOf(collector.address), collectorBefore);
     assert.equal(await direction.contract.totalLocked(), AMOUNT);
-    await send(direction.contract.connect(wallet(0, provider)).claim(afterClaim.quote.quoteId, afterClaim.preimage));
+    await send(direction.contract.connect(wallet(walletOffset, provider)).claim(afterClaim.quote.quoteId, afterClaim.preimage));
     assert.equal(await direction.contract.swapState(afterClaim.quote.quoteId), CLAIMED);
     assert.equal(await bit.balanceOf(beneficiary.address), beneficiaryBefore + AMOUNT - FEE);
     assert.equal(await bit.balanceOf(collector.address), collectorBefore + FEE);
@@ -353,10 +433,14 @@ try {
   }
 
   const evidence = Object.freeze({
-    schema: "treeswap.escrow-reorg-smoke.v1",
+    schema: TOKEN_MODE === "live-bit"
+      ? "treeswap.live-bit-escrow-reorg-smoke.v1"
+      : "treeswap.escrow-reorg-smoke.v1",
     chainId: String(CHAIN_ID),
     executionClient: ANVIL_VERSION,
-    tokenBoundary: "test-only-mock-bit",
+    tokenBoundary: TOKEN_MODE === "live-bit" ? "pinned-live-bit-mainnet-fork" : "test-only-mock-bit",
+    ...(source ? { source } : {}),
+    ...(liveBitEvidence ? { liveBit: liveBitEvidence } : {}),
     actualTreeSwapEscrows: true,
     vaultCodeHash: keccak256(await provider.getCode(await vault.getAddress())).toLowerCase(),
     userEscrowCodeHash: keccak256(await provider.getCode(await userEscrow.getAddress())).toLowerCase(),

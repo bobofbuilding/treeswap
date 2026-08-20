@@ -67,3 +67,16 @@ test("isolates disposable stale-chain state from the main payer volume", async (
   assert.match(campaign, /ADAPTER_JOURNAL_PATH=\/tmp\/stale-actions\.jsonl/);
   assert.match(campaign, /CHAIN_PROGRESS_PATH=\/tmp\/stale-chain-progress\.json/);
 });
+
+test("binds credentialed live-BIT reorg evidence to exact published main", async () => {
+  const [runner, campaign] = await Promise.all([
+    readFile(new URL("../scripts/run-live-bit-reorg-smoke.sh", import.meta.url), "utf8"),
+    readFile(new URL("../infra/evm/escrow-reorg-smoke.mjs", import.meta.url), "utf8"),
+  ]);
+  assert.match(runner, /git status --porcelain --untracked-files=all/);
+  assert.match(runner, /git rev-parse origin\/main/);
+  assert.match(runner, /--fork-block-number 25788856/);
+  assert.match(campaign, /live-BIT reorg evidence requires a clean source tree/);
+  assert.match(campaign, /live-BIT reorg evidence requires exact published main/);
+  assert.match(campaign, /return Object\.freeze\(\{ branch, commit, clean: true, published: true \}\)/);
+});

@@ -83,6 +83,7 @@ jobs:
       - run: bash -n scripts/run-evm-outbox-fault-smoke.sh
       - run: bash -n scripts/run-safety-monitor-smoke.sh
       - run: bash -n scripts/run-deployment-rehearsal-smoke.sh
+      - run: bash -n scripts/run-live-bit-reorg-smoke.sh
       - run: node --check scripts/run-local-qualification.mjs
       - run: npm run test:coordinator-evm
       - run: npm run test:evm-outbox-faults

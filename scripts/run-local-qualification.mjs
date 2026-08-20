@@ -64,6 +64,7 @@ const configurationFiles = [
   "scripts/run-evm-outbox-fault-smoke.sh",
   "scripts/run-safety-monitor-smoke.sh",
   "scripts/run-deployment-rehearsal-smoke.sh",
+  "scripts/run-live-bit-reorg-smoke.sh",
   "scripts/run-local-qualification.mjs",
   "lib/lightning-adapter-policy.mjs",
   "lib/lightning-adapter-runtime.mjs",
