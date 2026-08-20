@@ -25,7 +25,8 @@ Status: Gate 0 is complete. Gates 1 through 4 are in progress. No funded testnet
 - [ ] Promote the reviewed observation into a signed deployment manifest; never promote an `unreviewed-live-observation` automatically.
 - [ ] Run controlled execution-client reorgs before and after escrow authorization/claim and attach finality-rollback evidence.
   - [x] A deterministic Anvil campaign replaces actual vault and user-escrow blocks before authorization, after authorization, and after claim; both directions reject stale authorization/dispatch, roll back orphaned receipts and balances, and recover through one canonical beneficiary-bound claim.
-  - [ ] Reproduce against the pinned live BIT fork and public testnet with genuine finalized/unfinalized transitions and independent-provider observations.
+  - [x] Published commit `1908b539e2bcb6fa48ce9c2883a0770979b82b01` repeats all six block-replacement boundaries on an Anvil fork of exact Ethereum block `25788856` using the pinned live BIT proxy and implementation. The clean-published, secret-free result has digest `0x1475c60668bf57ded78659302e1e03382f17a26c1d8479835f8a8a2436176507`; [hosted CI](https://github.com/bobofbuilding/treeswap/actions/runs/32366965287) passed 240 application/security tests, 89 pinned-runtime tests plus disk-full rollback, 68 contract tests, both builds, and every noncredentialed EVM campaign.
+  - [ ] Repeat on public testnet with genuine finalized/unfinalized transitions, two independently operated authenticated providers, deployed test escrows, and retained operator evidence.
 
 Run the observer only with an authenticated mainnet endpoint:
 

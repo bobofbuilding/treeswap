@@ -1,6 +1,6 @@
 # BIT mainnet boundary evidence
 
-Status: reproducible pre-release evidence captured on 2026-08-19. This is not a signed deployment manifest, security audit, or permission to fund TreeSwap.
+Status: reproducible pre-release evidence captured on 2026-08-19 and revalidated on 2026-08-20. This is not a signed deployment manifest, security audit, or permission to fund TreeSwap.
 
 ## Pinned state
 
@@ -35,7 +35,7 @@ Explorer verification and local reproduction prove source-to-bytecode identity, 
 5. an incompatible implementation-slot change fails closed before new exposure; and
 6. the sealed registry prevents one payment hash from being used across both directions.
 
-The observer separately rejects an unfinalized target, a changing finalized hash, non-canonical state reads, a finalized-state regression, and provider disagreement. The [controlled EVM reorg campaign](./EVM_REORG_EVIDENCE.md) now proves both actual TreeSwap escrows fail closed across local block replacement before authorization, after authorization, and after claim. That campaign uses mock BIT; repetition against the pinned live BIT fork and public-testnet finality remains required for release evidence.
+The observer separately rejects an unfinalized target, a changing finalized hash, non-canonical state reads, a finalized-state regression, and provider disagreement. The [controlled EVM reorg campaign](./EVM_REORG_EVIDENCE.md) now proves both actual TreeSwap escrows fail closed across local block replacement before authorization, after authorization, and after claim with mock BIT and again on an Anvil fork using the pinned live BIT proxy. The clean-published live-fork digest is `0x1475c60668bf57ded78659302e1e03382f17a26c1d8479835f8a8a2436176507`. Genuine public-testnet finality transitions through two independent authenticated providers remain required for release evidence.
 
 ## Promotion rule
 

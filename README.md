@@ -66,11 +66,12 @@ Run the pinned live-BIT fork campaign with a secret archive endpoint:
 
 ```bash
 MAINNET_RPC_URL=<secret> npm run test:fork
+MAINNET_RPC_URL=<secret> npm run test:live-bit-reorg
 ```
 
 ## Production work still required
 
-- Repeat the passing local EVM outbox/reorg campaigns on the pinned BIT fork and public testnet using two independently operated authenticated providers
+- Repeat the passing EVM outbox/reorg campaigns on public testnet using two independently operated authenticated providers and genuine finality transitions
 - Deploy and qualify the bounded solver daemon, continuous safety monitor, backup/restore drills, redundant guardian delivery, and external alert routing
 - Deploy the implemented solver endpoint, private-packet, and capacity-reader protocols plus independent quote-delivery paths
 - Bridge-escrow wallet integration with exact intent authorization and explicit approval boundaries
