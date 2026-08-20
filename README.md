@@ -30,6 +30,7 @@ The prototype assumes a business par value of **1 BIT = 100 sats**. This value i
 - Ordered production gates in [`docs/PRODUCTION_READINESS.md`](docs/PRODUCTION_READINESS.md)
 - Permissionless solver target in [`docs/PERMISSIONLESS_AUTOMATION.md`](docs/PERMISSIONLESS_AUTOMATION.md)
 - Signed multi-operator public-testnet campaign evidence in [`docs/PUBLIC_TESTNET_EVIDENCE.md`](docs/PUBLIC_TESTNET_EVIDENCE.md)
+- Immutable public-testnet operator campaign snapshots via `npm run manage:testnet-campaign`
 - Authenticated solver request/response boundary in [`docs/SOLVER_ENDPOINT.md`](docs/SOLVER_ENDPOINT.md)
 - Optional Lightning account linking in [`docs/LIGHTNING_ACCOUNTS.md`](docs/LIGHTNING_ACCOUNTS.md)
 - Immutable version transitions in [`docs/UPGRADES.md`](docs/UPGRADES.md)

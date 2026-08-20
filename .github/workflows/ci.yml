@@ -67,6 +67,7 @@ jobs:
       - run: node --check lib/deployment-manifest-promotion.mjs
       - run: node --check lib/qualification-evidence.mjs
       - run: node --check lib/release-authorization.mjs
+      - run: node --check lib/public-testnet-campaign-workflow.mjs
       - run: node --check lib/public-testnet-evidence.mjs
       - run: node --check lib/solver-capability.mjs
       - run: node --check lib/solver-endpoint-transport.mjs
@@ -93,6 +94,7 @@ jobs:
       - run: bash -n scripts/run-cross-chain-deadline-smoke.sh
       - run: bash -n scripts/run-live-bit-cross-chain-deadline-smoke.sh
       - run: node --check scripts/run-local-qualification.mjs
+      - run: node --check scripts/manage-public-testnet-campaign.mjs
       - run: node --check scripts/prepare-public-testnet-attestation.mjs
       - run: node --check scripts/verify-public-testnet-evidence.mjs
       - run: node --check scripts/prepare-deployment-promotion-approval.mjs

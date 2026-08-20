@@ -277,6 +277,8 @@ test("rejects self-counting, duplicate, misordered, or incomplete participant se
     (value) => { value.record.counts.alertChannels = 3; },
     (value) => { value.record.participants[1].operatorId = value.record.participants[0].operatorId; },
     (value) => { value.record.participants[1].signer = value.record.participants[0].signer; },
+    (value) => { value.record.participants[2].operatorId = value.record.participants[0].operatorId; },
+    (value) => { value.record.participants[2].signer = value.record.participants[0].signer; },
     (value) => { value.record.participants.reverse(); },
     (value) => { value.record.solverMetrics.pop(); },
     (value) => { value.record.alertChannelEvidenceDigests[1] = value.record.alertChannelEvidenceDigests[0]; },
