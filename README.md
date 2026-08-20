@@ -31,6 +31,7 @@ The prototype assumes a business par value of **1 BIT = 100 sats**. This value i
 - Immutable version transitions in [`docs/UPGRADES.md`](docs/UPGRADES.md)
 - Pinned two-node Lightning lab in [`docs/LIGHTNING_REGTEST.md`](docs/LIGHTNING_REGTEST.md)
 - Atomic coordinator, one-dispatch Lightning recovery, and exact-transaction EVM claim outbox in [`docs/COORDINATOR.md`](docs/COORDINATOR.md)
+- Controlled EVM finality, provider-disagreement, nonce-replacement, and relayer-rotation evidence in [`docs/EVM_OUTBOX_EVIDENCE.md`](docs/EVM_OUTBOX_EVIDENCE.md)
 - Reproducible BIT source, provider-comparison, and live-token fork evidence in [`docs/BIT_MAINNET_EVIDENCE.md`](docs/BIT_MAINNET_EVIDENCE.md)
 - Clean-published-commit local qualification with secret-free evidence output via `npm run qualify:local`
 - Deterministic two-direction execution-client reorg evidence via `npm run test:escrow-reorg`
@@ -67,8 +68,8 @@ MAINNET_RPC_URL=<secret> npm run test:fork
 
 ## Production work still required
 
-- Controlled EVM reorg/finality campaigns and two authenticated provider observations
-- Deploy and qualify the bounded solver daemon, public-testnet EVM outbox evidence, backup/restore drills, and alert delivery
+- Repeat the passing local EVM outbox/reorg campaigns on the pinned BIT fork and public testnet using two independently operated authenticated providers
+- Deploy and qualify the bounded solver daemon, backup/restore drills, and alert delivery
 - Deploy the implemented solver endpoint, private-packet, and capacity-reader protocols plus independent quote-delivery paths
 - Bridge-escrow wallet integration with exact intent authorization and explicit approval boundaries
 - Keep email delivery disabled; a later mail release requires ownership verification, unsubscribe, rate limits, auditing, and sender authentication

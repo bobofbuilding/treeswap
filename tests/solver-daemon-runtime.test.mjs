@@ -243,6 +243,39 @@ function rpcTransaction(raw) {
 function evmHarness(value) {
   let rawTransaction = null;
   const blockHash = hash(`${value.settlementId}:claim-block`);
+  const rpcRequestImpl = async ({ method, params }) => {
+    if (method === "eth_chainId") return hexQuantity(CHAIN_ID);
+    if (method === "eth_getCode") return CONTRACT_CODE;
+    if (method === "eth_sendRawTransaction") {
+      rawTransaction = params[0];
+      return Transaction.from(rawTransaction).hash.toLowerCase();
+    }
+    if (method === "eth_getTransactionByHash") return rawTransaction ? rpcTransaction(rawTransaction) : null;
+    if (method === "eth_getTransactionReceipt") {
+      if (!rawTransaction) return null;
+      const parsed = Transaction.from(rawTransaction);
+      return {
+        transactionHash: parsed.hash.toLowerCase(),
+        blockHash,
+        blockNumber: "0x78",
+        status: "0x1",
+        logs: [{
+          address: CONTRACT,
+          transactionHash: parsed.hash.toLowerCase(),
+          blockHash,
+          topics: [
+            CLAIMED_TOPIC,
+            reservation(value).reservationId,
+            `0x${"00".repeat(12)}${signer.address.slice(2).toLowerCase()}`,
+          ],
+          data: `0x${"00".repeat(64)}`,
+        }],
+      };
+    }
+    if (method === "eth_getBlockByNumber" && params[0] === "0x78") return { number: "0x78", hash: blockHash };
+    if (method === "eth_getBlockByNumber" && params[0] === "finalized") return { number: "0x78", hash: blockHash };
+    throw new Error(`unexpected RPC method ${method}`);
+  };
   const config = {
     signer,
     expectedChainId: CHAIN_ID,
@@ -250,39 +283,11 @@ function evmHarness(value) {
     expectedContractCodeHash: CONTRACT_CODE_HASH,
     maximumGasCostWei: MAXIMUM_GAS_COST_WEI,
     rpcUrl: "http://127.0.0.1:8545",
-    async rpcRequestImpl({ method, params }) {
-      if (method === "eth_chainId") return hexQuantity(CHAIN_ID);
-      if (method === "eth_getCode") return CONTRACT_CODE;
-      if (method === "eth_sendRawTransaction") {
-        rawTransaction = params[0];
-        return Transaction.from(rawTransaction).hash.toLowerCase();
-      }
-      if (method === "eth_getTransactionByHash") return rawTransaction ? rpcTransaction(rawTransaction) : null;
-      if (method === "eth_getTransactionReceipt") {
-        if (!rawTransaction) return null;
-        const parsed = Transaction.from(rawTransaction);
-        return {
-          transactionHash: parsed.hash.toLowerCase(),
-          blockHash,
-          blockNumber: "0x78",
-          status: "0x1",
-          logs: [{
-            address: CONTRACT,
-            transactionHash: parsed.hash.toLowerCase(),
-            blockHash,
-            topics: [
-              CLAIMED_TOPIC,
-              reservation(value).reservationId,
-              `0x${"00".repeat(12)}${signer.address.slice(2).toLowerCase()}`,
-            ],
-            data: `0x${"00".repeat(64)}`,
-          }],
-        };
-      }
-      if (method === "eth_getBlockByNumber" && params[0] === "0x78") return { number: "0x78", hash: blockHash };
-      if (method === "eth_getBlockByNumber" && params[0] === "finalized") return { number: "0x78", hash: blockHash };
-      throw new Error(`unexpected RPC method ${method}`);
-    },
+    rpcRequestImpl,
+    reconciliationProviders: [
+      { label: "provider-a", rpcUrl: "http://127.0.0.1:8545", rpcRequestImpl },
+      { label: "provider-b", rpcUrl: "http://127.0.0.1:8546", rpcRequestImpl },
+    ],
   };
   return { config, get rawTransaction() { return rawTransaction; } };
 }
@@ -371,6 +376,7 @@ test("recovers an unbound EVM action, broadcasts exact bytes, reconciles finalit
   const reconciled = await executeSolverDaemonStep(runtimeArgs(fixture, common));
   assert.equal(reconciled.disposition, "confirmed");
   assert.equal(reconciled.actionState, "CONFIRMED");
+  assert.match(reconciled.providerConsensusDigest, /^0x[0-9a-f]{64}$/);
   const completed = await executeSolverDaemonStep(runtimeArgs(fixture, common));
   assert.equal(completed.terminalState, "COMPLETED");
   assert.equal(Object.hasOwn(broadcast, "preimage"), false);

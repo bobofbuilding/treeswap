@@ -7,9 +7,11 @@ import { Transaction, Wallet, id, keccak256, sha256 } from "ethers";
 import { CoordinatorStore } from "../lib/coordinator-store.mjs";
 import {
   dispatchEvmClaimAction,
+  EvmProviderQuorumError,
   evmClaimActionCommitment,
   prepareEvmClaimAction,
   reconcileEvmClaimAction,
+  reconcileEvmClaimActionWithQuorum,
 } from "../lib/evm-action-runner.mjs";
 
 const NOW = 2_000_000_000;
@@ -392,4 +394,149 @@ test("halts when a previously observed EVM inclusion disappears", async (t) => {
   assert.equal(reorged.disposition, "mismatch");
   assert.equal(reorged.settlement.state, "HALTED");
   assert.equal(fixture.store.getEvmTransaction(fixture.planned.actionId).state, "REORGED");
+});
+
+test("requires two independent providers to agree before finalized claim reconciliation", async (t) => {
+  const fixture = await preparedStore(t, "provider-quorum");
+  let raw;
+  await dispatchEvmClaimAction({
+    store: fixture.store,
+    actionId: fixture.planned.actionId,
+    operation: fixture.op,
+    signer,
+    expectedChainId: CHAIN_ID,
+    expectedContract: CONTRACT,
+    expectedContractCodeHash: CONTRACT_CODE_HASH,
+    maximumGasCostWei: MAXIMUM_GAS_COST_WEI,
+    rpcUrl: "http://127.0.0.1:8545",
+    rpcRequestImpl: async ({ method, params }) => {
+      if (method === "eth_chainId") return hexQuantity(CHAIN_ID);
+      if (method === "eth_getCode") return CONTRACT_CODE;
+      [raw] = params;
+      return Transaction.from(raw).hash;
+    },
+    nowSeconds: () => NOW + 4,
+  });
+  const blockHash = hash("provider-quorum-block");
+  const receipt = successfulReceipt(raw, blockHash, 120);
+  const calls = new Map();
+  const providerRpc = (name) => async ({ method, params }) => {
+    calls.set(name, (calls.get(name) ?? 0) + 1);
+    if (method === "eth_getTransactionByHash") return rpcTransaction(raw);
+    if (method === "eth_getTransactionReceipt") return receipt;
+    if (method === "eth_getCode") return CONTRACT_CODE;
+    if (method === "eth_getBlockByNumber" && params[0] === "finalized") {
+      return { number: "0x78", hash: hash(`${name}-finalized`) };
+    }
+    if (method === "eth_getBlockByNumber") return { number: params[0], hash: blockHash };
+    throw new Error(`unexpected method ${method}`);
+  };
+  const result = await reconcileEvmClaimActionWithQuorum({
+    store: fixture.store,
+    actionId: fixture.planned.actionId,
+    expectedContractCodeHash: CONTRACT_CODE_HASH,
+    providers: [
+      { label: "provider-a", rpcUrl: "http://127.0.0.1:8545", rpcRequestImpl: providerRpc("provider-a") },
+      { label: "provider-b", rpcUrl: "http://127.0.0.1:8546", rpcRequestImpl: providerRpc("provider-b") },
+    ],
+    nowSeconds: () => NOW + 5,
+  });
+  assert.equal(result.disposition, "confirmed");
+  assert.deepEqual(result.providerQuorum.providers, ["provider-a", "provider-b"]);
+  assert.match(result.providerQuorum.consensusDigest, /^0x[0-9a-f]{64}$/);
+  assert.equal(result.action.state, "CONFIRMED");
+  assert.equal(fixture.store.getEvmTransaction(fixture.planned.actionId).state, "FINALIZED");
+  assert.ok(calls.get("provider-a") > 0);
+  assert.ok(calls.get("provider-b") > 0);
+});
+
+test("provider disagreement or outage cannot mutate an unknown EVM action", async (t) => {
+  for (const fault of ["disagreement", "unavailable"]) {
+    await t.test(fault, async (child) => {
+      const fixture = await preparedStore(child, `provider-${fault}`);
+      let raw;
+      await dispatchEvmClaimAction({
+        store: fixture.store,
+        actionId: fixture.planned.actionId,
+        operation: fixture.op,
+        signer,
+        expectedChainId: CHAIN_ID,
+        expectedContract: CONTRACT,
+        expectedContractCodeHash: CONTRACT_CODE_HASH,
+        maximumGasCostWei: MAXIMUM_GAS_COST_WEI,
+        rpcUrl: "http://127.0.0.1:8545",
+        rpcRequestImpl: async ({ method, params }) => {
+          if (method === "eth_chainId") return hexQuantity(CHAIN_ID);
+          if (method === "eth_getCode") return CONTRACT_CODE;
+          [raw] = params;
+          return Transaction.from(raw).hash;
+        },
+        nowSeconds: () => NOW + 4,
+      });
+      const blockHash = hash(`provider-${fault}-block`);
+      const first = async ({ method, params }) => {
+        if (method === "eth_getTransactionByHash") return rpcTransaction(raw);
+        if (method === "eth_getTransactionReceipt") return successfulReceipt(raw, blockHash, 120);
+        if (method === "eth_getCode") return CONTRACT_CODE;
+        if (method === "eth_getBlockByNumber" && params[0] === "finalized") {
+          return { number: "0x78", hash: hash(`provider-${fault}-finalized`) };
+        }
+        if (method === "eth_getBlockByNumber") return { number: params[0], hash: blockHash };
+        throw new Error("unexpected provider-a RPC");
+      };
+      const second = fault === "unavailable"
+        ? async () => { throw new Error("provider offline"); }
+        : async ({ method }) => {
+          if (method === "eth_getTransactionByHash" || method === "eth_getTransactionReceipt") return null;
+          throw new Error("unexpected provider-b RPC");
+        };
+      await assert.rejects(
+        reconcileEvmClaimActionWithQuorum({
+          store: fixture.store,
+          actionId: fixture.planned.actionId,
+          expectedContractCodeHash: CONTRACT_CODE_HASH,
+          providers: [
+            { label: "provider-a", rpcUrl: "http://127.0.0.1:8545", rpcRequestImpl: first },
+            { label: "provider-b", rpcUrl: "http://127.0.0.1:8546", rpcRequestImpl: second },
+          ],
+          nowSeconds: () => NOW + 5,
+        }),
+        (error) => error instanceof EvmProviderQuorumError
+          && error.code === (fault === "unavailable" ? "PROVIDER_UNAVAILABLE" : "PROVIDER_DISAGREEMENT"),
+      );
+      assert.equal(fixture.store.getAction(fixture.planned.actionId).state, "UNKNOWN");
+      assert.equal(fixture.store.getEvmTransaction(fixture.planned.actionId).state, "UNKNOWN");
+      assert.equal(fixture.store.getEvmTransaction(fixture.planned.actionId).inclusionBlockHash, null);
+      assert.equal(fixture.store.getSettlement(fixture.value.settlementId).state, "RECONCILIATION_REQUIRED");
+    });
+  }
+});
+
+test("provider quorum refuses reused identities or origins before reading", async (t) => {
+  const fixture = await preparedStore(t, "provider-identity");
+  const base = {
+    store: fixture.store,
+    actionId: fixture.planned.actionId,
+    expectedContractCodeHash: CONTRACT_CODE_HASH,
+  };
+  await assert.rejects(
+    reconcileEvmClaimActionWithQuorum({
+      ...base,
+      providers: [
+        { label: "same-provider", rpcUrl: "http://127.0.0.1:8545", rpcRequestImpl: async () => null },
+        { label: "same-provider", rpcUrl: "http://127.0.0.1:8546", rpcRequestImpl: async () => null },
+      ],
+    }),
+    /labels must be independent/,
+  );
+  await assert.rejects(
+    reconcileEvmClaimActionWithQuorum({
+      ...base,
+      providers: [
+        { label: "provider-a", rpcUrl: "http://127.0.0.1:8545/one", rpcRequestImpl: async () => null },
+        { label: "provider-b", rpcUrl: "http://127.0.0.1:8545/two", rpcRequestImpl: async () => null },
+      ],
+    }),
+    /origins must be independent/,
+  );
 });

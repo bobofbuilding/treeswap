@@ -72,7 +72,10 @@ jobs:
       - run: node --check infra/coordinator/invoice-smoke.mjs
       - run: node --check infra/coordinator/disk-full-smoke.mjs
       - run: node --check infra/evm/escrow-reorg-smoke.mjs
+      - run: node --check infra/evm/outbox-fault-smoke.mjs
+      - run: bash -n scripts/run-evm-outbox-fault-smoke.sh
       - run: node --check scripts/run-local-qualification.mjs
       - run: npm run test:coordinator-evm
+      - run: npm run test:evm-outbox-faults
       - run: npm run test:escrow-reorg
       - run: npm run test:coordinator-runtime

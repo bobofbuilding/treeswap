@@ -12,7 +12,8 @@ docker run --rm --read-only \
   --entrypoint node \
   "$runtime_image" \
   --test tests/admission-store.test.mjs tests/coordinator-store.test.mjs \
-    tests/coordinator-action-runner.test.mjs tests/solver-capability.test.mjs \
+    tests/coordinator-action-runner.test.mjs tests/evm-action-runner.test.mjs \
+    tests/solver-capability.test.mjs \
     tests/solver-daemon-planner.test.mjs tests/solver-daemon-runtime.test.mjs \
     tests/solver-endpoint-transport.test.mjs tests/solver-private-packet.test.mjs
 docker run --rm --read-only \
