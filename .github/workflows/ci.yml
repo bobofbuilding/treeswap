@@ -77,6 +77,7 @@ jobs:
       - run: node --check lib/solver-private-packet.mjs
       - run: node --check lib/safety-monitor.mjs
       - run: node --check lib/cross-chain-deadline-evidence.mjs
+      - run: node --check lib/live-bit-cross-chain-deadline-evidence.mjs
       - run: node --check infra/coordinator/smoke.mjs
       - run: node --check infra/coordinator/invoice-smoke.mjs
       - run: node --check infra/coordinator/disk-full-smoke.mjs
@@ -90,6 +91,7 @@ jobs:
       - run: bash -n scripts/run-deployment-rehearsal-smoke.sh
       - run: bash -n scripts/run-live-bit-reorg-smoke.sh
       - run: bash -n scripts/run-cross-chain-deadline-smoke.sh
+      - run: bash -n scripts/run-live-bit-cross-chain-deadline-smoke.sh
       - run: node --check scripts/run-local-qualification.mjs
       - run: node --check scripts/prepare-public-testnet-attestation.mjs
       - run: node --check scripts/verify-public-testnet-evidence.mjs

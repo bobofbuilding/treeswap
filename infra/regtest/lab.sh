@@ -2526,6 +2526,11 @@ smoke_cross_chain_deadline() {
   : "${CROSS_CHAIN_DEADLINE_MNEMONIC:?cross-chain deadline mnemonic is required}"
   : "${CROSS_CHAIN_DEADLINE_STATE_PATH:?cross-chain deadline state path is required}"
   : "${CROSS_CHAIN_DEADLINE_ANVIL_VERSION:?cross-chain deadline execution-client version is required}"
+  : "${CROSS_CHAIN_DEADLINE_TOKEN_MODE:?cross-chain deadline token mode is required}"
+  if [[ "$CROSS_CHAIN_DEADLINE_TOKEN_MODE" != "mock" && "$CROSS_CHAIN_DEADLINE_TOKEN_MODE" != "live-bit" ]]; then
+    echo "cross-chain deadline token mode is invalid" >&2
+    return 1
+  fi
 
   local bit_amount_sats=9900
   local hold_amount_sats=10000
@@ -2715,9 +2720,15 @@ smoke_cross_chain_deadline() {
   cross_chain_evm verify-lightning-to-bit-boundary "$final_input" | jq -e \
     '.status == "refunded" and .direction == "lightning-to-bit"' >/dev/null
   evidence=$(cross_chain_evm finalize-evidence '{}')
-  jq -e \
-    '.schema == "treeswap.cross-chain-deadline-evidence.v1" and .status == "passed" and .scope == "local-dual-chain-no-funding-authorization" and .limitations.publicTestnetIncluded == false and .limitations.independentProvidersIncluded == false and .limitations.productionInfrastructureIncluded == false and .limitations.simulatedEvmFinality == true and .limitations.fundingAuthorization == false' \
-    <<<"$evidence" >/dev/null
+  if [[ "$CROSS_CHAIN_DEADLINE_TOKEN_MODE" == "live-bit" ]]; then
+    jq -e \
+      '.schema == "treeswap.live-bit-cross-chain-deadline-evidence.v1" and .status == "passed" and .scope == "pinned-live-bit-fork-local-lnd-no-funding-authorization" and .source.branch == "main" and .source.clean == true and .source.published == true and (.source.commit | test("^[0-9a-f]{40}$")) and .token.boundary == "pinned-live-bit-proxy-fork" and .token.sourceChainId == "1" and .token.forkBlockNumber == "25788856" and .token.forkBlockHash == "0xf327faf6fee57fdf66e5973d19364e662da009ba266ab32899e242a2b22aef89" and (.token.proxyAddress | ascii_downcase) == "0x57a447e4d5e18a9423408c365963a73f08b9d18c" and .token.proxyCodeHash == "0xf5648c6316e00873ef8427290251866b3675668407ecf526bf3f467578ff9adc" and (.token.implementationAddress | ascii_downcase) == "0xa27b118c0770939295f052ae1b003366e5ef806f" and .token.implementationCodeHash == "0x506816a3d5cf9e4f486659231f21540e9985d7fbc8438dbb385accd2e532b120" and .token.symbol == "BIT" and .token.decimals == "18" and .token.paused == false and .deadlineEvidence.status == "passed" and .limitations.publicTestnetIncluded == false and .limitations.independentProvidersIncluded == false and .limitations.productionInfrastructureIncluded == false and .limitations.localForkProvider == true and .limitations.simulatedEvmFinality == true and .limitations.fundingAuthorization == false' \
+      <<<"$evidence" >/dev/null
+  else
+    jq -e \
+      '.schema == "treeswap.cross-chain-deadline-evidence.v1" and .status == "passed" and .scope == "local-dual-chain-no-funding-authorization" and .limitations.publicTestnetIncluded == false and .limitations.independentProvidersIncluded == false and .limitations.productionInfrastructureIncluded == false and .limitations.simulatedEvmFinality == true and .limitations.fundingAuthorization == false' \
+      <<<"$evidence" >/dev/null
+  fi
   if [[ "$evidence" == *"${hold_preimage#0x}"* || "$evidence" == *"${hold_hash#0x}"* || \
     "$evidence" == *"$hold_request"* || "$evidence" == *"paymentHash"* || \
     "$evidence" == *"invoiceDigest"* || "$evidence" == *"preimage"* ]]; then
@@ -2727,7 +2738,11 @@ smoke_cross_chain_deadline() {
   hold_hash=""
   unset hold_preimage hold_request hold_payment_envelope open_input final_input
   trap - EXIT
-  echo "Cross-chain deadline smoke passed: both live invoice directions used finalized actual escrows, the 24-block HTLC cutoff preceded refund, and exact claim/refund boundaries remained mutually exclusive ($(jq -r '.evidenceDigest' <<<"$evidence"))."
+  if [[ "$CROSS_CHAIN_DEADLINE_TOKEN_MODE" == "live-bit" ]]; then
+    echo "Live-BIT cross-chain deadline smoke passed: both live invoice directions used actual TreeSwap escrows backed by the pinned BIT proxy fork, the 24-block HTLC cutoff preceded refund, and exact claim/refund boundaries remained mutually exclusive ($(jq -r '.evidenceDigest' <<<"$evidence"))."
+  else
+    echo "Cross-chain deadline smoke passed: both live invoice directions used finalized actual escrows, the 24-block HTLC cutoff preceded refund, and exact claim/refund boundaries remained mutually exclusive ($(jq -r '.evidenceDigest' <<<"$evidence"))."
+  fi
 }
 
 smoke_htlc_cutoff() {

@@ -66,6 +66,7 @@ const configurationFiles = [
   "scripts/run-safety-monitor-smoke.sh",
   "scripts/run-deployment-rehearsal-smoke.sh",
   "scripts/run-cross-chain-deadline-smoke.sh",
+  "scripts/run-live-bit-cross-chain-deadline-smoke.sh",
   "scripts/run-live-bit-reorg-smoke.sh",
   "scripts/run-local-qualification.mjs",
   "scripts/prepare-public-testnet-attestation.mjs",
@@ -98,6 +99,7 @@ const configurationFiles = [
   "lib/safety-monitor.mjs",
   "lib/settlement-policy.mjs",
   "lib/cross-chain-deadline-evidence.mjs",
+  "lib/live-bit-cross-chain-deadline-evidence.mjs",
 ];
 const configurationHashes = {};
 for (const path of configurationFiles) {

@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { lstat, readFile, rename, unlink, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute } from "node:path";
 import {
@@ -16,11 +17,20 @@ import {
   crossChainDeadlinePolicy,
   crossChainDeadlineSchemas,
 } from "../../lib/cross-chain-deadline-evidence.mjs";
+import { buildLiveBitCrossChainDeadlineEvidence } from "../../lib/live-bit-cross-chain-deadline-evidence.mjs";
 import { deriveSettlementSchedule, validateHeldHtlc } from "../../lib/settlement-policy.mjs";
 
-const STATE_SCHEMA = "treeswap.cross-chain-deadline-state.v1";
+const STATE_SCHEMA = "treeswap.cross-chain-deadline-state.v2";
 const CHAIN_ID = 31_337;
 const TEST_MNEMONIC = "test test test test test test test test test test test junk";
+const LIVE_BIT_PROXY = "0x57A447E4d5e18A9423408C365963A73F08B9d18C";
+const LIVE_BIT_IMPLEMENTATION = "0xa27b118c0770939295f052aE1b003366E5eF806F";
+const LIVE_BIT_HOLDER = "0xFE0056580828C46B6A43243E386ea2234ad8f1Ca";
+const LIVE_BIT_FORK_BLOCK = 25_788_856;
+const LIVE_BIT_FORK_BLOCK_HASH = "0xf327faf6fee57fdf66e5973d19364e662da009ba266ab32899e242a2b22aef89";
+const LIVE_BIT_PROXY_CODE_HASH = "0xf5648c6316e00873ef8427290251866b3675668407ecf526bf3f467578ff9adc";
+const LIVE_BIT_IMPLEMENTATION_CODE_HASH = "0x506816a3d5cf9e4f486659231f21540e9985d7fbc8438dbb385accd2e532b120";
+const EIP1967_IMPLEMENTATION_SLOT = "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc";
 const BYTES32 = /^0x[0-9a-f]{64}$/;
 const MAX_STATE_BYTES = 1_000_000;
 const AMOUNT = parseEther("100");
@@ -109,6 +119,20 @@ function wallet(index, provider) {
   return HDNodeWallet.fromPhrase(TEST_MNEMONIC, undefined, `m/44'/60'/0'/0/${index}`).connect(provider);
 }
 
+function publishedSource() {
+  const capture = (args) => execFileSync("git", args, { encoding: "utf8" }).trim();
+  if (capture(["status", "--porcelain", "--untracked-files=all"])) {
+    throw new Error("live-BIT deadline evidence requires a clean source tree");
+  }
+  const branch = capture(["branch", "--show-current"]);
+  const commit = capture(["rev-parse", "HEAD"]);
+  const publishedCommit = capture(["rev-parse", "origin/main"]);
+  if (branch !== "main" || commit !== publishedCommit || !/^[0-9a-f]{40}$/.test(commit)) {
+    throw new Error("live-BIT deadline evidence requires exact published main");
+  }
+  return Object.freeze({ branch, commit, clean: true, published: true });
+}
+
 async function artifact(path) {
   return JSON.parse(await readFile(new URL(path, import.meta.url), "utf8"));
 }
@@ -168,9 +192,24 @@ async function readState(statePath) {
     throw new Error("cross-chain state must be a private bounded regular file");
   }
   const state = JSON.parse(await readFile(statePath, "utf8"));
-  exactObject(state, ["anvilVersion", "bitToLightning", "chainId", "contracts", "lightningToBit", "policy", "schema"], "state");
+  exactObject(state, [
+    "anvilVersion",
+    "bitToLightning",
+    "chainId",
+    "contracts",
+    "lightningToBit",
+    "policy",
+    "schema",
+    "source",
+    "token",
+    "tokenMode",
+  ], "state");
   if (state.schema !== STATE_SCHEMA || state.chainId !== String(CHAIN_ID)) throw new Error("cross-chain state identity changed");
   if (JSON.stringify(state.policy) !== JSON.stringify(policy)) throw new Error("cross-chain state policy changed");
+  if (state.tokenMode !== tokenMode) throw new Error("cross-chain token boundary changed");
+  if (state.tokenMode === "live-bit" && JSON.stringify(state.source) !== JSON.stringify(publishedSource())) {
+    throw new Error("live-BIT deadline source identity changed");
+  }
   return state;
 }
 
@@ -196,6 +235,39 @@ async function blockTimestamp(provider, blockNumber = "latest") {
   const block = await provider.getBlock(blockNumber);
   if (!block) throw new Error("EVM block is unavailable");
   return Number(block.timestamp);
+}
+
+async function rpcBlock(provider, blockNumber) {
+  return provider.send("eth_getBlockByNumber", [`0x${blockNumber.toString(16)}`, false]);
+}
+
+async function observeLiveBitToken(provider, liveBitArtifact) {
+  const forkBlock = await rpcBlock(provider, LIVE_BIT_FORK_BLOCK);
+  assert.equal(forkBlock?.hash?.toLowerCase(), LIVE_BIT_FORK_BLOCK_HASH);
+  const proxyCodeHash = keccak256(await provider.getCode(LIVE_BIT_PROXY)).toLowerCase();
+  const implementationCodeHash = keccak256(await provider.getCode(LIVE_BIT_IMPLEMENTATION)).toLowerCase();
+  assert.equal(proxyCodeHash, LIVE_BIT_PROXY_CODE_HASH);
+  assert.equal(implementationCodeHash, LIVE_BIT_IMPLEMENTATION_CODE_HASH);
+  const implementationWord = await provider.getStorage(LIVE_BIT_PROXY, EIP1967_IMPLEMENTATION_SLOT);
+  assert.equal(`0x${implementationWord.slice(-40)}`.toLowerCase(), LIVE_BIT_IMPLEMENTATION.toLowerCase());
+  const bit = new Contract(LIVE_BIT_PROXY, liveBitArtifact.abi, provider);
+  assert.equal(await bit.symbol(), "BIT");
+  assert.equal(await bit.decimals(), 18n);
+  assert.equal(await bit.paused(), false);
+  return Object.freeze({
+    boundary: "pinned-live-bit-proxy-fork",
+    sourceChainId: "1",
+    forkBlockNumber: String(LIVE_BIT_FORK_BLOCK),
+    forkBlockHash: LIVE_BIT_FORK_BLOCK_HASH,
+    proxyAddress: LIVE_BIT_PROXY,
+    proxyCodeHash,
+    implementationAddress: LIVE_BIT_IMPLEMENTATION,
+    implementationCodeHash,
+    implementationSlot: EIP1967_IMPLEMENTATION_SLOT,
+    symbol: "BIT",
+    decimals: "18",
+    paused: false,
+  });
 }
 
 async function setNextTimestamp(provider, timestamp) {
@@ -257,24 +329,39 @@ if (required("CROSS_CHAIN_DEADLINE_MNEMONIC") !== TEST_MNEMONIC) {
 }
 const anvilVersion = required("CROSS_CHAIN_DEADLINE_ANVIL_VERSION");
 if (anvilVersion.length > 200 || /[\r\n]/.test(anvilVersion)) throw new Error("execution-client version is invalid");
+const tokenMode = required("CROSS_CHAIN_DEADLINE_TOKEN_MODE");
+if (!new Set(["mock", "live-bit"]).has(tokenMode)) throw new Error("cross-chain deadline token mode is invalid");
 const input = await readInput();
 const provider = new JsonRpcProvider(rpcUrl.toString(), CHAIN_ID, { staticNetwork: true, cacheTimeout: -1 });
 
 try {
   if (action === "initialize") {
     exactObject(input, [], "initialize input");
-    const [mockBitArtifact, mockGateArtifact, registryArtifact, vaultArtifact, userEscrowArtifact] = await Promise.all([
+    const [mockBitArtifact, liveBitArtifact, mockGateArtifact, registryArtifact, vaultArtifact, userEscrowArtifact] = await Promise.all([
       artifact("../../contracts/out/TestBase.sol/MockBit.json"),
+      artifact("../../contracts/out/TreeSwapMainnetFork.t.sol/ILiveBit.json"),
       artifact("../../contracts/out/TestBase.sol/MockOpenGate.json"),
       artifact("../../contracts/out/TreeSwapPaymentHashRegistry.sol/TreeSwapPaymentHashRegistry.json"),
       artifact("../../contracts/out/TreeSwapBitVault.sol/TreeSwapBitVault.json"),
       artifact("../../contracts/out/TreeSwapUserEscrow.sol/TreeSwapUserEscrow.json"),
     ]);
-    const deployer = wallet(0, provider);
-    const user = wallet(1, provider);
-    const solver = wallet(2, provider);
-    const collector = wallet(4, provider);
-    const bit = await deploy(mockBitArtifact, deployer);
+    const source = tokenMode === "live-bit" ? publishedSource() : null;
+    const walletOffset = tokenMode === "live-bit" ? 1_000 : 0;
+    const deployer = wallet(walletOffset, provider);
+    const user = wallet(walletOffset + 1, provider);
+    const solver = wallet(walletOffset + 2, provider);
+    const beneficiary = wallet(walletOffset + 3, provider);
+    const collector = wallet(walletOffset + 4, provider);
+    if (tokenMode === "live-bit") {
+      for (const actor of [deployer, user, solver, beneficiary, collector]) {
+        assert.equal(await provider.getCode(actor.address), "0x", "live-fork actor unexpectedly has code");
+        await provider.send("anvil_setBalance", [actor.address, "0x56bc75e2d63100000"]);
+      }
+    }
+    const token = tokenMode === "live-bit" ? await observeLiveBitToken(provider, liveBitArtifact) : null;
+    const bit = tokenMode === "live-bit"
+      ? new Contract(LIVE_BIT_PROXY, liveBitArtifact.abi, provider)
+      : await deploy(mockBitArtifact, deployer);
     const gate = await deploy(mockGateArtifact, deployer);
     const registry = await deploy(registryArtifact, deployer, [deployer.address]);
     const vault = await deploy(vaultArtifact, deployer, [
@@ -286,8 +373,20 @@ try {
     await send(registry.connect(deployer).registerEscrow(await vault.getAddress()));
     await send(registry.connect(deployer).registerEscrow(await userEscrow.getAddress()));
     await send(registry.connect(deployer).seal());
-    await send(bit.connect(deployer).mint(user.address, parseEther("1000")));
-    await send(bit.connect(deployer).mint(solver.address, parseEther("1000")));
+    if (tokenMode === "live-bit") {
+      await provider.send("anvil_setBalance", [LIVE_BIT_HOLDER, "0x56bc75e2d63100000"]);
+      await provider.send("anvil_impersonateAccount", [LIVE_BIT_HOLDER]);
+      try {
+        const holder = await provider.getSigner(LIVE_BIT_HOLDER);
+        await send(bit.connect(holder).transfer(user.address, parseEther("1000")));
+        await send(bit.connect(holder).transfer(solver.address, parseEther("1000")));
+      } finally {
+        await provider.send("anvil_stopImpersonatingAccount", [LIVE_BIT_HOLDER]);
+      }
+    } else {
+      await send(bit.connect(deployer).mint(user.address, parseEther("1000")));
+      await send(bit.connect(deployer).mint(solver.address, parseEther("1000")));
+    }
     await send(bit.connect(user).approve(await userEscrow.getAddress(), parseEther("1000")));
     await send(bit.connect(solver).approve(await vault.getAddress(), parseEther("1000")));
     await send(vault.connect(solver).deposit(INITIAL_VAULT_BALANCE));
@@ -295,6 +394,9 @@ try {
       schema: STATE_SCHEMA,
       chainId: String(CHAIN_ID),
       anvilVersion,
+      tokenMode,
+      source,
+      token,
       policy,
       contracts: {
         bit: await bit.getAddress(),
@@ -311,14 +413,16 @@ try {
     output({ status: "initialized", chainId: String(CHAIN_ID) });
   } else {
     const state = await readState(statePath);
-    const user = wallet(1, provider);
-    const solver = wallet(2, provider);
-    const beneficiary = wallet(3, provider);
-    const deployer = wallet(0, provider);
+    const walletOffset = state.tokenMode === "live-bit" ? 1_000 : 0;
+    const user = wallet(walletOffset + 1, provider);
+    const solver = wallet(walletOffset + 2, provider);
+    const beneficiary = wallet(walletOffset + 3, provider);
+    const deployer = wallet(walletOffset, provider);
     const bitArtifact = await artifact("../../contracts/out/TestBase.sol/MockBit.json");
+    const liveBitArtifact = await artifact("../../contracts/out/TreeSwapMainnetFork.t.sol/ILiveBit.json");
     const vaultArtifact = await artifact("../../contracts/out/TreeSwapBitVault.sol/TreeSwapBitVault.json");
     const userEscrowArtifact = await artifact("../../contracts/out/TreeSwapUserEscrow.sol/TreeSwapUserEscrow.json");
-    const bit = new Contract(state.contracts.bit, bitArtifact.abi, provider);
+    const bit = new Contract(state.contracts.bit, state.tokenMode === "live-bit" ? liveBitArtifact.abi : bitArtifact.abi, provider);
     const vault = new Contract(state.contracts.vault, vaultArtifact.abi, provider);
     const userEscrow = new Contract(state.contracts.userEscrow, userEscrowArtifact.abi, provider);
 
@@ -581,7 +685,7 @@ try {
       if (!state.bitToLightning?.evm.claimSucceeded || !state.lightningToBit?.evm.refundSucceeded) {
         throw new Error("cross-chain campaign is incomplete");
       }
-      const evidence = buildCrossChainDeadlineEvidence({
+      const observation = {
         schema: crossChainDeadlineSchemas.observation,
         policy: state.policy,
         evm: {
@@ -620,7 +724,14 @@ try {
             refundSucceeded: state.lightningToBit.evm.refundSucceeded,
           },
         },
-      });
+      };
+      const evidence = state.tokenMode === "live-bit"
+        ? buildLiveBitCrossChainDeadlineEvidence({
+          observation,
+          source: state.source,
+          token: await observeLiveBitToken(provider, liveBitArtifact),
+        })
+        : buildCrossChainDeadlineEvidence(observation);
       output(evidence);
     }
   }

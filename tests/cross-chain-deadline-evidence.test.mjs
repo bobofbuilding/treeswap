@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmod, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -8,6 +8,11 @@ import {
   buildCrossChainDeadlineEvidence,
   crossChainDeadlineSchemas,
 } from "../lib/cross-chain-deadline-evidence.mjs";
+import {
+  buildLiveBitCrossChainDeadlineEvidence,
+  liveBitCrossChainDeadlinePolicy,
+  liveBitCrossChainDeadlineSchemas,
+} from "../lib/live-bit-cross-chain-deadline-evidence.mjs";
 import { deriveSettlementSchedule } from "../lib/settlement-policy.mjs";
 
 const NOW = 2_000_000_000;
@@ -205,6 +210,94 @@ test("rejects unknown fields, unsafe policy, wrong chain, and invalid code hashe
   assert.throws(() => buildCrossChainDeadlineEvidence(zeroHash), /nonzero bytes32/);
 });
 
+function liveBitFixture() {
+  return {
+    observation: fixture(),
+    source: {
+      branch: "main",
+      commit: "ab".repeat(20),
+      clean: true,
+      published: true,
+    },
+    token: { ...liveBitCrossChainDeadlinePolicy },
+  };
+}
+
+test("builds distinct privacy-safe evidence for the exact pinned live-BIT fork", () => {
+  const evidence = buildLiveBitCrossChainDeadlineEvidence(liveBitFixture());
+  assert.equal(evidence.schema, liveBitCrossChainDeadlineSchemas.evidence);
+  assert.equal(evidence.scope, liveBitCrossChainDeadlineSchemas.scope);
+  assert.equal(evidence.status, "passed");
+  assert.equal(evidence.deadlineEvidence.status, "passed");
+  assert.equal(evidence.token.proxyAddress, liveBitCrossChainDeadlinePolicy.proxyAddress);
+  assert.equal(evidence.source.commit, "ab".repeat(20));
+  assert.deepEqual(evidence.limitations, {
+    publicTestnetIncluded: false,
+    independentProvidersIncluded: false,
+    productionInfrastructureIncluded: false,
+    localForkProvider: true,
+    simulatedEvmFinality: true,
+    fundingAuthorization: false,
+  });
+  assert.match(evidence.evidenceDigest, /^0x[0-9a-f]{64}$/);
+  assert.doesNotMatch(JSON.stringify(evidence), /paymentHash|paymentRequest|preimage|invoiceDigest|https?:\/\//i);
+});
+
+test("live-BIT evidence rejects every pinned fork and token identity drift", () => {
+  for (const [field, value] of [
+    ["sourceChainId", "11155111"],
+    ["forkBlockNumber", "25788857"],
+    ["forkBlockHash", `0x${"33".repeat(32)}`],
+    ["proxyAddress", `0x${"44".repeat(20)}`],
+    ["proxyCodeHash", `0x${"55".repeat(32)}`],
+    ["implementationAddress", `0x${"66".repeat(20)}`],
+    ["implementationCodeHash", `0x${"77".repeat(32)}`],
+    ["implementationSlot", `0x${"88".repeat(32)}`],
+    ["symbol", "NOT-BIT"],
+    ["decimals", "8"],
+    ["paused", true],
+  ]) {
+    const input = liveBitFixture();
+    input.token[field] = value;
+    assert.throws(() => buildLiveBitCrossChainDeadlineEvidence(input), /pinned live-BIT snapshot/);
+  }
+});
+
+test("live-BIT evidence requires exact published main and revalidates deadline observations", () => {
+  for (const mutate of [
+    (value) => { value.source.branch = "feature"; },
+    (value) => { value.source.clean = false; },
+    (value) => { value.source.published = false; },
+    (value) => { value.source.commit = "not-a-commit"; },
+  ]) {
+    const input = liveBitFixture();
+    mutate(input);
+    assert.throws(() => buildLiveBitCrossChainDeadlineEvidence(input), /clean published main|source commit/);
+  }
+
+  const unsafeDeadline = liveBitFixture();
+  unsafeDeadline.observation.lightningToBit.lightning.boundaryHeight -= 1;
+  assert.throws(() => buildLiveBitCrossChainDeadlineEvidence(unsafeDeadline), /safety height/);
+
+  const unknown = liveBitFixture();
+  unknown.token.rpcUrl = "https://example.invalid";
+  assert.throws(() => buildLiveBitCrossChainDeadlineEvidence(unknown), /fields are not exact/);
+});
+
+test("credentialed live-BIT runner is pinned, private, and never falls back to mock evidence", async () => {
+  const runner = await readFile(new URL("../scripts/run-live-bit-cross-chain-deadline-smoke.sh", import.meta.url), "utf8");
+  assert.match(runner, /git status --porcelain --untracked-files=all/);
+  assert.match(runner, /source_branch.*main/);
+  assert.match(runner, /source_commit.*published_commit/);
+  assert.match(runner, /MAINNET_RPC_URL is required/);
+  assert.match(runner, /--fork-block-number 25788856/);
+  assert.match(runner, /--host 127\.0\.0\.1/);
+  assert.match(runner, /CROSS_CHAIN_DEADLINE_TOKEN_MODE="live-bit"/);
+  assert.match(runner, /chmod 0700/);
+  assert.doesNotMatch(runner, /echo[^\n]*\$MAINNET_RPC_URL|printf[^\n]*\$MAINNET_RPC_URL/);
+  assert.doesNotMatch(runner, /TOKEN_MODE="mock"/);
+});
+
 function smokeEnvironment(statePath, mnemonic = "test test test test test test test test test test test junk") {
   return {
     ...process.env,
@@ -212,6 +305,7 @@ function smokeEnvironment(statePath, mnemonic = "test test test test test test t
     CROSS_CHAIN_DEADLINE_MNEMONIC: mnemonic,
     CROSS_CHAIN_DEADLINE_STATE_PATH: statePath,
     CROSS_CHAIN_DEADLINE_ANVIL_VERSION: "anvil test",
+    CROSS_CHAIN_DEADLINE_TOKEN_MODE: "mock",
   };
 }
 
