@@ -2,6 +2,8 @@
 
 Status: the exact campaign policy, multi-operator EIP-712 attestation verifier, privacy-safe adoption summary, and release-evidence mapper are implemented. No real public-testnet campaign, independent operator set, or funding authorization is included in the repository.
 
+Published implementation checkpoint `e662885346791b80153835c3123f0f77b63ad9f5` passed 263 application/security tests, 91 direct pinned-runtime tests plus the real bounded-filesystem rollback campaign, 68 contract tests, both web build paths, all 32 sealed local qualification campaigns from `2026-08-20T16:49:58.056Z` through `2026-08-20T17:57:51.589Z`, and [hosted CI](https://github.com/bobofbuilding/treeswap/actions/runs/32394191747). The ignored mode-`0600` evidence independently reconstructs to `sha256:de647c4a2b35e411bed48a2062e2964c008702f6f17715072b5d9c9388575e6d`. It explicitly records a simulated EVM reservation and no public testnet, production infrastructure, independent review, or funding authorization.
+
 ## Purpose
 
 Local tests cannot establish that two RPC providers, Lightning observers, solvers, relays, or monitor operators are independently operated. A green dashboard also cannot prove which source, deployment, policy, scenario set, or inventory limits were exercised. `lib/public-testnet-evidence.mjs` therefore accepts only one exact `treeswap.public-testnet-campaign.v1` record under one exact `treeswap.public-testnet-evidence-policy.v1`.
