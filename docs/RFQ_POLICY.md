@@ -1,6 +1,6 @@
 # TreeSwap RFQ and quote-selection policy
 
-Status: deterministic signed-offer validation, selection, and local atomic admission persistence. Live authenticated capability transport plus independent solver and relay operation remain testnet deployment gates.
+Status: deterministic signed-offer validation, selection, local atomic admission persistence, and a short-lived solver capability verifier are implemented. Deployed authenticated transport, concrete independent capacity readers, and independent solver/relay operation remain testnet deployment gates.
 
 ## What TreeSwap can prove
 
@@ -42,4 +42,6 @@ The `receiptDigest` makes the client's observed set reproducible; it does not tu
 
 Before testnet swaps, connect at least two independently operated solvers, use short-lived capacity epochs, authenticate the transport, retain privacy-minimized receipt evidence, and measure suppression, latency, expiry, and fill failures. Public rewards or a global-best claim require a separate mechanism and review.
 
-The testnet capability declaration must also bind each EVM solver identity to its Lightning node/payee identity and authenticated private endpoint. That node-control proof and live invoice decoding remain deployment gates; an EVM signature over an invoice digest alone does not prove control of the Lightning node that issued it.
+`lib/solver-capability.mjs` now binds each short-lived capability to the EVM solver, chain and direction-specific escrow, Lightning node public key, canonical HTTPS endpoint origin, Ed25519 endpoint key, exact capacities, monotonic epoch, and expiry. The EVM identity signs the full EIP-712 declaration; the endpoint key and LND node key separately prove possession of the exact domain-bound challenge. The verifier accepts capacity only when independent BIT and Lightning observations are fresh, belong to the bound solver/node, and cover the declared amounts. Capability expiry is persisted, a firm quote may not outlive it, and legacy records migrate expired rather than gaining authority.
+
+The pinned regtest campaign independently recovers the declared LND node from four fresh signatures, rejects a mutated challenge, and proves the signer and verifier credentials cannot call each other's RPC. This is local node-control evidence. Production still needs an authenticated endpoint protocol using the bound key, concrete independently reviewed onchain and Lightning capacity readers, live invoice decoding, and at least two independently operated testnet solvers.
