@@ -38,6 +38,12 @@ Published commit `1908b539e2bcb6fa48ce9c2883a0770979b82b01` produced:
 
 The secret-free evidence digest is `0x1475c60668bf57ded78659302e1e03382f17a26c1d8479835f8a8a2436176507`. The matching [hosted security-and-build run](https://github.com/bobofbuilding/treeswap/actions/runs/32366965287) passed; hosted CI syntax-checks the credentialed runner but deliberately does not receive or use a mainnet RPC credential.
 
+## Sealed qualification checkpoint
+
+Clean published commit `c67d385cc00a6506ce7b8766d208c7c1ceb2b11b` passed 240 application/security tests, 89 direct tests in the pinned coordinator runtime plus the bounded-filesystem rollback campaign, 68 contract tests, both builds, and all 29 local qualification campaigns from `2026-08-20T12:08:42.039Z` through `2026-08-20T13:16:50.096Z`. Its ignored mode-`0600` record independently reconstructs to `sha256:20c43996d638a6d95b4d51a3c388701d5e245096dd9dc3eb9b1c5b77f986afef`, and the matching [hosted run](https://github.com/bobofbuilding/treeswap/actions/runs/32367298446) passed.
+
+The qualification configuration hashes the live-fork runner but does not embed credentials or rerun the credentialed fork campaign. That campaign remains separately bound to clean published commit `1908b539e2bcb6fa48ce9c2883a0770979b82b01` and digest `0x1475c60668bf57ded78659302e1e03382f17a26c1d8479835f8a8a2436176507`. Neither result is public-testnet finality, independent-provider, deployed-operator, independent-review, or funding evidence.
+
 ## Release limitation
 
 Anvil snapshot replacement now proves rollback and canonical-block handling against both mock BIT and the pinned live BIT proxy, but it does not provide Ethereum consensus finality. Release still requires genuine finalized/unfinalized transitions, provider disagreement and finality rollback through two independently operated authenticated providers, deployed public-testnet escrows, and retained operator evidence. No local result may promote itself into the signed deployment manifest.
