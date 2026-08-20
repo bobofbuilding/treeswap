@@ -57,6 +57,12 @@ Unknown fields, an unreviewed status change, one provider, duplicate identities,
 
 Module-private provenance protects the derived release mapping. A copied or reconstructed verification object cannot create candidate evidence. The mapping is explicitly scoped `candidate-release-evidence-no-funding-authorization`; it cannot open the gate, fund a solver, sign a release, or promote itself into production.
 
+## Local qualification evidence
+
+Clean published source commit [`bcbf2b03e7064be136cb54a8c567f905abec8516`](https://github.com/bobofbuilding/treeswap/commit/bcbf2b03e7064be136cb54a8c567f905abec8516) passed 271 application/security tests, 91 direct pinned-runtime tests plus the bounded-filesystem rollback campaign, 68 contract tests, both web build paths, all 33 sealed local qualification campaigns, and [hosted CI](https://github.com/bobofbuilding/treeswap/actions/runs/32401732721). The sealed run lasted from `2026-08-20T18:12:50.167Z` through `2026-08-20T19:20:55.699Z`. Its ignored mode-`0600` evidence independently reconstructs to `sha256:cbb4f5b62033429e8db734a8fd98f29db6b4c444ccdf5ec18949f91059f90152`.
+
+This proves the local promotion verifier, preparation and verification CLIs, negative signature and policy cases, and all earlier repository campaigns against the exact published source. The evidence explicitly records `publicTestnetIncluded: false`, `independentReviewIncluded: false`, `productionInfrastructureIncluded: false`, and `simulatedEvmReservation: true`. It is not a signed promotion and contains no real independent provider, reviewer, deployed contract, production Safe, hardware signer, inventory, or funding authorization.
+
 ## Trust boundary
 
 Signatures prove that the listed keys approved the exact promotion record and policy. They do not prove provider ownership, organizational independence, reviewer competence, artifact truth, Safe owner custody, or hardware-key use. Those facts require retained external evidence and human review. Until the real deployment, providers, reviewers, and signatures exist, the corresponding launch-checklist items remain open.
