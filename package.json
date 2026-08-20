@@ -23,6 +23,7 @@
     "test:deployment-rehearsal": "bash scripts/run-deployment-rehearsal-smoke.sh",
     "test:coordinator-runtime": "bash scripts/run-coordinator-runtime-smoke.sh",
     "test:escrow-reorg": "bash scripts/run-escrow-reorg-smoke.sh",
+    "test:cross-chain-deadlines": "bash scripts/run-cross-chain-deadline-smoke.sh",
     "test:live-bit-reorg": "bash scripts/run-live-bit-reorg-smoke.sh",
     "regtest:up": "bash infra/regtest/lab.sh up",
     "regtest:smoke": "bash infra/regtest/lab.sh smoke",

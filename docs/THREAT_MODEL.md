@@ -20,7 +20,7 @@ Reviewed surfaces:
 | --- | --- | --- |
 | TS-C01 | Risk, price, inventory, cap, fee, attestation policy, and local actual-gate monitor halt implemented | Live pinned BIT state, independent executable-price inputs, continuous monitor/alerts, review |
 | TS-C02 | Both beneficiary-bound escrows implemented | Independent review |
-| TS-C03 | Ordered-deadline derivation and exact boundaries implemented | Bitcoin regtest, Ethereum fork, congestion/restart/force-close drills |
+| TS-C03 | Ordered-deadline derivation, exact boundaries, and integrated local EVM/LND execution implemented | Pinned live-BIT combined fork, public testnet, independent finality, congestion drills |
 | TS-C04 | Multi-solver signed received-set selection implemented | None; global-best availability is explicitly not claimed |
 | TS-H01 | Chain/contract/version/direction/nonce replay protection and ERC-1271 implemented | EOA-only SIWE remains an explicit account limitation |
 | TS-H02 | Dual-signed user exercise plus local atomic admission, capability expiry, authenticated endpoint response, capacity, and last-look accounting implemented | Deployed shared enforcement/readers, live reliability telemetry, objective bond decision |
@@ -99,7 +99,7 @@ The solver-funded vault binds the user's beneficiary in the user-signed Lightnin
 ### TS-C03 — Timeout and finality race
 
 **Severity:** Critical  
-**Status:** Deterministic derivation and boundary harness implemented; regtest, fork, and fault-injection campaigns remain a testnet gate
+**Status:** Deterministic derivation, boundary harness, and integrated local EVM/LND campaign implemented; pinned live-BIT combined fork, public testnet, independent finality, and congestion remain launch gates
 
 Lightning HTLCs expire in Bitcoin block-height terms while BOLT 11 invoices and Ethereum reservations use wall-clock or Ethereum timestamps. A refund that opens too early can race a valid Lightning settlement; a claim window that is too short can let one party receive one leg while the other leg refunds.
 
@@ -112,7 +112,7 @@ Safeguards:
 - test reorgs, delayed blocks, mempool congestion, force-close, and boundary timestamps;
 - reject invoices whose expiry or final CLTV cannot satisfy the safety policy.
 
-Both escrows enforce `quoteExpiresAt < lastSafeClaimAt`, a minimum settlement window, a minimum claim-to-refund buffer, a maximum lock duration, and a deterministic boundary where claims close exactly when refunds open. `lib/settlement-policy.mjs` now derives those values from the signed invoice timestamp, expiry, final CLTV, observed Bitcoin height, Ethereum finality target, and explicit relay and congestion margins. It requires a larger final CLTV for hold invoices, checks the actual accepted HTLC height without ever extending the signed deadline, and distinguishes an observed escrow from a canonical, finalized escrow authorized for Lightning action. `docs/SETTLEMENT_POLICY.md` defines the policy. Bitcoin regtest, Ethereum fork, reorg, restart, congestion, delayed/fast-block, HTLC-timeout, and force-close campaigns remain required before testnet funding.
+Both escrows enforce `quoteExpiresAt < lastSafeClaimAt`, a minimum settlement window, a minimum claim-to-refund buffer, a maximum lock duration, and a deterministic boundary where claims close exactly when refunds open. `lib/settlement-policy.mjs` now derives those values from the signed invoice timestamp, expiry, final CLTV, observed Bitcoin height, Ethereum finality target, and explicit relay and congestion margins. It requires a larger final CLTV for hold invoices, checks the actual accepted HTLC height without ever extending the signed deadline, and distinguishes an observed escrow from a canonical, finalized escrow authorized for Lightning action. The integrated local campaign now binds both live invoice directions into actual TreeSwap escrows, waits for twelve simulated EVM confirmations, exercises the paid-invoice claim, reaches the actual accepted-HTLC cutoff, and proves refund/claim exclusivity. `docs/SETTLEMENT_POLICY.md` defines the policy. The pinned live-BIT combined fork, public testnet, independent finality, and production-like congestion remain required before funding.
 
 ### TS-C04 — Relay can suppress or reorder quotes
 
@@ -349,7 +349,7 @@ The full local campaign report is in [`contracts/test/fuzz/report.md`](../contra
 
 - Mainnet-fork escrow campaign, including BIT proxy changes and pauses.
 - Regtest hold-invoice adapter and forced-timeout tests.
-- Complementary BIT → Lightning escrow and direction-replay tests. **Repository harness complete; mainnet-fork and cross-chain integration remain.**
+- Complementary BIT → Lightning escrow and direction-replay tests. **Local cross-chain execution is complete; the pinned live-BIT combined fork and public-testnet integration remain.**
 - EIP-1271 SIWE support if contract wallets are accepted.
 - Verified email delivery, unsubscribe enforcement, retention limits, and abuse controls before sending mail.
 - Monitoring for BIT proxy upgrades and pauses.

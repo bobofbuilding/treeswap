@@ -59,11 +59,13 @@ const configurationFiles = [
   "infra/evm/outbox-fault-smoke.mjs",
   "infra/evm/safety-monitor-smoke.mjs",
   "infra/evm/deployment-rehearsal-smoke.mjs",
+  "infra/evm/cross-chain-deadline-smoke.mjs",
   "scripts/run-coordinator-runtime-smoke.sh",
   "scripts/run-escrow-reorg-smoke.sh",
   "scripts/run-evm-outbox-fault-smoke.sh",
   "scripts/run-safety-monitor-smoke.sh",
   "scripts/run-deployment-rehearsal-smoke.sh",
+  "scripts/run-cross-chain-deadline-smoke.sh",
   "scripts/run-live-bit-reorg-smoke.sh",
   "scripts/run-local-qualification.mjs",
   "scripts/prepare-public-testnet-attestation.mjs",
@@ -95,6 +97,7 @@ const configurationFiles = [
   "lib/solver-private-packet.mjs",
   "lib/safety-monitor.mjs",
   "lib/settlement-policy.mjs",
+  "lib/cross-chain-deadline-evidence.mjs",
 ];
 const configurationHashes = {};
 for (const path of configurationFiles) {
@@ -136,6 +139,7 @@ const campaigns = [
   ["lightning:force-close-recovery", "npm", ["run", "regtest:force-close-smoke"]],
   ["lightning:route-and-duplicate-faults", "npm", ["run", "regtest:route-fault-smoke"]],
   ["lightning:htlc-cutoff", "npm", ["run", "regtest:htlc-cutoff-smoke"]],
+  ["cross-chain:deadline-ordering", "npm", ["run", "test:cross-chain-deadlines"]],
   ["solver:lightning-node-proof", "npm", ["run", "regtest:solver-node-proof-smoke"]],
   ["solver:capacity-readers", "npm", ["run", "regtest:solver-capacity-smoke"]],
   ["solver:permissionless-admission", "node", [

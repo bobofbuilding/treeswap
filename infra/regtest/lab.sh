@@ -2519,6 +2519,217 @@ smoke_route_and_duplicate_failure() {
   echo "Route and duplicate fault smoke passed: one unrouted dispatch failed, tracking stayed fail-closed, and both replay paths were rejected without a second LND payment."
 }
 
+smoke_cross_chain_deadline() {
+  ensure_runtime_env
+  start_lab >/dev/null
+  : "${CROSS_CHAIN_DEADLINE_RPC_URL:?cross-chain deadline RPC is required}"
+  : "${CROSS_CHAIN_DEADLINE_MNEMONIC:?cross-chain deadline mnemonic is required}"
+  : "${CROSS_CHAIN_DEADLINE_STATE_PATH:?cross-chain deadline state path is required}"
+  : "${CROSS_CHAIN_DEADLINE_ANVIL_VERSION:?cross-chain deadline execution-client version is required}"
+
+  local bit_amount_sats=9900
+  local hold_amount_sats=10000
+  local standard_invoice standard_request standard_decoded standard_hash standard_digest standard_height
+  local open_input evm_result standard_intent payment_id payment_result standard_preimage
+  local hold_preimage hold_hash hold_intent create_id create_result hold_request hold_digest hold_decoded hold_height
+  local hold_payment_id hold_payment_envelope hold_payment_result="" hold_payment_pid=""
+  local lookup_id lookup_result hold_state accepted accepted_height expiry_height safe_height current_height
+  local miner_address blocks_to_mine settle_id settle_result cancel_id boundary_height final_input evidence
+
+  cross_chain_evm() {
+    local evm_action=$1
+    local evm_input=$2
+    printf '%s\n' "$evm_input" | node "$LAB_DIR/../evm/cross-chain-deadline-smoke.mjs" "$evm_action"
+  }
+
+  trap '[[ -z "${hold_hash:-}" ]] || compose exec -T bob lncli --network=regtest cancelinvoice "${hold_hash#0x}" >/dev/null 2>&1 || true; \
+    [[ -z "${hold_payment_pid:-}" ]] || kill "$hold_payment_pid" 2>/dev/null || true; \
+    [[ -z "${hold_payment_result:-}" ]] || rm -f "$hold_payment_result"' EXIT
+
+  cross_chain_evm initialize '{}' | jq -e '.status == "initialized" and .chainId == "31337"' >/dev/null
+
+  standard_invoice=$(compose exec -T bob lncli --network=regtest addinvoice \
+    --amt="$bit_amount_sats" --memo=treeswap-cross-chain-standard --expiry=10800 --private)
+  standard_request=$(jq -er '.payment_request' <<<"$standard_invoice")
+  standard_decoded=$(compose exec -T alice lncli --network=regtest \
+    --macaroonpath=/root/.lnd/treeswap/payer.macaroon decodepayreq "$standard_request")
+  standard_hash=$(jq -er '.payment_hash | ascii_downcase | "0x" + .' <<<"$standard_decoded")
+  standard_digest="0x$(printf '%s' "$standard_request" | openssl dgst -sha256 -binary | xxd -p -c 256)"
+  standard_height=$(compose exec -T alice lncli --network=regtest getinfo | jq -er '.block_height | tonumber')
+  open_input=$(jq -cn \
+    --arg amountSats "$bit_amount_sats" \
+    --arg paymentHash "$standard_hash" \
+    --arg invoiceDigest "$standard_digest" \
+    --argjson bitcoinHeight "$standard_height" \
+    --argjson timestamp "$(jq -er '.timestamp | tonumber' <<<"$standard_decoded")" \
+    --argjson expirySeconds "$(jq -er '.expiry | tonumber' <<<"$standard_decoded")" \
+    --argjson minFinalCltvExpiryDelta "$(jq -er '.cltv_expiry | tonumber' <<<"$standard_decoded")" \
+    '{amountSats:$amountSats,paymentHash:$paymentHash,invoiceDigest:$invoiceDigest,bitcoinHeight:$bitcoinHeight,invoice:{timestamp:$timestamp,expirySeconds:$expirySeconds,minFinalCltvExpiryDelta:$minFinalCltvExpiryDelta}}')
+  evm_result=$(cross_chain_evm open-bit-to-lightning "$open_input")
+  standard_intent=$(jq -er 'select(.status == "opened" and .direction == "bit-to-lightning") | .intentDigest' <<<"$evm_result")
+  cross_chain_evm finalize-bit-to-lightning '{}' | jq -e \
+    '.status == "finalized" and .direction == "bit-to-lightning" and .confirmations >= 12' >/dev/null
+
+  payment_id="0x$(openssl rand -hex 32)"
+  payment_result=$(call_adapter payer-adapter /routerrpc.Router/SendPaymentV2 \
+    "$payment_id" "$standard_intent" "$standard_hash" "$standard_digest" "$bit_amount_sats" \
+    "$(jq -cn --arg paymentRequest "$standard_request" \
+      '{paymentRequest:$paymentRequest,timeoutSeconds:30,feeLimitSats:"10"}')")
+  standard_preimage=$(jq -er \
+    --arg paymentHash "$standard_hash" --arg amountSats "$bit_amount_sats" \
+    'select(.result.status == "SUCCEEDED" and .result.paymentHash == $paymentHash and .result.amountSats == $amountSats) | .result.preimage' \
+    <<<"$payment_result")
+  if [[ "0x$(printf '%s' "${standard_preimage#0x}" | xxd -r -p | openssl dgst -sha256 -binary | xxd -p -c 256)" != "$standard_hash" ]]; then
+    echo "standard Lightning payment proof did not match its invoice" >&2
+    return 1
+  fi
+  cross_chain_evm claim-bit-to-lightning \
+    "$(jq -cn --arg preimage "$standard_preimage" '{preimage:$preimage}')" | jq -e \
+    '.status == "claimed" and .direction == "bit-to-lightning"' >/dev/null
+  unset standard_request standard_invoice standard_preimage payment_result open_input
+  echo "Cross-chain deadline stage passed: BIT-to-Lightning paid only after 12 EVM confirmations and claimed before refund."
+
+  hold_preimage="0x$(openssl rand -hex 32)"
+  hold_hash="0x$(printf '%s' "${hold_preimage#0x}" | xxd -r -p | \
+    openssl dgst -sha256 -binary | xxd -p -c 256)"
+  create_id="0x$(openssl rand -hex 32)"
+  create_result=$(call_adapter invoice-adapter /invoicesrpc.Invoices/AddHoldInvoice \
+    "$create_id" "0x$(openssl rand -hex 32)" "$hold_hash" \
+    "0x$(printf '00%.0s' {1..32})" "$hold_amount_sats" \
+    "$(jq -cn '{memo:"treeswap-cross-chain-hold",expirySeconds:10800,cltvExpiry:80,isPrivate:true}')")
+  hold_request=$(jq -er '.result.paymentRequest' <<<"$create_result")
+  hold_digest=$(jq -er '.result.invoiceDigest' <<<"$create_result")
+  hold_decoded=$(compose exec -T alice lncli --network=regtest \
+    --macaroonpath=/root/.lnd/treeswap/payer.macaroon decodepayreq "$hold_request")
+  if [[ "$(jq -er '.payment_hash | ascii_downcase | "0x" + .' <<<"$hold_decoded")" != "$hold_hash" ]]; then
+    echo "hold invoice decode changed the payment hash" >&2
+    return 1
+  fi
+  hold_height=$(compose exec -T bob lncli --network=regtest getinfo | jq -er '.block_height | tonumber')
+  open_input=$(jq -cn \
+    --arg amountSats "$hold_amount_sats" \
+    --arg paymentHash "$hold_hash" \
+    --arg invoiceDigest "$hold_digest" \
+    --argjson bitcoinHeight "$hold_height" \
+    --argjson timestamp "$(jq -er '.timestamp | tonumber' <<<"$hold_decoded")" \
+    --argjson expirySeconds "$(jq -er '.expiry | tonumber' <<<"$hold_decoded")" \
+    --argjson minFinalCltvExpiryDelta "$(jq -er '.cltv_expiry | tonumber' <<<"$hold_decoded")" \
+    '{amountSats:$amountSats,paymentHash:$paymentHash,invoiceDigest:$invoiceDigest,bitcoinHeight:$bitcoinHeight,invoice:{timestamp:$timestamp,expirySeconds:$expirySeconds,minFinalCltvExpiryDelta:$minFinalCltvExpiryDelta}}')
+  evm_result=$(cross_chain_evm open-lightning-to-bit "$open_input")
+  hold_intent=$(jq -er 'select(.status == "reserved" and .direction == "lightning-to-bit") | .intentDigest' <<<"$evm_result")
+  cross_chain_evm finalize-lightning-to-bit '{}' | jq -e \
+    '.status == "finalized" and .direction == "lightning-to-bit" and .confirmations >= 12' >/dev/null
+
+  hold_payment_id="0x$(openssl rand -hex 32)"
+  hold_payment_envelope=$(sign_adapter_authorization /routerrpc.Router/SendPaymentV2 \
+    "$hold_payment_id" "$hold_intent" "$hold_hash" "$hold_digest" "$hold_amount_sats" \
+    "$(jq -cn --arg paymentRequest "$hold_request" \
+      '{paymentRequest:$paymentRequest,timeoutSeconds:30,feeLimitSats:"10"}')")
+  umask 077
+  hold_payment_result=$(mktemp "$STATE_DIR/cross-chain-deadline-payment.XXXXXX")
+  printf '%s\n' "$hold_payment_envelope" | call_signed_adapter payer-adapter >"$hold_payment_result" &
+  hold_payment_pid=$!
+
+  accepted=false
+  for _ in $(seq 1 30); do
+    lookup_id="0x$(openssl rand -hex 32)"
+    lookup_result=$(call_adapter invoice-adapter /invoicesrpc.Invoices/LookupInvoiceV2 \
+      "$lookup_id" "$hold_intent" "$hold_hash" "$hold_digest" "$hold_amount_sats" '{}')
+    hold_state=$(jq -er '.result.state' <<<"$lookup_result")
+    if [[ "$hold_state" == "ACCEPTED" ]]; then
+      accepted=true
+      break
+    fi
+    sleep 1
+  done
+  if [[ "$accepted" != true ]]; then
+    echo "cross-chain hold invoice was not accepted" >&2
+    return 1
+  fi
+  expiry_height=$(jq -er '[.result.htlcs[] | select(.state == "ACCEPTED") | .expiryHeight] | min | tonumber' \
+    <<<"$lookup_result")
+  accepted_height=$(compose exec -T bob lncli --network=regtest getinfo | jq -er '.block_height | tonumber')
+  evm_result=$(cross_chain_evm observe-lightning-to-bit-accepted \
+    "$(jq -cn --argjson acceptedHeight "$accepted_height" --argjson expiryHeight "$expiry_height" \
+      '{acceptedHeight:$acceptedHeight,expiryHeight:$expiryHeight}')")
+  safe_height=$(jq -er 'select(.status == "accepted") | .safeHeight' <<<"$evm_result")
+  current_height=$(compose exec -T bob lncli --network=regtest getinfo | jq -er '.block_height | tonumber')
+  if (( safe_height <= current_height )); then
+    echo "cross-chain hold HTLC began at or inside its safety boundary" >&2
+    return 1
+  fi
+  blocks_to_mine=$((safe_height - current_height))
+  miner_address=$(compose exec -T alice lncli --network=regtest newaddress p2tr | jq -er '.address')
+  compose exec -T bitcoind bitcoin-cli -regtest \
+    -rpcuser="$BITCOIND_RPC_USER" -rpcpassword="$BITCOIND_RPC_PASSWORD" \
+    generatetoaddress "$blocks_to_mine" "$miner_address" >/dev/null
+  wait_for_block_height alice "$safe_height"
+  wait_for_block_height bob "$safe_height"
+  wait_for_chain_sync alice
+  wait_for_chain_sync bob
+  boundary_height=$(compose exec -T bob lncli --network=regtest getinfo | jq -er '.block_height | tonumber')
+  if (( boundary_height != safe_height )); then
+    echo "cross-chain rapid-block campaign missed the exact HTLC safety height" >&2
+    return 1
+  fi
+
+  settle_id="0x$(openssl rand -hex 32)"
+  if settle_result=$(call_adapter invoice-adapter /invoicesrpc.Invoices/SettleInvoice \
+    "$settle_id" "$hold_intent" "$hold_hash" "$hold_digest" "$hold_amount_sats" \
+    "$(jq -cn --arg preimage "$hold_preimage" '{preimage:$preimage}')"); then
+    echo "cross-chain hold invoice settled at its safety boundary" >&2
+    return 1
+  fi
+  if ! jq -e '.error | test("inside the settlement safety margin|not accepted")' <<<"$settle_result" >/dev/null; then
+    echo "cross-chain boundary settlement failed for an unexpected reason" >&2
+    return 1
+  fi
+
+  lookup_id="0x$(openssl rand -hex 32)"
+  lookup_result=$(call_adapter invoice-adapter /invoicesrpc.Invoices/LookupInvoiceV2 \
+    "$lookup_id" "$hold_intent" "$hold_hash" "$hold_digest" "$hold_amount_sats" '{}')
+  hold_state=$(jq -er '.result.state' <<<"$lookup_result")
+  if [[ "$hold_state" == "ACCEPTED" ]]; then
+    cancel_id="0x$(openssl rand -hex 32)"
+    call_adapter invoice-adapter /invoicesrpc.Invoices/CancelInvoice \
+      "$cancel_id" "$hold_intent" "$hold_hash" "$hold_digest" "$hold_amount_sats" '{}' | \
+      jq -e '.result.state == "CANCELED"' >/dev/null
+  elif [[ "$hold_state" != "CANCELED" ]]; then
+    echo "cross-chain hold invoice reached an unexpected boundary state" >&2
+    return 1
+  fi
+  if wait "$hold_payment_pid"; then
+    hold_payment_pid=""
+    echo "cross-chain payer succeeded after boundary rejection" >&2
+    return 1
+  fi
+  hold_payment_pid=""
+  jq -e '.error | test("Lightning payment failed")' "$hold_payment_result" >/dev/null
+  rm -f "$hold_payment_result"
+  hold_payment_result=""
+
+  final_input=$(jq -cn \
+    --arg preimage "$hold_preimage" \
+    --argjson boundaryHeight "$boundary_height" \
+    '{preimage:$preimage,boundaryHeight:$boundaryHeight,settlementRejectedAtBoundary:true,payerReleased:true}')
+  cross_chain_evm verify-lightning-to-bit-boundary "$final_input" | jq -e \
+    '.status == "refunded" and .direction == "lightning-to-bit"' >/dev/null
+  evidence=$(cross_chain_evm finalize-evidence '{}')
+  jq -e \
+    '.schema == "treeswap.cross-chain-deadline-evidence.v1" and .status == "passed" and .scope == "local-dual-chain-no-funding-authorization" and .limitations.publicTestnetIncluded == false and .limitations.independentProvidersIncluded == false and .limitations.productionInfrastructureIncluded == false and .limitations.simulatedEvmFinality == true and .limitations.fundingAuthorization == false' \
+    <<<"$evidence" >/dev/null
+  if [[ "$evidence" == *"${hold_preimage#0x}"* || "$evidence" == *"${hold_hash#0x}"* || \
+    "$evidence" == *"$hold_request"* || "$evidence" == *"paymentHash"* || \
+    "$evidence" == *"invoiceDigest"* || "$evidence" == *"preimage"* ]]; then
+    echo "cross-chain evidence exposed a payment correlation secret" >&2
+    return 1
+  fi
+  hold_hash=""
+  unset hold_preimage hold_request hold_payment_envelope open_input final_input
+  trap - EXIT
+  echo "Cross-chain deadline smoke passed: both live invoice directions used finalized actual escrows, the 24-block HTLC cutoff preceded refund, and exact claim/refund boundaries remained mutually exclusive ($(jq -r '.evidenceDigest' <<<"$evidence"))."
+}
+
 smoke_htlc_cutoff() {
   ensure_runtime_env
   start_lab >/dev/null
@@ -2884,6 +3095,7 @@ case "${1:-}" in
   force-close-smoke) smoke_force_close_recovery ;;
   route-fault-smoke) smoke_route_and_duplicate_failure ;;
   htlc-cutoff-smoke) smoke_htlc_cutoff ;;
+  cross-chain-deadline-smoke) smoke_cross_chain_deadline ;;
   coordinator-smoke) smoke_coordinator_reconciliation ;;
   coordinator-invoice-smoke) smoke_coordinator_invoice_reconciliation ;;
   solver-node-proof-smoke) smoke_solver_node_proof ;;
@@ -2892,7 +3104,7 @@ case "${1:-}" in
   down) stop_lab ;;
   destroy) destroy_lab ;;
   *)
-    echo "Usage: $0 {up|smoke|adapter-smoke|credential-smoke|credential-rotation-smoke|tls-rotation-smoke|invoice-fault-smoke|policy-fault-smoke|directional-capacity-smoke|daily-cap-smoke|stateless-init-smoke|production-duration-smoke|stale-chain-smoke|unsynced-chain-smoke|force-close-smoke|route-fault-smoke|htlc-cutoff-smoke|coordinator-smoke|coordinator-invoice-smoke|solver-node-proof-smoke|solver-capacity-smoke|status|down|destroy}" >&2
+    echo "Usage: $0 {up|smoke|adapter-smoke|credential-smoke|credential-rotation-smoke|tls-rotation-smoke|invoice-fault-smoke|policy-fault-smoke|directional-capacity-smoke|daily-cap-smoke|stateless-init-smoke|production-duration-smoke|stale-chain-smoke|unsynced-chain-smoke|force-close-smoke|route-fault-smoke|htlc-cutoff-smoke|cross-chain-deadline-smoke|coordinator-smoke|coordinator-invoice-smoke|solver-node-proof-smoke|solver-capacity-smoke|status|down|destroy}" >&2
     exit 2
     ;;
 esac
