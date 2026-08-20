@@ -68,14 +68,18 @@ jobs:
       - run: node --check lib/solver-daemon-planner.mjs
       - run: node --check lib/solver-daemon-runtime.mjs
       - run: node --check lib/solver-private-packet.mjs
+      - run: node --check lib/safety-monitor.mjs
       - run: node --check infra/coordinator/smoke.mjs
       - run: node --check infra/coordinator/invoice-smoke.mjs
       - run: node --check infra/coordinator/disk-full-smoke.mjs
       - run: node --check infra/evm/escrow-reorg-smoke.mjs
       - run: node --check infra/evm/outbox-fault-smoke.mjs
+      - run: node --check infra/evm/safety-monitor-smoke.mjs
       - run: bash -n scripts/run-evm-outbox-fault-smoke.sh
+      - run: bash -n scripts/run-safety-monitor-smoke.sh
       - run: node --check scripts/run-local-qualification.mjs
       - run: npm run test:coordinator-evm
       - run: npm run test:evm-outbox-faults
+      - run: npm run test:safety-monitor
       - run: npm run test:escrow-reorg
       - run: npm run test:coordinator-runtime

@@ -19,6 +19,7 @@
     "test:fork": "bash scripts/run-mainnet-fork.sh",
     "test:coordinator-evm": "bash scripts/run-coordinator-evm-smoke.sh",
     "test:evm-outbox-faults": "bash scripts/run-evm-outbox-fault-smoke.sh",
+    "test:safety-monitor": "bash scripts/run-safety-monitor-smoke.sh",
     "test:coordinator-runtime": "bash scripts/run-coordinator-runtime-smoke.sh",
     "test:escrow-reorg": "bash scripts/run-escrow-reorg-smoke.sh",
     "regtest:up": "bash infra/regtest/lab.sh up",

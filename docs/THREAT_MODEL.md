@@ -18,13 +18,13 @@ Reviewed surfaces:
 
 | Finding | Repository disposition | Remaining external gate |
 | --- | --- | --- |
-| TS-C01 | Risk, price, inventory, cap, fee, and attestation policy implemented | Live pinned BIT state, independent executable-price inputs, monitor, review |
+| TS-C01 | Risk, price, inventory, cap, fee, attestation policy, and local actual-gate monitor halt implemented | Live pinned BIT state, independent executable-price inputs, continuous monitor/alerts, review |
 | TS-C02 | Both beneficiary-bound escrows implemented | Independent review |
 | TS-C03 | Ordered-deadline derivation and exact boundaries implemented | Bitcoin regtest, Ethereum fork, congestion/restart/force-close drills |
 | TS-C04 | Multi-solver signed received-set selection implemented | None; global-best availability is explicitly not claimed |
 | TS-H01 | Chain/contract/version/direction/nonce replay protection and ERC-1271 implemented | EOA-only SIWE remains an explicit account limitation |
 | TS-H02 | Dual-signed user exercise plus local atomic admission, capability expiry, authenticated endpoint response, capacity, and last-look accounting implemented | Deployed shared enforcement/readers, live reliability telemetry, objective bond decision |
-| TS-H03 | Closed expiring gate and token runtime checks implemented | Live proxy monitor, pinned hashes, deployed multisigs, fork campaign |
+| TS-H03 | Closed expiring gate, token runtime checks, and local secret-free guardian-halt monitor implemented | Live continuous proxy monitor, pinned hashes, deployed multisigs, fork campaign |
 | TS-H04 | Integer units, rounding, overflow, dust, and conservation implemented | None |
 | TS-H05 | BIT-only signed capped fee accounting implemented | Pin deployed collector and caps |
 | TS-H06 | Public pool/shares/yield/rewards/partial fills disabled | Live solver reconciliation and failure drills |
@@ -39,7 +39,7 @@ Reviewed surfaces:
 | TS-M06 | Full BOLT 11 field and invoice-digest validation implemented | Isolated live decoder integration |
 | TS-M07 | Canonical identifiers, text-only rendering, safe logs, and response headers implemented | Production header/log verification |
 | TS-M08 | Blind pricing, selected-solver disclosure, redaction, and deletion policy implemented | Storage-layer deletion evidence |
-| TS-M09 | Immutable escrows, constrained gate, sealed registry, and deployment policy implemented | Deployed role-separated multisigs and event monitoring |
+| TS-M09 | Immutable escrows, constrained gate, sealed registry, deployment policy, and local actual-gate alert ordering implemented | Deployed role-separated multisigs, continuous event monitoring, and external alert delivery |
 | TS-M10 | Strict EOA SIWE and short rotated sessions implemented | Durable atomic production account storage, or disable accounts |
 | TS-M11 | Email delivery hard-disabled; pending data expires in 24 hours | None for swaps; a new reviewed release is required to send mail |
 | TS-M12 | Frozen one-shot wallet dispatch and unknown-outcome handling implemented | Trusted wallet confirmation remains the user security boundary |
@@ -71,7 +71,7 @@ Safeguards:
 - display that par is a project rule, not an onchain guarantee;
 - start with solver-owned inventory so no public LP absorbs an undefined peg risk.
 
-Implemented now: the vault enforces an immutable reference-price band, maximum BIT per swap, maximum BIT per solver epoch, and maximum fee. The fail-closed policy in `lib/risk-policy.mjs` additionally requires a fresh ERC-1967 implementation and code-hash match, an unpaused 18-decimal token, healthy Ethereum finality, three independent fresh executable price sources, a bounded source spread, a market/reference band, per-direction inventory reserves, and scarcity fees. `docs/RISK_POLICY.md` defines halt and recovery behavior. These controls are executable and tested, but production quotes remain disabled until the live inputs, pinned values, monitor, alerts, and multisig recovery process are deployed and independently reviewed.
+Implemented now: the vault enforces an immutable reference-price band, maximum BIT per swap, maximum BIT per solver epoch, and maximum fee. The fail-closed policy in `lib/risk-policy.mjs` additionally requires a fresh ERC-1967 implementation and code-hash match, an unpaused 18-decimal token, healthy Ethereum finality, three independent fresh executable price sources, a bounded source spread, a market/reference band, per-direction inventory reserves, and scarcity fees. The bounded monitor requires digest-only health across eight domains, closes quotes, submits the alert digest through an actual guardian-gate halt, and emits only fixed secret-free reason codes afterward. `docs/RISK_POLICY.md` and `docs/MONITORING.md` define halt and recovery behavior. These controls are executable and tested, but production quotes remain disabled until live inputs, pinned values, continuous redundant collectors, external alerts, deployed multisigs, and the recovery process are independently reviewed.
 
 ### TS-C02 — Unbound preimage claim
 

@@ -1,0 +1,201 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import { id } from "ethers";
+import {
+  evaluateSafetyMonitor,
+  REQUIRED_SAFETY_CHECKS,
+  runSafetyMonitorCycle,
+} from "../lib/safety-monitor.mjs";
+
+const NOW = 2_100_000_000;
+
+function observations(overrides = {}) {
+  return REQUIRED_SAFETY_CHECKS.map((kind) => ({
+    kind,
+    status: "healthy",
+    observedAt: NOW - 2,
+    evidenceDigest: id(`safety-monitor:${kind}`).toLowerCase(),
+    ...(overrides[kind] ?? {}),
+  }));
+}
+
+test("accepts only one fresh healthy observation from every required safety domain", () => {
+  const result = evaluateSafetyMonitor({
+    observations: observations(),
+    now: NOW,
+    maximumObservationAgeSeconds: 15,
+  });
+  assert.equal(result.healthy, true);
+  assert.deepEqual(result.reasonCodes, []);
+  assert.match(result.evidenceSetDigest, /^0x[0-9a-f]{64}$/);
+  assert.match(result.alertDigest, /^0x[0-9a-f]{64}$/);
+});
+
+test("missing, stale, future, duplicate, unsafe, or malformed observations fail closed with fixed reason codes", () => {
+  const unsafe = observations({
+    "bit-contract": { status: "unsafe" },
+    "price-quorum": { observedAt: NOW - 100 },
+    "lightning-node": { observedAt: NOW + 1 },
+  });
+  unsafe.pop();
+  unsafe.push({ ...unsafe[0] });
+  unsafe.push({
+    kind: "audit-pipeline",
+    status: "healthy",
+    observedAt: NOW,
+    evidenceDigest: id("malformed").toLowerCase(),
+    privateKey: "must-not-enter-the-alert",
+  });
+  const result = evaluateSafetyMonitor({ observations: unsafe, now: NOW, maximumObservationAgeSeconds: 15 });
+  assert.equal(result.healthy, false);
+  assert.ok(result.reasonCodes.includes("BIT_CONTRACT_UNSAFE"));
+  assert.ok(result.reasonCodes.includes("PRICE_QUORUM_STALE"));
+  assert.ok(result.reasonCodes.includes("LIGHTNING_NODE_FUTURE"));
+  assert.ok(result.reasonCodes.includes("SOLVER_CAPACITY_MISSING"));
+  assert.ok(result.reasonCodes.includes("ASSET_RECONCILIATION_DUPLICATE"));
+  assert.ok(result.reasonCodes.includes("MONITOR_INPUT_INVALID"));
+  assert.equal(JSON.stringify(result).includes("must-not-enter-the-alert"), false);
+  assert.equal(JSON.stringify(result).includes("privateKey"), false);
+});
+
+test("healthy monitoring has no authority to open or mutate either exposure gate", async () => {
+  let calls = 0;
+  const result = await runSafetyMonitorCycle({
+    observations: observations(),
+    maximumObservationAgeSeconds: 15,
+    nowSeconds: () => NOW,
+    closeQuoteIssuance: async () => { calls += 1; },
+    haltOnchainGate: async () => { calls += 1; },
+    deliverAlert: async () => { calls += 1; },
+  });
+  assert.equal(result.outcome, "HEALTHY");
+  assert.equal(calls, 0);
+});
+
+test("unsafe monitoring closes quotes, halts onchain exposure, then emits one secret-free alert", async () => {
+  const order = [];
+  let quoteClosed = false;
+  let gateHalted = false;
+  const result = await runSafetyMonitorCycle({
+    observations: observations({ "evm-provider-quorum": { status: "unsafe" } }),
+    maximumObservationAgeSeconds: 15,
+    nowSeconds: () => NOW,
+    closeQuoteIssuance: async (alert) => {
+      order.push("quotes");
+      assert.match(alert.alertDigest, /^0x[0-9a-f]{64}$/);
+      quoteClosed = true;
+      return { closed: true };
+    },
+    haltOnchainGate: async (alert) => {
+      order.push("gate");
+      assert.equal(quoteClosed, true);
+      gateHalted = true;
+      return { halted: true, reasonDigest: alert.alertDigest, transactionHash: id("halt-tx").toLowerCase() };
+    },
+    deliverAlert: async (alert) => {
+      order.push("alert");
+      assert.equal(quoteClosed && gateHalted, true);
+      assert.equal(JSON.stringify(alert).includes("invoice"), false);
+      return { delivered: true };
+    },
+  });
+  assert.equal(result.outcome, "HALTED_AND_ALERTED");
+  assert.equal(result.newExposureClosed, true);
+  assert.deepEqual(order, ["quotes", "gate", "alert"]);
+});
+
+test("closure or alert transport failures remain explicit and never become healthy", async () => {
+  const unsafe = observations({ "audit-pipeline": { status: "unsafe" } });
+  const incomplete = await runSafetyMonitorCycle({
+    observations: unsafe,
+    maximumObservationAgeSeconds: 15,
+    nowSeconds: () => NOW,
+    closeQuoteIssuance: async () => { throw new Error("offline"); },
+    haltOnchainGate: async (alert) => ({
+      halted: true,
+      reasonDigest: alert.alertDigest,
+      transactionHash: id("halted-despite-quote-failure").toLowerCase(),
+    }),
+    deliverAlert: async () => ({ delivered: false }),
+  });
+  assert.equal(incomplete.outcome, "HALT_INCOMPLETE");
+  assert.equal(incomplete.onchainGateHalted, true);
+  assert.equal(incomplete.newExposureClosed, false);
+
+  const alertFailure = await runSafetyMonitorCycle({
+    observations: unsafe,
+    maximumObservationAgeSeconds: 15,
+    nowSeconds: () => NOW,
+    closeQuoteIssuance: async () => ({ closed: true }),
+    haltOnchainGate: async (alert) => ({
+      halted: true,
+      reasonDigest: alert.alertDigest,
+      transactionHash: id("halted-alert-failure").toLowerCase(),
+    }),
+    deliverAlert: async () => { throw new Error("paging offline"); },
+  });
+  assert.equal(alertFailure.outcome, "HALTED_ALERT_UNDELIVERED");
+  assert.equal(alertFailure.newExposureClosed, true);
+  assert.equal(alertFailure.alertDelivered, false);
+});
+
+test("monitor clock or configuration failure still attempts both closures with a fixed alert", async () => {
+  let closures = 0;
+  const result = await runSafetyMonitorCycle({
+    observations: observations(),
+    maximumObservationAgeSeconds: 0,
+    actionTimeoutMs: 0,
+    nowSeconds: () => { throw new Error("clock failed"); },
+    closeQuoteIssuance: async () => {
+      closures += 1;
+      return { closed: true };
+    },
+    haltOnchainGate: async (alert) => {
+      closures += 1;
+      return {
+        halted: true,
+        reasonDigest: alert.alertDigest,
+        transactionHash: id("monitor-input-failure-halt").toLowerCase(),
+      };
+    },
+    deliverAlert: async () => ({ delivered: true }),
+  });
+  assert.equal(result.outcome, "HALTED_AND_ALERTED");
+  assert.deepEqual(result.reasonCodes, ["MONITOR_INPUT_INVALID"]);
+  assert.equal(closures, 2);
+});
+
+test("a hung quote shutdown is bounded so the guardian halt and alert still run", async () => {
+  let signalAborted = false;
+  let haltCalled = false;
+  let alertCalled = false;
+  const result = await runSafetyMonitorCycle({
+    observations: observations({ "lightning-node": { status: "unsafe" } }),
+    maximumObservationAgeSeconds: 15,
+    actionTimeoutMs: 5,
+    nowSeconds: () => NOW,
+    closeQuoteIssuance: async (_alert, { signal }) => new Promise((resolve) => {
+      signal.addEventListener("abort", () => {
+        signalAborted = true;
+        resolve({ closed: false });
+      }, { once: true });
+    }),
+    haltOnchainGate: async (alert) => {
+      haltCalled = true;
+      return {
+        halted: true,
+        reasonDigest: alert.alertDigest,
+        transactionHash: id("hung-quote-halt").toLowerCase(),
+      };
+    },
+    deliverAlert: async () => {
+      alertCalled = true;
+      return { delivered: true };
+    },
+  });
+  assert.equal(signalAborted, true);
+  assert.equal(haltCalled, true);
+  assert.equal(alertCalled, true);
+  assert.equal(result.outcome, "HALT_INCOMPLETE");
+  assert.equal(result.onchainGateHalted, true);
+});

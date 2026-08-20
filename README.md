@@ -19,6 +19,7 @@ The prototype assumes a business par value of **1 BIT = 100 sats**. This value i
 - Product and protocol specification in [`docs/PROTOCOL.md`](docs/PROTOCOL.md)
 - Liquidity operations plan in [`docs/LIQUIDITY_FUNDING.md`](docs/LIQUIDITY_FUNDING.md)
 - Fail-closed market, proxy, finality, and inventory policy in [`docs/RISK_POLICY.md`](docs/RISK_POLICY.md)
+- Secret-free fail-closed monitoring and actual-gate halt evidence in [`docs/MONITORING.md`](docs/MONITORING.md)
 - Deterministic cross-chain clock and payment-authorization policy in [`docs/SETTLEMENT_POLICY.md`](docs/SETTLEMENT_POLICY.md)
 - Multi-solver signed RFQ validation and deterministic received-set policy in [`docs/RFQ_POLICY.md`](docs/RFQ_POLICY.md)
 - Canonical integer units and BIT-only fee policy in [`docs/UNITS_AND_ROUNDING.md`](docs/UNITS_AND_ROUNDING.md) and [`docs/FEES.md`](docs/FEES.md)
@@ -44,7 +45,7 @@ Email preferences are attached to the signed-in wallet account, never included i
 
 ## Security status
 
-This repository is not audited and the bridge is not ready for real funds. The design removes the shared public pool, public order book, and rewards from v1. Immutable escrows, deterministic timeout policy, signed quote selection, a three-key short-lived solver capability verifier, an authenticated replay-resistant solver endpoint protocol, a dual-provider finalized BIT-vault reader, privacy-minimized signed Lightning-capacity observations, fail-closed risk gates, a pinned BIT mainnet-fork campaign, isolated invoice/payer LND adapters with live credential, node-possession, and hold-invoice fault evidence, a crash-safe Lightning coordinator, an authenticated one-use private-packet protocol, a bounded solver executor, and an exact-transaction EVM claim outbox now pass locally. Production deployment of those readers, packet providers, and endpoints, independent-provider/operator evidence, public-testnet finality and chain/channel campaigns, deployed solver daemons and persistence, multisigs, monitoring, and independent review remain release-blocking. Direct sends are ordinary wallet payments rather than bridge transactions, but they are irreversible and depend on the user's wallet, destination, token contract, and invoice validation.
+This repository is not audited and the bridge is not ready for real funds. The design removes the shared public pool, public order book, and rewards from v1. Immutable escrows, deterministic timeout policy, signed quote selection, a three-key short-lived solver capability verifier, an authenticated replay-resistant solver endpoint protocol, a dual-provider finalized BIT-vault reader, privacy-minimized signed Lightning-capacity observations, fail-closed risk gates, a pinned BIT mainnet-fork campaign, isolated invoice/payer LND adapters with live credential, node-possession, and hold-invoice fault evidence, a crash-safe Lightning coordinator, an authenticated one-use private-packet protocol, a bounded solver executor, an exact-transaction EVM claim outbox, and a secret-free actual-gate halt monitor now pass locally. Production deployment of those readers, packet providers, endpoints, and monitor, independent-provider/operator evidence, public-testnet finality and chain/channel campaigns, deployed solver daemons and persistence, multisigs, live alert delivery, incident drills, and independent review remain release-blocking. Direct sends are ordinary wallet payments rather than bridge transactions, but they are irreversible and depend on the user's wallet, destination, token contract, and invoice validation.
 
 ## Local preview
 
@@ -69,11 +70,11 @@ MAINNET_RPC_URL=<secret> npm run test:fork
 ## Production work still required
 
 - Repeat the passing local EVM outbox/reorg campaigns on the pinned BIT fork and public testnet using two independently operated authenticated providers
-- Deploy and qualify the bounded solver daemon, backup/restore drills, and alert delivery
+- Deploy and qualify the bounded solver daemon, continuous safety monitor, backup/restore drills, redundant guardian delivery, and external alert routing
 - Deploy the implemented solver endpoint, private-packet, and capacity-reader protocols plus independent quote-delivery paths
 - Bridge-escrow wallet integration with exact intent authorization and explicit approval boundaries
 - Keep email delivery disabled; a later mail release requires ownership verification, unsubscribe, rate limits, auditing, and sender authentication
-- Reconciliation, proxy monitoring, live incident drills using [`docs/INCIDENT_RUNBOOK.md`](docs/INCIDENT_RUNBOOK.md), and external review
+- Independent reconciliation inputs, production proxy monitoring, live incident drills using [`docs/INCIDENT_RUNBOOK.md`](docs/INCIDENT_RUNBOOK.md), and external review
 - Testnet deployment before any mainnet liquidity
 
 ## Reference asset

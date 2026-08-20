@@ -1,6 +1,6 @@
 # TreeSwap fail-closed risk policy
 
-Status: executable policy module and test harness. Production quotes remain disabled until live inputs and operations are deployed and independently reviewed.
+Status: executable policy, bounded secret-free monitor, and local actual-gate halt harness. Production quotes remain disabled until live inputs, continuous scheduling, redundant guardian delivery, alert routing, and operations are deployed and independently reviewed.
 
 ## Why 100 sats is not enough
 
@@ -46,3 +46,5 @@ The recorded BIT v1 implementation applies its pause to mint and redeem, not ord
 ## Deployment gate
 
 Before testnet funding, record the expected proxy and implementation addresses and code hashes, configure three independent executable price sources, run the monitor continuously, alert on every failure reason, and test that the quote service actually stops. Before capped mainnet, the policy, data sources, and multisig recovery procedure require independent review.
+
+The local monitor now requires fresh digest-only observations across the BIT, price, finality, provider-quorum, Lightning, capacity, reconciliation, and audit domains. Its actual-gate campaign closes quotes, submits a guardian halt, verifies the gate closed, and emits the alert afterward. This proves the bounded repository path, not a continuously deployed monitor or public alert integration. See [Safety monitoring boundary](./MONITORING.md).

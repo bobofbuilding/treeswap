@@ -1,6 +1,6 @@
 # Incident runbook
 
-Status: response sequence defined; live roles, alert integrations, and drills remain required.
+Status: response sequence and local actual-gate halt path defined and tested; live roles, independent collectors, alert integrations, and incident drills remain required.
 
 ## First principle
 

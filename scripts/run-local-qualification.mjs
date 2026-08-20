@@ -57,9 +57,11 @@ const configurationFiles = [
   "infra/coordinator/disk-full-smoke.mjs",
   "infra/evm/escrow-reorg-smoke.mjs",
   "infra/evm/outbox-fault-smoke.mjs",
+  "infra/evm/safety-monitor-smoke.mjs",
   "scripts/run-coordinator-runtime-smoke.sh",
   "scripts/run-escrow-reorg-smoke.sh",
   "scripts/run-evm-outbox-fault-smoke.sh",
+  "scripts/run-safety-monitor-smoke.sh",
   "scripts/run-local-qualification.mjs",
   "lib/lightning-adapter-policy.mjs",
   "lib/lightning-adapter-runtime.mjs",
@@ -76,6 +78,7 @@ const configurationFiles = [
   "lib/solver-daemon-planner.mjs",
   "lib/solver-daemon-runtime.mjs",
   "lib/solver-private-packet.mjs",
+  "lib/safety-monitor.mjs",
   "lib/settlement-policy.mjs",
 ];
 const configurationHashes = {};
@@ -94,6 +97,7 @@ const campaigns = [
   ["contracts:test", "forge", ["test"]],
   ["coordinator:evm-faults", "npm", ["run", "test:coordinator-evm"]],
   ["evm:outbox-finality-and-provider-faults", "npm", ["run", "test:evm-outbox-faults"]],
+  ["operations:safety-monitor", "npm", ["run", "test:safety-monitor"]],
   ["evm:escrow-reorgs", "npm", ["run", "test:escrow-reorg"]],
   ["lightning:credential-lifecycle", "npm", ["run", "regtest:credential-smoke"]],
   ["lightning:credential-overlap-rotation", "npm", ["run", "regtest:credential-rotation-smoke"]],
