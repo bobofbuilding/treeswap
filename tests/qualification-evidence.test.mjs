@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFile } from "node:fs/promises";
 import test from "node:test";
 import {
   assertQualificationEvidenceIsSecretFree,
@@ -54,4 +55,15 @@ test("rejects failed campaigns, mutable images, and secret-bearing fields", () =
     ...input(),
     configurationHashes: { "../outside config": `sha256:${"4".repeat(64)}` },
   }), /configuration hash entry is invalid/);
+});
+
+test("isolates disposable stale-chain state from the main payer volume", async () => {
+  const lab = await readFile(new URL("../infra/regtest/lab.sh", import.meta.url), "utf8");
+  const start = lab.indexOf("smoke_stale_chain_header() {");
+  const end = lab.indexOf("\nsmoke_unsynced_chain_catchup() {", start);
+  assert.notEqual(start, -1);
+  assert.notEqual(end, -1);
+  const campaign = lab.slice(start, end);
+  assert.match(campaign, /ADAPTER_JOURNAL_PATH=\/tmp\/stale-actions\.jsonl/);
+  assert.match(campaign, /CHAIN_PROGRESS_PATH=\/tmp\/stale-chain-progress\.json/);
 });

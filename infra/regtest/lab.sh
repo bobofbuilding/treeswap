@@ -2132,6 +2132,7 @@ smoke_stale_chain_header() {
   compose --profile adapter run --rm -d --name "$stale_container" \
     -e MAX_CHAIN_NO_PROGRESS_SECONDS=1 \
     -e ADAPTER_JOURNAL_PATH=/tmp/stale-actions.jsonl \
+    -e CHAIN_PROGRESS_PATH=/tmp/stale-chain-progress.json \
     payer-adapter >/dev/null
   for _ in $(seq 1 60); do
     if docker exec "$stale_container" node -e \
