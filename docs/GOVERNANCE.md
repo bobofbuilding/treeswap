@@ -21,6 +21,12 @@ Funding authorization is a separate later step. It requires one exact expiring r
 
 Matching observations remain unreviewed until the [signed deployment-manifest promotion](./DEPLOYMENT_PROMOTION.md) ceremony passes. That boundary revalidates the deployment policy and exact observations, binds the review bundle and findings disposition, and requires every provider plus separate contract and operations reviewers to sign one short-lived EIP-712 record and policy. Its module-private result can derive candidate evidence only; it cannot open the gate or authorize funding.
 
+## Closed Sepolia plan
+
+The [closed public-testnet deployment workflow](./CLOSED_TESTNET_DEPLOYMENT.md) turns one exact reviewed input into four unsigned deterministic CREATE transactions and three hash-linked controller calls. Preparation and verification each require the exact clean commit already published on `origin/main`, force a fresh offline Foundry rebuild, compare artifact source commitments with that commit, and refuse any change to calldata or ordering. The generated plan grants no signing, broadcast, gate-opening, or funding authority.
+
+This closes the repository-side deployment reproducibility gap. Real Sepolia wallets, hardware owners, BIT test deployment, independent providers, external review, nonce preflight, signing, broadcast, finalized observation, monitoring, and zero-balance confirmation remain external gates.
+
 ## Local closed-deployment evidence
 
 Run:
@@ -29,9 +35,9 @@ Run:
 npm run test:deployment-rehearsal
 ```
 
-The campaign deploys the actual TreeSwap gate, registry, vault, and user escrow to a fresh timed Anvil chain. Three distinct test-only wallet contracts expose disjoint three-owner/two-threshold role sets. The registry is sealed to the exact escrows, the gate remains emergency-closed with no staged reopen, and both escrows retain zero inventory and liabilities. Primary and proxy RPC identities reconstruct the same finalized manifest; a captured owner quorum fails policy, and production policy rejects the local chain, test token, test wallets, and absent independent review.
+The campaign builds the same exact closed-deployment plan used by the operator workflow and executes its four generated transactions plus three ordered controller calls against a fresh timed Anvil chain. Three distinct test-only wallet contracts expose disjoint three-owner/two-threshold role sets. The registry is sealed to the exact escrows, the gate remains emergency-closed with no staged reopen, and both escrows retain zero inventory and liabilities. Primary and proxy RPC identities reconstruct the same finalized manifest; a captured owner quorum fails policy, and production policy rejects the local chain, test token, test wallets, and absent independent review.
 
-The deterministic campaign digest is `0xcab23fa2503054e2bc95c25238ac153f83f44f4f38b17cb316359972a4deef2a`. Both RPC identities share one local backend, the token is a test-only EIP-1967 probe, and the wallet executor is deliberately not a production multisig. This is reproducibility evidence only: it includes no public testnet, independent provider, hardware-backed signer, independent review, production infrastructure, inventory, liability, or funding authorization.
+The earlier deployment-observer checkpoint had deterministic campaign digest `0xcab23fa2503054e2bc95c25238ac153f83f44f4f38b17cb316359972a4deef2a`; the plan-backed rehearsal emits a new source-bound plan and evidence digest on every reviewed checkpoint. Both RPC identities share one local backend, the token is a test-only EIP-1967 probe, and the wallet executor is deliberately not a production multisig. This is reproducibility evidence only: it includes no public testnet, independent provider, hardware-backed signer, independent review, production infrastructure, inventory, liability, or funding authorization.
 
 Published deployment-observer checkpoint `44d929e708768d8bbe53087b415eda0f4ac75f43` passed 239 application/security tests, 89 direct pinned-runtime tests plus the bounded-filesystem rollback campaign, 68 contract tests, both web builds, all 29 sealed local campaigns, and [hosted CI](https://github.com/bobofbuilding/treeswap/actions/runs/32360223386). The qualification ran from `2026-08-20T10:44:40.005Z` through `2026-08-20T11:52:49.730Z`; its independently reconstructed mode-`0600` evidence digest is `sha256:9a0bb29bc90d603327b56606603489247f2b3cab5f3be5ecad18d2cd8417d5e9`. It covers the closed local rehearsal and observer policy only. It records no independent provider, production multisig, public testnet, production infrastructure, independent review, or funding authorization.
 

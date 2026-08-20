@@ -9,9 +9,11 @@ import {
   JsonRpcProvider,
   NonceManager,
   id,
+  keccak256,
   parseEther,
 } from "ethers";
 import { BIT_MAINNET_CONTRACT, createJsonRpcClient } from "../../lib/bit-deployment-observer.mjs";
+import { buildClosedTestnetDeploymentPlan } from "../../lib/closed-testnet-deployment-plan.mjs";
 import { coordinatorCommitmentDigest } from "../../lib/coordinator-store.mjs";
 import {
   compareDeploymentObservations,
@@ -121,50 +123,89 @@ try {
   const controller = await deploy(deployer, walletArtifact, [wallets.slice(0, 3).map((item) => item.address), 2]);
   const guardian = await deploy(deployer, walletArtifact, [wallets.slice(3, 6).map((item) => item.address), 2]);
   const feeCollector = await deploy(deployer, walletArtifact, [wallets.slice(6, 9).map((item) => item.address), 2]);
-  const gate = await deploy(deployer, gateArtifact, [
-    await controller.getAddress(),
-    await guardian.getAddress(),
-    86_400,
-    172_800,
-  ]);
-  const registry = await deploy(deployer, registryArtifact, [await controller.getAddress()]);
-  const risk = [
-    100,
-    1_000,
-    100,
-    86_400,
-    1_800,
-    900,
-    172_800,
-    parseEther("10"),
-    parseEther("100"),
-  ];
-  const vault = await deploy(deployer, vaultArtifact, [
-    await bitProxy.getAddress(),
-    await feeCollector.getAddress(),
-    await gate.getAddress(),
-    await registry.getAddress(),
-    risk,
-  ]);
-  const userEscrow = await deploy(deployer, userEscrowArtifact, [
-    await bitProxy.getAddress(),
-    await feeCollector.getAddress(),
-    await gate.getAddress(),
-    await registry.getAddress(),
-    risk,
-  ]);
-
-  const controllerControl = new Contract(await controller.getAddress(), walletArtifact.abi, deployer);
-  for (const escrow of [await vault.getAddress(), await userEscrow.getAddress()]) {
-    await (await controllerControl.execute(
-      await registry.getAddress(),
-      registry.interface.encodeFunctionData("registerEscrow", [escrow]),
-    )).wait();
+  const runtimeCodeHash = async (contract) => keccak256(await provider.getCode(await contract.getAddress())).toLowerCase();
+  const roleInput = async (contract, ownerAddresses) => ({
+    address: await contract.getAddress(),
+    ownerAddresses,
+    threshold: 2,
+    runtimeCodeHash: await runtimeCodeHash(contract),
+  });
+  const risk = Object.freeze({
+    maxFeeBps: "100",
+    maxPriceDeviationBps: "1000",
+    referenceSatsPerBit: "100",
+    epochDurationSeconds: "86400",
+    minSettlementWindowSeconds: "1800",
+    minClaimBufferSeconds: "900",
+    maxLockDurationSeconds: "172800",
+    maxSwapAmountWei: parseEther("10").toString(),
+    maxEpochVolumeWei: parseEther("100").toString(),
+  });
+  const startingNonce = await provider.getTransactionCount(wallets[0].address, "pending");
+  const deploymentInput = {
+    schema: "treeswap.closed-testnet-deployment-input.v1",
+    environment: "local-rehearsal",
+    chainId: String(CHAIN_ID),
+    reviewedBuildCommit: SOURCE_COMMIT,
+    independentReviewDigest: NO_REVIEW_DIGEST,
+    deployer: wallets[0].address,
+    startingNonce: String(startingNonce),
+    roles: {
+      controller: await roleInput(controller, wallets.slice(0, 3).map((item) => item.address)),
+      guardian: await roleInput(guardian, wallets.slice(3, 6).map((item) => item.address)),
+      feeCollector: await roleInput(feeCollector, wallets.slice(6, 9).map((item) => item.address)),
+    },
+    bit: {
+      tokenBoundary: "test-only-eip1967-bit-probe",
+      proxyAddress: await bitProxy.getAddress(),
+      implementationAddress: await bitImplementation.getAddress(),
+      proxyCodeHash: await runtimeCodeHash(bitProxy),
+      implementationCodeHash: await runtimeCodeHash(bitImplementation),
+      symbol: "BIT",
+      decimals: 18,
+      paused: false,
+    },
+    gate: { resumeDelaySeconds: 86_400, maxOpenDurationSeconds: 172_800 },
+    vaultRisk: risk,
+    userEscrowRisk: risk,
+  };
+  const deploymentPlan = await buildClosedTestnetDeploymentPlan({
+    input: deploymentInput,
+    artifacts: {
+      gate: gateArtifact,
+      paymentHashRegistry: registryArtifact,
+      userEscrow: userEscrowArtifact,
+      vault: vaultArtifact,
+    },
+  });
+  assert.equal(deploymentPlan.deploymentTransactions.length, 4);
+  const receipts = [];
+  for (const transaction of deploymentPlan.deploymentTransactions) {
+    const response = await wallets[0].sendTransaction({
+      chainId: CHAIN_ID,
+      data: transaction.data,
+      nonce: Number(transaction.nonce),
+      value: transaction.valueWei,
+    });
+    const receipt = await response.wait();
+    assert.equal(receipt.contractAddress, transaction.expectedContractAddress);
+    receipts.push(receipt);
   }
-  const sealReceipt = await (await controllerControl.execute(
-    await registry.getAddress(),
-    registry.interface.encodeFunctionData("seal"),
-  )).wait();
+  const expected = Object.fromEntries(deploymentPlan.deploymentTransactions.map((transaction) => [
+    transaction.name,
+    transaction.expectedContractAddress,
+  ]));
+  const gate = new Contract(expected.gate, gateArtifact.abi, provider);
+  const registry = new Contract(expected.paymentHashRegistry, registryArtifact.abi, provider);
+  const vault = new Contract(expected.vault, vaultArtifact.abi, provider);
+  const userEscrow = new Contract(expected.userEscrow, userEscrowArtifact.abi, provider);
+  const controllerControl = new Contract(await controller.getAddress(), walletArtifact.abi, wallets[0]);
+  let sealReceipt;
+  for (const action of deploymentPlan.controllerSafeActions) {
+    const receipt = await (await controllerControl.execute(action.to, action.data)).wait();
+    if (action.name === "seal-registry") sealReceipt = receipt;
+  }
+  assert.ok(sealReceipt);
   await waitForFinality(provider, sealReceipt.blockNumber);
 
   const proxyUrl = `http://127.0.0.1:${PROXY_PORT}/`;
@@ -258,6 +299,10 @@ try {
     chainId: String(CHAIN_ID),
     executionClient: ANVIL_VERSION,
     actualTreeSwapGateRegistryAndEscrows: true,
+    generatedPlanExecuted: true,
+    generatedDeploymentTransactions: receipts.length,
+    generatedControllerSafeActions: deploymentPlan.controllerSafeActions.length,
+    deploymentPlanDigest: deploymentPlan.planDigest,
     finalizedCanonicalRpcObservation: true,
     comparedProviderIdentities: 2,
     independentProviderBackends: false,

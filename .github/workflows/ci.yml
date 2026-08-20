@@ -65,6 +65,8 @@ jobs:
       - run: node --check lib/deployment-observer.mjs
       - run: node --check lib/deployment-policy.mjs
       - run: node --check lib/deployment-manifest-promotion.mjs
+      - run: node --check lib/closed-testnet-deployment-files.mjs
+      - run: node --check lib/closed-testnet-deployment-plan.mjs
       - run: node --check lib/qualification-evidence.mjs
       - run: node --check lib/release-authorization.mjs
       - run: node --check lib/public-testnet-campaign-workflow.mjs
@@ -94,11 +96,15 @@ jobs:
       - run: bash -n scripts/run-cross-chain-deadline-smoke.sh
       - run: bash -n scripts/run-live-bit-cross-chain-deadline-smoke.sh
       - run: node --check scripts/run-local-qualification.mjs
+      - run: node --check scripts/prepare-closed-testnet-deployment.mjs
+      - run: node --check scripts/verify-closed-testnet-deployment.mjs
       - run: node --check scripts/manage-public-testnet-campaign.mjs
       - run: node --check scripts/prepare-public-testnet-attestation.mjs
       - run: node --check scripts/verify-public-testnet-evidence.mjs
       - run: node --check scripts/prepare-deployment-promotion-approval.mjs
       - run: node --check scripts/verify-deployment-promotion.mjs
+      - run: forge build --quiet
+      - run: node --test tests/closed-testnet-deployment-files.test.mjs tests/closed-testnet-deployment-plan.test.mjs
       - run: npm run test:coordinator-evm
       - run: npm run test:evm-outbox-faults
       - run: npm run test:safety-monitor

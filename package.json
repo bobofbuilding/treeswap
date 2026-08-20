@@ -49,6 +49,8 @@
     "regtest:solver-capacity-smoke": "bash infra/regtest/lab.sh solver-capacity-smoke",
     "qualify:local": "node scripts/run-local-qualification.mjs",
     "manage:testnet-campaign": "node scripts/manage-public-testnet-campaign.mjs",
+    "prepare:testnet-deployment": "node scripts/prepare-closed-testnet-deployment.mjs",
+    "verify:testnet-deployment": "node scripts/verify-closed-testnet-deployment.mjs",
     "prepare:testnet-attestation": "node scripts/prepare-public-testnet-attestation.mjs",
     "verify:testnet-evidence": "node scripts/verify-public-testnet-evidence.mjs",
     "prepare:deployment-promotion": "node scripts/prepare-deployment-promotion-approval.mjs",
