@@ -39,12 +39,14 @@ Reviewed surfaces:
 | TS-M06 | Full BOLT 11 field and invoice-digest validation implemented | Isolated live decoder integration |
 | TS-M07 | Canonical identifiers, text-only rendering, safe logs, and response headers implemented | Production header/log verification |
 | TS-M08 | Blind pricing, selected-solver disclosure, redaction, and deletion policy implemented | Storage-layer deletion evidence |
-| TS-M09 | Immutable escrows, constrained gate, sealed registry, strict deployment policy, finalized topology observer, and local actual-gate alert ordering implemented | Deployed role-separated multisigs, independent providers/review, continuous event monitoring, and external alert delivery |
+| TS-M09 | Immutable escrows, constrained gate, sealed registry, strict deployment policy, finalized topology observer, local actual-gate alert ordering, and five-role signed release authorization implemented | Deployed role-separated multisigs and hardware owners, independently operated providers/reviewers, continuous event monitoring, and external alert delivery |
 | TS-M10 | Strict EOA SIWE and short rotated sessions implemented | Durable atomic production account storage, or disable accounts |
 | TS-M11 | Email delivery hard-disabled; pending data expires in 24 hours | None for swaps; a new reviewed release is required to send mail |
 | TS-M12 | Frozen one-shot wallet dispatch and unknown-outcome handling implemented | Trusted wallet confirmation remains the user security boundary |
 
 The authoritative phase gates are in [Launch checklist](./LAUNCH_CHECKLIST.md). Today only the public-prototype phase passes.
+
+Funding cannot be enabled by a configuration boolean. The local release boundary binds the deployment, policies, evidence, reviews, independent-operator counts, limits, reserves, and excluded features into one expiring record. Controller and guardian ERC-1271 approvals are checked at the same canonical finalized block through a configured provider quorum and against reviewed wallet code hashes; three separate operating/review roles sign the same EIP-712 digest. Only the module-private verified result can derive a funding capability, and it still requires a fresh release-bound open-gate and reconciliation snapshot. This prevents self-asserted release activation but does not prove provider independence, hardware custody, evidence quality, or reviewer independence; those remain external gates.
 
 ## Executive conclusion
 

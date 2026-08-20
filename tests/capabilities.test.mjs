@@ -32,6 +32,7 @@ test("cannot authorize web funding even with a nominal solver session", () => {
   });
   assert.equal(result.allowed, false);
   assert.match(result.reasons.join("; "), /web solver funding is disabled/);
+  assert.match(result.reasons.join("; "), /reviewed deployment evidence/);
 });
 
 test("denies a public user before any deployment condition matters", () => {

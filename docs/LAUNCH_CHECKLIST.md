@@ -40,6 +40,9 @@ No repository checkbox can substitute for deployed evidence. A gate becomes comp
   - [x] The completed clean-published run is bound to `c67d385cc00a6506ce7b8766d208c7c1ceb2b11b`, ran from `2026-08-20T12:08:42.039Z` through `2026-08-20T13:16:50.096Z`, passed all 29 campaigns, and has independently reconstructed digest `sha256:20c43996d638a6d95b4d51a3c388701d5e245096dd9dc3eb9b1c5b77f986afef`.
 - [ ] Deploy the gate, registry, and both escrows from the reviewed source commit. Seal the registry to exactly those escrows and prove every constructor immutable and runtime code hash.
 - [ ] Deploy distinct 2-of-3-or-stronger controller, guardian, and fee-recipient contract wallets; record owners, thresholds, hardware-key custody, and recovery contacts.
+  - [x] A local fail-closed release verifier requires one exact short-lived record and policy digest approved by five distinct identities. Controller and guardian approvals use ERC-1271 at the record's exact canonical finalized block, agree through the exact signed provider-set digest, and match pinned wallet runtime hashes; the Lightning operator, security reviewer, and incident commander sign the same EIP-712 digest.
+  - [x] A release-derived funding capability is unforgeable process provenance. The funding boundary rejects copied results, arbitrary feature toggles, nominal audit booleans, stale or extra-field runtime snapshots, a different deployment digest, a closed gate, or unreconciled balances. Capped mainnet additionally requires all operating evidence, reviews, prior-testnet evidence, exact limits, and finding disposition.
+  - [ ] Supply real Safe addresses, hardware-owner custody evidence, independent RPC providers, operator/reviewer identities, evidence artifacts, and retained signatures. Current repository tests are not those external facts.
 - [ ] Operate atomic persistent RFQ quotas, cancellation sequence, capacity epochs, solver reliability, idempotent Lightning requests, and one-shot payment authorization.
   - [x] Atomic settlement/action store, one-dispatch Lightning outbox, restart recovery, and live payer- and invoice-side lost-response reconciliation implemented.
   - [x] Connect the EVM claim outbox to exact signed bytes, canonical receipt/finality checks, and fail-closed reorg detection; local execution-client evidence passes.
@@ -72,6 +75,7 @@ No repository checkbox can substitute for deployed evidence. A gate becomes comp
 - [ ] Publish loss allocation, trust assumptions, solver liveness limits, privacy linkage, upgrade response, and support/escalation contacts.
 - [ ] Collect testnet reliability data and adopt either an objectively adjudicable solver bond or an explicit no-bond exclusion/limit policy reviewed for the beta.
 - [ ] Require a final release sign-off from engineering, security reviewer, Lightning operator, contract-wallet signers, and incident commander.
+  - [x] The repository verifies the corresponding controller, guardian, Lightning-operator, security-reviewer, and incident-commander approvals over one exact release record and refuses missing, duplicate, wrong-role, replayed, expired, or wrong-domain signatures. No production approvals exist.
 
 ## Public liquidity — intentionally out of scope
 

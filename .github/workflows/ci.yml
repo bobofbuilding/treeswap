@@ -65,6 +65,7 @@ jobs:
       - run: node --check lib/deployment-observer.mjs
       - run: node --check lib/deployment-policy.mjs
       - run: node --check lib/qualification-evidence.mjs
+      - run: node --check lib/release-authorization.mjs
       - run: node --check lib/solver-capability.mjs
       - run: node --check lib/solver-endpoint-transport.mjs
       - run: node --check lib/solver-capacity-readers.mjs

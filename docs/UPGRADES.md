@@ -22,7 +22,7 @@ Retirement never migrates a live swap. Users and solvers exit through the exact 
 2. Deploy the complete new immutable contract set in the closed state.
 3. Seal the registry to exactly the two new escrows and reproduce every constructor immutable and runtime code hash.
 4. Publish a release manifest containing the old and new versions, contract addresses, hashes, fee caps, risk caps, the normalized admission-policy digest, BIT observation, test evidence, and independent-review digests.
-5. Wait the governance review period. Controller, guardian, Lightning operator, security reviewer, and incident commander sign the same manifest.
+5. Wait the governance review period. Controller, guardian, Lightning operator, security reviewer, and incident commander sign the same canonical release record. The controller and guardian signatures must pass finalized ERC-1271 quorum verification against their reviewed runtime hashes; the other three signatures must recover the exact policy-pinned EIP-712 identities.
 6. Run a capped canary with operator-owned inventory. Do not route ordinary users automatically to the candidate.
 7. Open the candidate for a short expiring window. Keep the prior release available until the candidate is proven.
 8. Retire the prior release by stopping new exposure only. Monitor until all liabilities are zero.
@@ -47,3 +47,5 @@ Use distinct hardware-backed owners and thresholds. Any optional onchain release
 ## Emergency changes
 
 Emergency authority can only reduce risk: halt new quotes, reservations, and opens. It cannot change a beneficiary, fee, amount, hash, deadline, implementation, or existing exit path. A fix is a new reviewed release, not an emergency proxy upgrade.
+
+`lib/release-authorization.mjs` enforces this process before any operator-funding capability can exist. Mainnet authorization requires a prior release digest, complete public-testnet and operating evidence, every independent-review digest, exact caps and reserves, and disposition of all findings. The signed authorization expires; raising a cap or changing an evidence, feature, chain, gate, or deployment digest requires a new record and all five approvals.

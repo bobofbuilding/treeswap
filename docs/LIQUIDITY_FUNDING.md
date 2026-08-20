@@ -1,8 +1,8 @@
 # TreeSwap liquidity funding
 
-Status: admitted-solver implementation plan. No public funding endpoint or audited contract deployment exists.
+Status: admitted-solver implementation plan with a fail-closed signed release boundary. No public funding endpoint, deployed signer set, signed release record, or audited contract deployment exists.
 
-The product's Earn tab is a calculator, not a deposit surface. It creates no LP share, yield claim, pooled ownership, or wallet transaction. `V1_CAPABILITIES.webSolverFunding` remains disabled.
+The product's Earn tab is a calculator, not a deposit surface. It creates no LP share, yield claim, pooled ownership, or wallet transaction. `V1_CAPABILITIES.webSolverFunding` remains disabled. A future operator-funding feature can be derived only from the provenance-bound five-role release authorization described in [Release authorization boundary](./RELEASE_AUTHORIZATION.md); a caller cannot enable it with an application flag.
 
 ## Chosen model
 
@@ -76,9 +76,9 @@ Stopping new quotes must not disable valid claim, refund, or solver withdrawal p
 - [x] Full dual-signed selected-quote EIP-712 verification
 - [x] Complementary user-funded exact escrow
 - [x] BIT mainnet-fork pause, implementation-slot, both-direction settlement, and balance-delta tests
-- [ ] Controlled EVM reorg before and after Lightning authorization
+- [x] Controlled local EVM reorg before and after Lightning authorization, in both directions and on the pinned live-BIT fork
 - [x] Isolated signed Lightning regtest adapters with hold-invoice create, accept, settle, payment, role isolation, and restart-safe replay rejection
-- [ ] Full Lightning failure injection and durable coordinator reconciliation
+- [x] Full local Lightning failure injection and durable coordinator reconciliation, including restart, lost response, force close, stale chain, route failure, exact duplicates, and credential/TLS rotation
 - [x] Deterministic cross-clock timeout model and boundary tests
 - [x] Local dual-provider finalized BIT-vault reader and signed aggregate Lightning-capacity protocol
 - [ ] Deploy continuous reconciliation and capacity observations with independent operators

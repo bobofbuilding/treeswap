@@ -148,6 +148,9 @@ The coordinator state, crash semantics, live evidence, runtime qualification ris
 ## Gate 5 — deploy governance and operations
 
 - [ ] Deploy distinct 2-of-3-or-stronger controller, guardian, and fee-recipient contract wallets with hardware-backed owners and tested recovery.
+  - [x] Repository authorization now requires five distinct policy-pinned approval identities over one exact EIP-712 release record and policy digest. Controller and guardian ERC-1271 approvals must match reviewed runtime hashes at the record's exact canonical finalized block through its exact provider-set digest; number, hash, timestamp, and provider count must agree. The Lightning operator, security reviewer, and incident commander sign the same record directly.
+  - [x] Only a module-proven verified release can derive an operator-funding capability. Arbitrary feature flags, nominal audit/test booleans, copied verification objects, wrong manifests, stale runtime observations, closed gates, or unreconciled balances cannot authorize funding. Mainnet records require prior public-testnet evidence, every review and operations digest, exact caps, reserves, counts, and finding disposition.
+  - [ ] Reproduce this path with deployed Safe contracts, hardware-backed owners, independently operated providers, real evidence artifacts, and retained approval receipts. Provider labels or repository signatures alone do not establish operational independence.
 - [ ] Deploy the reviewed versioned contracts closed, seal the payment-hash registry, and reproduce every immutable and runtime code hash.
   - [x] A local finalized RPC rehearsal deploys the actual gate, registry, and both escrows closed; reconstructs exact role owners/thresholds, runtime hashes, BIT implementation slot, escrow bindings/limits, and registry set through two distinct local identities; and rejects a captured quorum plus production promotion. Its deterministic digest is `0xcab23fa2503054e2bc95c25238ac153f83f44f4f38b17cb316359972a4deef2a`.
   - [x] The rehearsal is included in the 29-campaign sealed checkpoint bound to clean published commit `44d929e708768d8bbe53087b415eda0f4ac75f43`; the local evidence independently reconstructs to `sha256:9a0bb29bc90d603327b56606603489247f2b3cab5f3be5ecad18d2cd8417d5e9`.
@@ -159,6 +162,7 @@ The coordinator state, crash semantics, live evidence, runtime qualification ris
   - [x] Local combined evidence opens the actual gate, closes quotes, submits a guardian halt, observes the gate closed before alert delivery, and retains the contract-suite guarantees that halts are absent from claim, refund, and withdrawal paths.
   - [ ] Repeat through production-like multisigs, external paging, redundant transaction delivery, deployed escrows, and outstanding testnet liabilities.
 - [ ] Run every incident in the incident runbook and attach the evidence to the release record.
+  - [x] The release-record schema has mandatory incident-drill, monitoring, backup/restore, provider, solver, loss-allocation, support, and finding-disposition digest slots; an operator-funding record cannot omit the deployed operating evidence, and a mainnet record cannot omit any review.
 
 ## Gate 6 — independent review
 
@@ -168,6 +172,7 @@ The coordinator state, crash semantics, live evidence, runtime qualification ris
 - [ ] Identity/privacy review: SIWE, optional wallet linking, retention, logs, and cross-network correlation.
 - [ ] Operational review: multisigs, secrets, monitoring, reconciliation, incident command, and loss allocation.
 - [ ] Pin every report digest and close or explicitly accept every finding before opening the release gate.
+  - [x] The local release verifier requires five distinct review digests plus a separate finding-disposition digest for capped mainnet and binds them into all five approvals. No reports or dispositions have yet been supplied.
 
 ## Gate 7 — capped mainnet beta
 
