@@ -1,10 +1,15 @@
-import { createPublicKey } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { createPrivateKey, createPublicKey } from "node:crypto";
+import { readFile, stat } from "node:fs/promises";
 import { createServer } from "node:http";
 import { LightningActionJournal } from "../../lib/lightning-action-journal.mjs";
 import { LightningChainProgressStore } from "../../lib/lightning-chain-progress.mjs";
 import { LightningAdapterRuntime } from "../../lib/lightning-adapter-runtime.mjs";
 import { LndRestClient, LndRestError } from "../../lib/lnd-rest-client.mjs";
+import {
+  buildLightningCapacityObservation,
+  signLightningCapacityObservation,
+  verifyLightningCapacityRequest,
+} from "../../lib/lightning-capacity-protocol.mjs";
 
 function required(name) {
   const value = process.env[name];
@@ -49,6 +54,21 @@ function send(response, statusCode, payload) {
 
 const role = required("ADAPTER_ROLE");
 const publicKey = createPublicKey(await readFile(required("COORDINATOR_PUBLIC_KEY_PATH")));
+const capacitySigningKeyPath = required("CAPACITY_SIGNING_PRIVATE_KEY_PATH");
+const [capacitySigningKeyPem, capacitySigningKeyStat] = await Promise.all([
+  readFile(capacitySigningKeyPath),
+  stat(capacitySigningKeyPath),
+]);
+if ((capacitySigningKeyStat.mode & 0o077) !== 0) throw new Error("capacity signing key must not be group/world accessible");
+const capacitySigningKey = createPrivateKey(capacitySigningKeyPem);
+if (capacitySigningKey.asymmetricKeyType !== "ed25519") throw new Error("capacity signing key must be Ed25519");
+const capacitySigningKeyId = required("CAPACITY_SIGNING_KEY_ID");
+const capacityRequestLifetimeSeconds = integer("MAX_CAPACITY_REQUEST_LIFETIME_SECONDS", 60);
+const capacityObservationTtlSeconds = integer("MAX_CAPACITY_OBSERVATION_TTL_SECONDS", 60);
+const capacityClockSkewSeconds = integer("MAX_CAPACITY_CLOCK_SKEW_SECONDS", 60);
+if (capacityRequestLifetimeSeconds === 0 || capacityObservationTtlSeconds === 0) {
+  throw new Error("capacity authority windows must be positive");
+}
 const lnd = await LndRestClient.create({
   baseUrl: required("LND_REST_URL"),
   macaroonPath: required("LND_MACAROON_PATH"),
@@ -81,6 +101,10 @@ const policy = Object.freeze({
   maximumRoutingFeeSats: integer("MAXIMUM_ROUTING_FEE_SATS", Number.MAX_SAFE_INTEGER),
   invoiceExpiryMarginSeconds: integer("INVOICE_EXPIRY_MARGIN_SECONDS", 86_400),
   minimumPaymentCltvBlocks: integer("MINIMUM_PAYMENT_CLTV_BLOCKS", 2_016),
+  minimumInboundReserveSats: bigint("MINIMUM_INBOUND_RESERVE_SATS"),
+  minimumOutboundReserveSats: bigint("MINIMUM_OUTBOUND_RESERVE_SATS"),
+  maximumAdvertisedInboundSats: bigint("MAXIMUM_ADVERTISED_INBOUND_SATS"),
+  maximumAdvertisedOutboundSats: bigint("MAXIMUM_ADVERTISED_OUTBOUND_SATS"),
 });
 const runtime = new LightningAdapterRuntime({
   role,
@@ -104,6 +128,34 @@ await runtime.initializeChainProgress();
 const server = createServer(async (request, response) => {
   if (request.method === "GET" && request.url === "/healthz") {
     send(response, 200, { status: "ready", role });
+    return;
+  }
+  if (request.method === "POST" && request.url === "/v1/capacity") {
+    if (request.headers["content-type"] !== "application/json") {
+      send(response, 415, { error: "content-type must be application/json" });
+      return;
+    }
+    try {
+      const now = Math.floor(Date.now() / 1_000);
+      const authorized = verifyLightningCapacityRequest({
+        envelope: await readJsonBody(request),
+        publicKey,
+        expectedKeyId: required("COORDINATOR_KEY_ID"),
+        now,
+        maxLifetimeSeconds: capacityRequestLifetimeSeconds,
+        maxClockSkewSeconds: capacityClockSkewSeconds,
+      });
+      const aggregate = await runtime.observeCapacity(authorized.direction);
+      const expiresAt = Math.min(authorized.expiresAt, aggregate.observedAt + capacityObservationTtlSeconds);
+      send(response, 200, signLightningCapacityObservation(buildLightningCapacityObservation({
+        request: authorized,
+        aggregate,
+        observerKeyId: capacitySigningKeyId,
+        expiresAt,
+      }), capacitySigningKey));
+    } catch {
+      send(response, 403, { error: "capacity unavailable" });
+    }
     return;
   }
   if (request.method !== "POST" || request.url !== "/v1/action") {

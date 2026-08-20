@@ -6,6 +6,7 @@ RUN npm ci --omit=dev --ignore-scripts \
   && npm cache clean --force
 COPY lib ./lib
 COPY infra/coordinator ./infra/coordinator
+COPY infra/lightning-adapter/capacity-smoke.mjs ./infra/lightning-adapter/capacity-smoke.mjs
 RUN mkdir -p /data /run/treeswap/credentials \
   && chown node:node /data /run/treeswap/credentials \
   && node -e "import('./lib/evm-action-runner.mjs')"

@@ -40,6 +40,7 @@
     "regtest:coordinator-smoke": "bash infra/regtest/lab.sh coordinator-smoke",
     "regtest:coordinator-invoice-smoke": "bash infra/regtest/lab.sh coordinator-invoice-smoke",
     "regtest:solver-node-proof-smoke": "bash infra/regtest/lab.sh solver-node-proof-smoke",
+    "regtest:solver-capacity-smoke": "bash infra/regtest/lab.sh solver-capacity-smoke",
     "qualify:local": "node scripts/run-local-qualification.mjs",
     "regtest:status": "bash infra/regtest/lab.sh status",
     "regtest:down": "bash infra/regtest/lab.sh down"

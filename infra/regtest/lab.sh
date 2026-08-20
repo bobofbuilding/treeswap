@@ -33,11 +33,31 @@ ensure_runtime_env() {
     node "$LAB_DIR/../../scripts/generate-lightning-coordinator-key.mjs" \
       "$STATE_DIR/coordinator-private.pem" "$STATE_DIR/coordinator-public.pem"
   fi
+  if [[ ! -f "$STATE_DIR/alice-capacity-private.pem" || ! -f "$STATE_DIR/alice-capacity-public.pem" ]]; then
+    node "$LAB_DIR/../../scripts/generate-lightning-coordinator-key.mjs" \
+      "$STATE_DIR/alice-capacity-private.pem" "$STATE_DIR/alice-capacity-public.pem"
+  fi
+  if [[ ! -f "$STATE_DIR/bob-capacity-private.pem" || ! -f "$STATE_DIR/bob-capacity-public.pem" ]]; then
+    node "$LAB_DIR/../../scripts/generate-lightning-coordinator-key.mjs" \
+      "$STATE_DIR/bob-capacity-private.pem" "$STATE_DIR/bob-capacity-public.pem"
+  fi
   if ! grep -q '^COORDINATOR_PRIVATE_KEY_PATH=' "$ENV_FILE"; then
     set_runtime_value COORDINATOR_PRIVATE_KEY_PATH "$STATE_DIR/coordinator-private.pem"
   fi
   if ! grep -q '^COORDINATOR_PUBLIC_KEY_PATH=' "$ENV_FILE"; then
     set_runtime_value COORDINATOR_PUBLIC_KEY_PATH "$STATE_DIR/coordinator-public.pem"
+  fi
+  if ! grep -q '^ALICE_CAPACITY_PRIVATE_KEY_PATH=' "$ENV_FILE"; then
+    set_runtime_value ALICE_CAPACITY_PRIVATE_KEY_PATH "$STATE_DIR/alice-capacity-private.pem"
+  fi
+  if ! grep -q '^ALICE_CAPACITY_PUBLIC_KEY_PATH=' "$ENV_FILE"; then
+    set_runtime_value ALICE_CAPACITY_PUBLIC_KEY_PATH "$STATE_DIR/alice-capacity-public.pem"
+  fi
+  if ! grep -q '^BOB_CAPACITY_PRIVATE_KEY_PATH=' "$ENV_FILE"; then
+    set_runtime_value BOB_CAPACITY_PRIVATE_KEY_PATH "$STATE_DIR/bob-capacity-private.pem"
+  fi
+  if ! grep -q '^BOB_CAPACITY_PUBLIC_KEY_PATH=' "$ENV_FILE"; then
+    set_runtime_value BOB_CAPACITY_PUBLIC_KEY_PATH "$STATE_DIR/bob-capacity-public.pem"
   fi
   if ! grep -q '^ADAPTER_CREDENTIAL_ISSUED_AT=' "$ENV_FILE"; then
     set_runtime_value ADAPTER_CREDENTIAL_ISSUED_AT "$(date +%s)"
@@ -2794,6 +2814,37 @@ smoke_solver_node_proof() {
   echo "Solver node-proof smoke passed: four exact challenges recovered the declared node, mutation failed, and role permissions stayed separated."
 }
 
+smoke_solver_capacity_readers() {
+  ensure_runtime_env
+  start_lab >/dev/null
+  local node_pubkey
+  compose --profile tools build coordinator-smoke >/dev/null
+
+  node_pubkey=$(compose exec -T alice lncli --network=regtest getinfo | jq -er '.identity_pubkey | ascii_downcase')
+  compose --profile adapter --profile tools run --rm -T --no-deps \
+    -e ADAPTER_URL=http://payer-adapter:3000 \
+    -e CAPACITY_DIRECTION=bit-to-lightning \
+    -e CAPACITY_OBSERVER_PUBLIC_KEY_PATH=/run/treeswap/credentials/alice-capacity-public.pem \
+    -e CAPACITY_OBSERVER_KEY_ID=alice-capacity-regtest-1 \
+    -e CAPACITY_EPOCH=1 \
+    -e LIGHTNING_NODE_PUBKEY="$node_pubkey" \
+    -e SOLVER_ID=0x1111111111111111111111111111111111111111 \
+    coordinator-smoke node infra/lightning-adapter/capacity-smoke.mjs
+
+  node_pubkey=$(compose exec -T bob lncli --network=regtest getinfo | jq -er '.identity_pubkey | ascii_downcase')
+  compose --profile adapter --profile tools run --rm -T --no-deps \
+    -e ADAPTER_URL=http://invoice-adapter:3000 \
+    -e CAPACITY_DIRECTION=lightning-to-bit \
+    -e CAPACITY_OBSERVER_PUBLIC_KEY_PATH=/run/treeswap/credentials/bob-capacity-public.pem \
+    -e CAPACITY_OBSERVER_KEY_ID=bob-capacity-regtest-1 \
+    -e CAPACITY_EPOCH=1 \
+    -e LIGHTNING_NODE_PUBKEY="$node_pubkey" \
+    -e SOLVER_ID=0x2222222222222222222222222222222222222222 \
+    coordinator-smoke node infra/lightning-adapter/capacity-smoke.mjs
+  unset node_pubkey
+  echo "Solver capacity-reader smoke passed: both directions returned fresh bounded aggregates; unsigned and cross-role reads failed closed."
+}
+
 status_lab() {
   ensure_runtime_env
   compose ps
@@ -2835,11 +2886,12 @@ case "${1:-}" in
   coordinator-smoke) smoke_coordinator_reconciliation ;;
   coordinator-invoice-smoke) smoke_coordinator_invoice_reconciliation ;;
   solver-node-proof-smoke) smoke_solver_node_proof ;;
+  solver-capacity-smoke) smoke_solver_capacity_readers ;;
   status) status_lab ;;
   down) stop_lab ;;
   destroy) destroy_lab ;;
   *)
-    echo "Usage: $0 {up|smoke|adapter-smoke|credential-smoke|credential-rotation-smoke|tls-rotation-smoke|invoice-fault-smoke|policy-fault-smoke|directional-capacity-smoke|daily-cap-smoke|stateless-init-smoke|production-duration-smoke|stale-chain-smoke|unsynced-chain-smoke|force-close-smoke|route-fault-smoke|htlc-cutoff-smoke|coordinator-smoke|coordinator-invoice-smoke|solver-node-proof-smoke|status|down|destroy}" >&2
+    echo "Usage: $0 {up|smoke|adapter-smoke|credential-smoke|credential-rotation-smoke|tls-rotation-smoke|invoice-fault-smoke|policy-fault-smoke|directional-capacity-smoke|daily-cap-smoke|stateless-init-smoke|production-duration-smoke|stale-chain-smoke|unsynced-chain-smoke|force-close-smoke|route-fault-smoke|htlc-cutoff-smoke|coordinator-smoke|coordinator-invoice-smoke|solver-node-proof-smoke|solver-capacity-smoke|status|down|destroy}" >&2
     exit 2
     ;;
 esac

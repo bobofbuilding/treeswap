@@ -17,6 +17,7 @@ const PREIMAGE = id("runtime-preimage").toLowerCase();
 const PAYMENT_HASH = sha256(PREIMAGE).toLowerCase();
 const BLOCK_HASH = "ab".repeat(32);
 const PREVIOUS_BLOCK_HASH = "cd".repeat(32);
+const NODE_PUBKEY = `02${"77".repeat(32)}`;
 const { privateKey, publicKey } = generateKeyPairSync("ed25519");
 
 const policy = {
@@ -51,6 +52,7 @@ class MockLnd {
   sendError = null;
   calls = [];
   info = {
+    identity_pubkey: NODE_PUBKEY,
     synced_to_chain: true,
     wallet_synced: true,
     best_header_timestamp: String(NOW - 30),
@@ -176,6 +178,24 @@ test("binds settlement to an accepted amount, safe HTLC, and matching preimage",
     requestId: id("wrong-settlement").toLowerCase(),
   });
   await assert.rejects(() => second.adapter.execute(wrong), /preimage does not match/);
+});
+
+test("exports only a conservative direction-bound aggregate capacity observation", async () => {
+  const { adapter } = await runtime("invoice", new MockLnd(), () => NOW + 1, {
+    minimumInboundReserveSats: "100000",
+    maximumAdvertisedInboundSats: "300000",
+  });
+  assert.deepEqual(await adapter.observeCapacity("lightning-to-bit"), {
+    nodePubkey: NODE_PUBKEY,
+    capacityEpoch: "7",
+    grossLightningSats: "500000",
+    inFlightSats: "0",
+    reserveSats: "100000",
+    budgetSats: "300000",
+    availableLightningSats: "300000",
+    observedAt: NOW + 1,
+  });
+  await assert.rejects(() => adapter.observeCapacity("bit-to-lightning"), /does not belong/);
 });
 
 test("journals an ambiguous payment without exposing it to automatic retry", async () => {

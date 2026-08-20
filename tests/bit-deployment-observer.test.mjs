@@ -204,3 +204,15 @@ test("JSON-RPC client permits plaintext only for a local fork", () => {
   assert.throws(() => createJsonRpcClient("http://rpc.example/secret"), /must use HTTPS/);
   assert.equal(typeof createJsonRpcClient("http://127.0.0.1:8545"), "function");
 });
+
+test("JSON-RPC client enforces a bounded transport timeout", async () => {
+  let signal;
+  const rpcCall = createJsonRpcClient("https://rpc.example/secret", async (_url, options) => {
+    signal = options.signal;
+    return { ok: true, json: async () => ({ jsonrpc: "2.0", id: 1, result: "0x1" }) };
+  }, { timeoutMs: 25 });
+  assert.equal(await rpcCall("eth_chainId", []), "0x1");
+  assert.equal(signal instanceof AbortSignal, true);
+  assert.equal(signal.aborted, false);
+  assert.throws(() => createJsonRpcClient("https://rpc.example/secret", globalThis.fetch, { timeoutMs: 0 }), /outside policy/);
+});

@@ -33,7 +33,7 @@ const policy = {
   maxClockSkewSeconds: 5,
 };
 
-async function envelope(overrides = {}) {
+async function envelope(overrides = {}, verifyingContract = LIGHTNING_TO_BIT) {
   const claims = {
     capabilityId: id("solver-capability:one"),
     direction: id("lightning-to-bit"),
@@ -52,7 +52,7 @@ async function envelope(overrides = {}) {
     ...claims,
     proofChallenge: solverCapabilityClaimsDigest(claims, {
       chainId: policy.chainId,
-      verifyingContract: LIGHTNING_TO_BIT,
+      verifyingContract,
     }),
   };
   const proofMessage = solverCapabilityProofMessage(declaration.proofChallenge);
@@ -62,7 +62,7 @@ async function envelope(overrides = {}) {
     endpointPublicKey,
     endpointSignature: sign(null, proofMessage, endpointKeys.privateKey).toString("base64"),
     evmSignature: await solver.signTypedData(
-      solverCapabilityDomain({ chainId: policy.chainId, verifyingContract: LIGHTNING_TO_BIT }),
+      solverCapabilityDomain({ chainId: policy.chainId, verifyingContract }),
       SOLVER_CAPABILITY_TYPES,
       declaration,
     ),
@@ -260,6 +260,41 @@ test("pins direction to the configured escrow and rejects cross-direction replay
     ...readers(),
   });
   assert.match(result.reasons.join("; "), /EVM signature is invalid/);
+});
+
+test("requires direction-specific inventory instead of a misleading two-sided claim", async () => {
+  const valid = await envelope({
+    declaration: {
+      direction: id("bit-to-lightning"),
+      availableBitWei: "0",
+      availableLightningSats: "250000",
+    },
+  }, BIT_TO_LIGHTNING);
+  const accepted = await verifySolverCapability({
+    envelope: valid,
+    now: NOW,
+    policy,
+    verifyLightningNodeSignature: verifier(),
+    ...readers({ availableBitWei: "0" }),
+  });
+  assert.equal(accepted.valid, true);
+  assert.equal(accepted.binding.direction, "bit-to-lightning");
+
+  const misleading = await envelope({
+    declaration: {
+      direction: id("bit-to-lightning"),
+      availableBitWei: "1",
+      availableLightningSats: "250000",
+    },
+  }, BIT_TO_LIGHTNING);
+  const rejected = await verifySolverCapability({
+    envelope: misleading,
+    now: NOW,
+    policy,
+    verifyLightningNodeSignature: verifier(),
+    ...readers({ availableBitWei: "1" }),
+  });
+  assert.match(rejected.reasons.join("; "), /must not claim solver BIT inventory/);
 });
 
 test("does not turn signed self-reported inventory into verified capacity", async () => {

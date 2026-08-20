@@ -23,6 +23,13 @@ x-adapter-policy: &adapter-policy
   MAXIMUM_ROUTING_FEE_SATS: "10"
   INVOICE_EXPIRY_MARGIN_SECONDS: "60"
   MINIMUM_PAYMENT_CLTV_BLOCKS: "18"
+  MINIMUM_INBOUND_RESERVE_SATS: "10000"
+  MINIMUM_OUTBOUND_RESERVE_SATS: "10000"
+  MAXIMUM_ADVERTISED_INBOUND_SATS: "100000"
+  MAXIMUM_ADVERTISED_OUTBOUND_SATS: "100000"
+  MAX_CAPACITY_REQUEST_LIFETIME_SECONDS: "30"
+  MAX_CAPACITY_OBSERVATION_TTL_SECONDS: "30"
+  MAX_CAPACITY_CLOCK_SKEW_SECONDS: "5"
 
 x-adapter-service: &adapter-service
   build:
@@ -160,13 +167,15 @@ services:
         cp -f /source/tls.cert /target/tls.cert;
         cp -f /source/treeswap/payer.macaroon /target/role.macaroon;
         cp -f /coordinator-public.pem /target/coordinator-public.pem;
-        chown 1000:1000 /target/tls.cert /target/role.macaroon /target/coordinator-public.pem;
-        chmod 0400 /target/role.macaroon;
+        cp -f /capacity-private.pem /target/capacity-private.pem;
+        chown 1000:1000 /target/tls.cert /target/role.macaroon /target/coordinator-public.pem /target/capacity-private.pem;
+        chmod 0400 /target/role.macaroon /target/capacity-private.pem;
         chmod 0444 /target/tls.cert /target/coordinator-public.pem
     volumes:
       - alice-data:/source:ro
       - alice-payer-credentials:/target
       - ${COORDINATOR_PUBLIC_KEY_PATH}:/coordinator-public.pem:ro
+      - ${ALICE_CAPACITY_PRIVATE_KEY_PATH}:/capacity-private.pem:ro
     networks: [regtest]
 
   export-bob-invoice-credential:
@@ -179,13 +188,15 @@ services:
         cp -f /source/tls.cert /target/tls.cert;
         cp -f /source/treeswap/invoice.macaroon /target/role.macaroon;
         cp -f /coordinator-public.pem /target/coordinator-public.pem;
-        chown 1000:1000 /target/tls.cert /target/role.macaroon /target/coordinator-public.pem;
-        chmod 0400 /target/role.macaroon;
+        cp -f /capacity-private.pem /target/capacity-private.pem;
+        chown 1000:1000 /target/tls.cert /target/role.macaroon /target/coordinator-public.pem /target/capacity-private.pem;
+        chmod 0400 /target/role.macaroon /target/capacity-private.pem;
         chmod 0444 /target/tls.cert /target/coordinator-public.pem
     volumes:
       - bob-data:/source:ro
       - bob-invoice-credentials:/target
       - ${COORDINATOR_PUBLIC_KEY_PATH}:/coordinator-public.pem:ro
+      - ${BOB_CAPACITY_PRIVATE_KEY_PATH}:/capacity-private.pem:ro
     networks: [regtest]
 
   export-coordinator-private-key:
@@ -196,10 +207,14 @@ services:
     command:
       - >-
         cp -f /coordinator-private.pem /target/coordinator-private.pem;
-        chown 1000:1000 /target/coordinator-private.pem;
+        cp -f /alice-capacity-public.pem /target/alice-capacity-public.pem;
+        cp -f /bob-capacity-public.pem /target/bob-capacity-public.pem;
+        chown 1000:1000 /target/coordinator-private.pem /target/alice-capacity-public.pem /target/bob-capacity-public.pem;
         chmod 0400 /target/coordinator-private.pem
     volumes:
       - ${COORDINATOR_PRIVATE_KEY_PATH}:/coordinator-private.pem:ro
+      - ${ALICE_CAPACITY_PUBLIC_KEY_PATH}:/alice-capacity-public.pem:ro
+      - ${BOB_CAPACITY_PUBLIC_KEY_PATH}:/bob-capacity-public.pem:ro
       - coordinator-credentials:/target
     networks: [regtest]
 
@@ -217,6 +232,8 @@ services:
       LND_TLS_CERT_FINGERPRINT: ${ALICE_TLS_FINGERPRINT}
       COORDINATOR_PUBLIC_KEY_PATH: /run/treeswap/credentials/coordinator-public.pem
       COORDINATOR_KEY_ID: regtest-coordinator-1
+      CAPACITY_SIGNING_PRIVATE_KEY_PATH: /run/treeswap/credentials/capacity-private.pem
+      CAPACITY_SIGNING_KEY_ID: alice-capacity-regtest-1
       ADAPTER_JOURNAL_PATH: /data/actions.jsonl
       CHAIN_PROGRESS_PATH: /data/chain-progress.json
       CREDENTIAL_ID: alice-payer-regtest
@@ -240,6 +257,8 @@ services:
       LND_TLS_CERT_FINGERPRINT: ${BOB_TLS_FINGERPRINT}
       COORDINATOR_PUBLIC_KEY_PATH: /run/treeswap/credentials/coordinator-public.pem
       COORDINATOR_KEY_ID: regtest-coordinator-1
+      CAPACITY_SIGNING_PRIVATE_KEY_PATH: /run/treeswap/credentials/capacity-private.pem
+      CAPACITY_SIGNING_KEY_ID: bob-capacity-regtest-1
       ADAPTER_JOURNAL_PATH: /data/actions.jsonl
       CHAIN_PROGRESS_PATH: /data/chain-progress.json
       CREDENTIAL_ID: bob-invoice-regtest

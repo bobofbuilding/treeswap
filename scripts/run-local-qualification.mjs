@@ -61,8 +61,11 @@ const configurationFiles = [
   "lib/coordinator-store.mjs",
   "lib/coordinator-action-runner.mjs",
   "lib/evm-action-runner.mjs",
+  "lib/bit-deployment-observer.mjs",
   "lib/solver-capability.mjs",
   "lib/solver-endpoint-transport.mjs",
+  "lib/solver-capacity-readers.mjs",
+  "lib/lightning-capacity-protocol.mjs",
   "lib/settlement-policy.mjs",
 ];
 const configurationHashes = {};
@@ -97,6 +100,7 @@ const campaigns = [
   ["lightning:route-and-duplicate-faults", "npm", ["run", "regtest:route-fault-smoke"]],
   ["lightning:htlc-cutoff", "npm", ["run", "regtest:htlc-cutoff-smoke"]],
   ["solver:lightning-node-proof", "npm", ["run", "regtest:solver-node-proof-smoke"]],
+  ["solver:capacity-readers", "npm", ["run", "regtest:solver-capacity-smoke"]],
   ["coordinator:payer-lost-response", "npm", ["run", "regtest:coordinator-smoke"]],
   ["coordinator:invoice-lost-response", "npm", ["run", "regtest:coordinator-invoice-smoke"]],
 ];
