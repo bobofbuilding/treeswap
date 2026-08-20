@@ -1,6 +1,6 @@
 # Permissionless and automatic operation
 
-Status: target architecture. Local atomic RFQ/admission persistence, cryptographic solver capability verification, authenticated endpoint transport, and concrete capacity-reader protocols are implemented, but the current prototype does not yet open permissionless solver admission or execute swaps. Independently operated deployments, the complete solver daemon, deployed shared persistence, independent solvers/relays, and testnet fault evidence remain required.
+Status: target architecture. Local atomic RFQ/admission persistence, cryptographic solver capability verification, authenticated endpoint transport, concrete capacity-reader protocols, and a durable-state daemon planner are implemented, but the current prototype does not yet open permissionless solver admission or execute swaps. Independently operated deployments, reviewed private-packet/secret rehydration, complete daemon wiring, deployed shared persistence, independent solvers/relays, and testnet fault evidence remain required.
 
 ## Recommended boundary
 
@@ -47,6 +47,8 @@ observe intent
 ```
 
 Every transition must be durable before its external side effect. A retry uses the same request ID and exact payload; it never creates a second invoice, payment, reservation, or claim. An ambiguous Lightning or EVM response enters `UNKNOWN` and is reconciled before another value-moving call.
+
+The repository planner derives exactly one next step from the coordinator database. It has no signer, RPC, credential, or finality authority: every proposed Lightning dispatch must still pass the canonical/finalized escrow authorization immediately before the adapter call, and every EVM claim must still use the bound one-transaction outbox. A successful payment lookup returns the bound preimage only in memory, including after restart; it never enters coordinator storage. Full unattended operation remains blocked until the daemon can rehydrate the exact signed deadlines, invoice/private packet, and solver secret from a separately reviewed least-privilege provider.
 
 ## User automation
 

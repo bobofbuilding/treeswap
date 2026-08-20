@@ -52,8 +52,13 @@ const configurationFiles = [
   "infra/lightning-adapter/server.mjs",
   "infra/coordinator/Dockerfile",
   "infra/coordinator/runtime/package-lock.json",
+  "infra/coordinator/smoke.mjs",
+  "infra/coordinator/invoice-smoke.mjs",
+  "infra/coordinator/disk-full-smoke.mjs",
   "infra/evm/escrow-reorg-smoke.mjs",
+  "scripts/run-coordinator-runtime-smoke.sh",
   "scripts/run-escrow-reorg-smoke.sh",
+  "scripts/run-local-qualification.mjs",
   "lib/lightning-adapter-policy.mjs",
   "lib/lightning-adapter-runtime.mjs",
   "lib/lightning-chain-progress.mjs",
@@ -66,6 +71,7 @@ const configurationFiles = [
   "lib/solver-endpoint-transport.mjs",
   "lib/solver-capacity-readers.mjs",
   "lib/lightning-capacity-protocol.mjs",
+  "lib/solver-daemon-planner.mjs",
   "lib/settlement-policy.mjs",
 ];
 const configurationHashes = {};

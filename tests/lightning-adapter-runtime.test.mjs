@@ -87,6 +87,16 @@ class MockLnd {
       payment_preimage: PREIMAGE.slice(2),
     };
   }
+  async trackPayment() {
+    this.calls.push(["track"]);
+    return {
+      status: "SUCCEEDED",
+      payment_hash: PAYMENT_HASH.slice(2),
+      value_sat: "10000",
+      fee_sat: "1",
+      payment_preimage: PREIMAGE.slice(2),
+    };
+  }
   async lookupInvoice() {
     return {
       state: "ACCEPTED",
@@ -165,6 +175,35 @@ test("pays only an exact signed and decoded invoice, then permanently rejects re
   assert.equal(executed.result.preimage, PREIMAGE);
   assert.equal(journal.state(envelope.payload.requestId), "succeeded");
   await assert.rejects(() => adapter.execute(envelope), /already used/);
+});
+
+test("returns the bound preimage only for a successful authenticated payment lookup", async () => {
+  const { adapter } = await runtime("payer");
+  const envelope = authorization("/routerrpc.Router/TrackPaymentV2", {}, {
+    requestId: id("tracked-payment-preimage").toLowerCase(),
+  });
+  const executed = await adapter.execute(envelope);
+  assert.deepEqual(executed.result, {
+    status: "SUCCEEDED",
+    paymentHash: PAYMENT_HASH,
+    amountSats: "10000",
+    feeSats: "1",
+    preimage: PREIMAGE,
+  });
+
+  const pendingLnd = new MockLnd();
+  pendingLnd.trackPayment = async () => ({
+    status: "IN_FLIGHT",
+    payment_hash: PAYMENT_HASH.slice(2),
+    value_sat: "10000",
+    fee_sat: "0",
+    payment_preimage: PREIMAGE.slice(2),
+  });
+  const pending = await runtime("payer", pendingLnd);
+  const pendingResult = await pending.adapter.execute(authorization("/routerrpc.Router/TrackPaymentV2", {}, {
+    requestId: id("tracked-payment-pending").toLowerCase(),
+  }));
+  assert.equal("preimage" in pendingResult.result, false);
 });
 
 test("binds settlement to an accepted amount, safe HTLC, and matching preimage", async () => {

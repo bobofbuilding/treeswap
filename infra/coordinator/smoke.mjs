@@ -1,8 +1,9 @@
-import { createPrivateKey, randomBytes } from "node:crypto";
+import { createHash, createPrivateKey, randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import {
   dispatchLightningAction,
   lightningActionCommitment,
+  readConfirmedLightningPaymentProof,
   reconcileLightningAction,
 } from "../../lib/coordinator-action-runner.mjs";
 import { CoordinatorStore, coordinatorCommitmentDigest } from "../../lib/coordinator-store.mjs";
@@ -18,6 +19,22 @@ function required(name) {
 
 function randomHash() {
   return `0x${randomBytes(32).toString("hex")}`;
+}
+
+function paymentHashFor(preimage) {
+  return `0x${createHash("sha256").update(Buffer.from(preimage.slice(2), "hex")).digest("hex")}`;
+}
+
+async function databaseContains(databasePath, needles) {
+  for (const suffix of ["", "-wal", "-shm"]) {
+    try {
+      const bytes = await readFile(`${databasePath}${suffix}`);
+      if (needles.some((needle) => bytes.includes(needle))) return true;
+    } catch (error) {
+      if (error?.code !== "ENOENT") throw error;
+    }
+  }
+  return false;
 }
 
 function exactInput(value) {
@@ -144,9 +161,32 @@ if (reconciled.disposition !== "confirmed" || reconciled.action.dispatchCount !=
     `read-only reconciliation did not confirm exactly one dispatch: disposition=${reconciled.disposition}, actionState=${reconciled.action.state}, dispatchCount=${reconciled.action.dispatchCount}`,
   );
 }
-const storedBytes = await readFile(databasePath);
-if (storedBytes.includes(Buffer.from(input.paymentRequest))) throw new Error("coordinator persisted the raw invoice");
+const recoveredPreimage = reconciled.transientResult?.preimage;
+if (!BYTES32.test(String(recoveredPreimage)) || paymentHashFor(recoveredPreimage) !== paymentHash) {
+  throw new Error("read-only reconciliation did not recover the exact payment preimage");
+}
 store.close();
+store = await CoordinatorStore.open(databasePath);
+const restartedProof = await readConfirmedLightningPaymentProof({
+  store,
+  actionId: action.actionId,
+  requestId: randomHash(),
+  privateKey,
+  keyId: required("COORDINATOR_KEY_ID"),
+  adapterUrl: "http://payer-adapter:3000",
+  nowSeconds: () => Math.floor(Date.now() / 1_000),
+});
+if (restartedProof.preimage !== recoveredPreimage) {
+  throw new Error("confirmed payment proof changed after coordinator restart");
+}
+store.close();
+if (await databaseContains(databasePath, [
+  Buffer.from(input.paymentRequest),
+  Buffer.from(recoveredPreimage),
+  Buffer.from(recoveredPreimage.slice(2), "hex"),
+])) {
+  throw new Error("coordinator persisted the raw invoice or payment preimage");
+}
 
 const evidence = {
   schema: "treeswap.coordinator-regtest-smoke.v1",
@@ -157,12 +197,14 @@ const evidence = {
   reconciliationState: "CONFIRMED",
   dispatchCount: 1,
   rawInvoicePersisted: false,
+  rawPreimagePersisted: false,
   evidenceDigest: coordinatorCommitmentDigest({
     schema: "treeswap.coordinator-regtest-smoke.v1",
     status: "passed",
     amountSats: input.amountSats,
     dispatchCount: 1,
     rawInvoicePersisted: false,
+    rawPreimagePersisted: false,
   }),
 };
 process.stdout.write(`${JSON.stringify(evidence)}\n`);

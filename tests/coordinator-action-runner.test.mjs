@@ -5,6 +5,7 @@ import { id, sha256 } from "ethers";
 import {
   dispatchLightningAction,
   lightningActionCommitment,
+  readConfirmedLightningPaymentProof,
   reconcileLightningAction,
 } from "../lib/coordinator-action-runner.mjs";
 import { CoordinatorStore } from "../lib/coordinator-store.mjs";
@@ -277,15 +278,96 @@ test("reconciles an unknown payment through a fresh signed read-only tracking re
         assert.equal(envelope.payload.method, "/routerrpc.Router/TrackPaymentV2");
         assert.deepEqual(envelope.payload.operation, {});
         return new Response(JSON.stringify({
-          result: { status: "SUCCEEDED", paymentHash: PAYMENT_HASH, amountSats: "10000", feeSats: "2" },
+          result: {
+            status: "SUCCEEDED",
+            paymentHash: PAYMENT_HASH,
+            amountSats: "10000",
+            feeSats: "2",
+            preimage: PREIMAGE,
+          },
           audit: { decision: "allow" },
         }), { status: 200 });
       },
     });
     assert.equal(calls, 1);
     assert.equal(result.disposition, "confirmed");
+    assert.equal(result.transientResult.preimage, PREIMAGE);
     assert.equal(store.getAction(action.actionId).state, "CONFIRMED");
     assert.equal(store.getSettlement(value.settlementId).reconciliationRequired, false);
+  } finally {
+    store.close();
+  }
+});
+
+test("rejects a successful payment lookup without the exact bound preimage", async () => {
+  for (const tracked of [
+    { status: "SUCCEEDED", paymentHash: PAYMENT_HASH, amountSats: "10000", feeSats: "2" },
+    {
+      status: "SUCCEEDED",
+      paymentHash: PAYMENT_HASH,
+      amountSats: "10000",
+      feeSats: "2",
+      preimage: id("wrong-tracked-preimage").toLowerCase(),
+    },
+  ]) {
+    const unknown = await makeUnknown(`reconcile-invalid-preimage-${"preimage" in tracked}`);
+    try {
+      await assert.rejects(() => reconcileLightningAction({
+        store: unknown.store,
+        actionId: unknown.action.actionId,
+        reconciliationRequestId: hash(`reconcile-invalid-preimage-${"preimage" in tracked}:request`),
+        privateKey,
+        keyId: "coordinator-test-1",
+        adapterUrl: "http://payer-adapter:3000",
+        nowSeconds: () => NOW + 30,
+        requestImpl: async () => new Response(JSON.stringify({ result: tracked, audit: {} }), { status: 200 }),
+      }), /proof was invalid/);
+      assert.equal(unknown.store.getAction(unknown.action.actionId).state, "UNKNOWN");
+    } finally {
+      unknown.store.close();
+    }
+  }
+});
+
+test("recovers a confirmed payment preimage after restart without changing durable state", async () => {
+  const { store, action } = await setup("confirmed-proof-recovery");
+  try {
+    await dispatchLightningAction({
+      store,
+      actionId: action.actionId,
+      operation: operation(),
+      privateKey,
+      keyId: "coordinator-test-1",
+      adapterUrl: "http://payer-adapter:3000",
+      nowSeconds: () => NOW + 21,
+      requestImpl: async () => successResponse(),
+    });
+    const before = store.getAction(action.actionId);
+    const proof = await readConfirmedLightningPaymentProof({
+      store,
+      actionId: action.actionId,
+      requestId: hash("confirmed-proof-recovery:read"),
+      privateKey,
+      keyId: "coordinator-test-1",
+      adapterUrl: "http://payer-adapter:3000",
+      nowSeconds: () => NOW + 30,
+      requestImpl: async (_url, options) => {
+        const envelope = JSON.parse(options.body);
+        assert.equal(envelope.payload.method, "/routerrpc.Router/TrackPaymentV2");
+        return new Response(JSON.stringify({
+          result: {
+            status: "SUCCEEDED",
+            paymentHash: PAYMENT_HASH,
+            amountSats: "10000",
+            feeSats: "2",
+            preimage: PREIMAGE,
+          },
+          audit: {},
+        }), { status: 200 });
+      },
+    });
+    assert.equal(proof.preimage, PREIMAGE);
+    assert.deepEqual(store.getAction(action.actionId), before);
   } finally {
     store.close();
   }
