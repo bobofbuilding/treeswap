@@ -43,7 +43,7 @@ Email preferences are attached to the signed-in wallet account, never included i
 
 ## Security status
 
-This repository is not audited and the bridge is not ready for real funds. The design removes the shared public pool, public order book, and rewards from v1. Immutable escrows, deterministic timeout policy, signed quote selection, a three-key short-lived solver capability verifier, an authenticated replay-resistant solver endpoint protocol, fail-closed risk gates, a pinned BIT mainnet-fork campaign, isolated invoice/payer LND adapters with live credential, node-possession, and hold-invoice fault evidence, a crash-safe Lightning coordinator, and an exact-transaction EVM claim outbox now pass locally. Deployed solver endpoints and concrete capacity readers, independent-provider evidence, public-testnet finality and chain/channel campaigns, the complete solver daemon, deployed multisigs, monitoring, and independent review remain release-blocking. Direct sends are ordinary wallet payments rather than bridge transactions, but they are irreversible and depend on the user's wallet, destination, token contract, and invoice validation.
+This repository is not audited and the bridge is not ready for real funds. The design removes the shared public pool, public order book, and rewards from v1. Immutable escrows, deterministic timeout policy, signed quote selection, a three-key short-lived solver capability verifier, an authenticated replay-resistant solver endpoint protocol, a dual-provider finalized BIT-vault reader, privacy-minimized signed Lightning-capacity observations, fail-closed risk gates, a pinned BIT mainnet-fork campaign, isolated invoice/payer LND adapters with live credential, node-possession, and hold-invoice fault evidence, a crash-safe Lightning coordinator, and an exact-transaction EVM claim outbox now pass locally. Production deployment of those readers and endpoints, independent-provider/operator evidence, public-testnet finality and chain/channel campaigns, the complete solver daemon, deployed multisigs, monitoring, and independent review remain release-blocking. Direct sends are ordinary wallet payments rather than bridge transactions, but they are irreversible and depend on the user's wallet, destination, token contract, and invoice validation.
 
 ## Local preview
 
@@ -69,7 +69,7 @@ MAINNET_RPC_URL=<secret> npm run test:fork
 
 - Controlled EVM reorg/finality campaigns and two authenticated provider observations
 - Complete the coordinator's solver daemon, public-testnet EVM outbox evidence, backup/restore drills, and alert delivery
-- Deploy the solver endpoint protocol, concrete capacity readers, complete daemon, and independent quote-delivery paths
+- Deploy the implemented solver endpoint and capacity-reader protocols, complete daemon, and independent quote-delivery paths
 - Bridge-escrow wallet integration with exact intent authorization and explicit approval boundaries
 - Keep email delivery disabled; a later mail release requires ownership verification, unsubscribe, rate limits, auditing, and sender authentication
 - Reconciliation, proxy monitoring, live incident drills using [`docs/INCIDENT_RUNBOOK.md`](docs/INCIDENT_RUNBOOK.md), and external review

@@ -1,6 +1,6 @@
 # Solver endpoint protocol
 
-Status: the local authenticated request/response protocol and fail-closed client are implemented and qualified. No public solver endpoint, production capacity reader, or permissionless admission service is deployed.
+Status: the local authenticated endpoint, finalized BIT-vault reader, and privacy-minimized Lightning-capacity protocol are implemented and qualified. No public solver endpoint, independently operated production reader, or permissionless admission service is deployed.
 
 ## Purpose
 
@@ -46,8 +46,8 @@ Signed self-report can only reduce the admitted amount; it never substitutes for
 
 ## Remaining deployment gates
 
-- implement and review the finalized BIT inventory reader;
-- implement a role-limited, privacy-minimized Lightning capacity reader;
+- independently review the finalized BIT inventory reader and its pinned deployment manifest;
+- deploy two independently operated EVM providers and a separately keyed, role-limited Lightning observation boundary;
 - deploy the endpoint behind production TLS and network egress controls;
 - connect the complete durable solver state machine and shared coordinator service;
 - run at least two independently operated testnet solvers and multiple delivery paths;
@@ -55,3 +55,11 @@ Signed self-report can only reduce the admitted amount; it never substitutes for
 - obtain independent security and operational review.
 
 Until those gates have release evidence, the web product must not publish permissionless executable quotes or authorize funded swaps.
+
+## Local reader evidence
+
+`createFinalizedBitVaultInventoryReader` compares two independently labeled and function-distinct providers at their common finalized height. Each provider must prove the chosen block finalized and canonical, and every code, implementation-slot, immutable, token-state, vault-accounting, and solver-balance read is bound to the exact block hash with EIP-1898. Lightning → BIT admits only solver-owned available vault inventory after a configured reserve; BIT → Lightning admits zero solver BIT because the user funds the direction-specific user escrow.
+
+The Lightning adapter accepts only a fresh, short-lived coordinator-signed capacity request bound to the exact capability digest, epoch, direction, solver, and LND node. A distinct capacity key signs a response containing gross directional sats, in-flight sats, reserve, budget, and admitted availability—never channel identifiers. The coordinator verifies exact deductions, freshness, key separation, and request binding. This authenticates an observer's statement about private LND state; it does not turn private channel liquidity into a publicly verifiable proof.
+
+Published commit `67655f859ec70c191501d073e75cba808ce06def` passed the live two-direction Lightning-capacity campaign, the adversarial dual-provider BIT-reader suite, and all 26 local qualification campaigns. Its independently rebuilt local-only evidence digest is `sha256:0c20cb3ea69ca7eb56ed5f79b215ad317523908ee09436ac4203966c90ac3d58`; [hosted CI](https://github.com/bobofbuilding/treeswap/actions/runs/32323948108) also passed. This is repository and local-regtest evidence, not independently operated Ethereum-provider evidence, production capacity, or funding authorization.

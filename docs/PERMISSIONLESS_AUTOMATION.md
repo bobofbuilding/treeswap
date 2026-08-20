@@ -1,6 +1,6 @@
 # Permissionless and automatic operation
 
-Status: target architecture. Local atomic RFQ/admission persistence, cryptographic solver capability verification, and authenticated endpoint request/response transport are implemented, but the current prototype does not yet open permissionless solver admission or execute swaps. Deployed endpoints and capacity readers, the complete solver daemon, deployed shared persistence, independent solvers/relays, and testnet fault evidence remain required.
+Status: target architecture. Local atomic RFQ/admission persistence, cryptographic solver capability verification, authenticated endpoint transport, and concrete capacity-reader protocols are implemented, but the current prototype does not yet open permissionless solver admission or execute swaps. Independently operated deployments, the complete solver daemon, deployed shared persistence, independent solvers/relays, and testnet fault evidence remain required.
 
 ## Recommended boundary
 
@@ -61,4 +61,4 @@ Unknown solvers may compete immediately, but their executable exposure starts sm
 
 The local verifier requires three independent proofs before a solver snapshot reaches admission: an EVM EIP-712 signature over the exact declaration, an Ed25519 endpoint-key signature, and an LND node signature whose recovered public key exactly matches the declaration. The endpoint client supplies a fresh 32-byte challenge, requires an exact short-lived signed response, refuses redirects and private or mixed DNS, pins the public connection address while preserving TLS hostname verification, and applies a hard transport deadline. It then requires fresh independently observed BIT inventory and Lightning capacity; signed self-report alone is never treated as capacity. The durable store carries the capability expiry and rejects a firm quote that outlives it. [Solver endpoint protocol](./SOLVER_ENDPOINT.md) defines the boundary.
 
-The permissionless capability must remain disabled until the local protocol is deployed with concrete capacity readers, the complete solver daemon and relay federation are operating, per-solver limits are reviewed, and at least two independent testnet solvers pass the failure campaign.
+The permissionless capability must remain disabled until the endpoint and reader protocols are deployed with independent operators, the complete solver daemon and relay federation are operating, per-solver limits are reviewed, and at least two independent testnet solvers pass the failure campaign. A signed Lightning aggregate authenticates its observer but cannot make private channel state publicly trustless, so unknown solvers remain subject to tiny caps, reconciliation, and objective history.

@@ -80,6 +80,7 @@ Stopping new quotes must not disable valid claim, refund, or solver withdrawal p
 - [x] Isolated signed Lightning regtest adapters with hold-invoice create, accept, settle, payment, role isolation, and restart-safe replay rejection
 - [ ] Full Lightning failure injection and durable coordinator reconciliation
 - [x] Deterministic cross-clock timeout model and boundary tests
-- [ ] Reconciliation service and signed capacity heartbeats
+- [x] Local dual-provider finalized BIT-vault reader and signed aggregate Lightning-capacity protocol
+- [ ] Deploy continuous reconciliation and capacity observations with independent operators
 - [ ] Two independent solver deployments
 - [ ] External review and tiny testnet limits

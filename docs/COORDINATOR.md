@@ -1,6 +1,6 @@
 # Durable coordinator boundary
 
-Status: the atomic settlement and RFQ/admission store, short-lived solver capability verifier, authenticated solver endpoint protocol, exact signed Lightning dispatcher, EVM claim outbox, restart recovery, verified backup/fresh-path restore, startup integrity refusal, aggregate metrics, live Lightning lost-response campaigns, and local execution-client claim/reorg campaigns are implemented. Both actual direction-specific escrows now pass block replacement before authorization, after authorization, and after claim. The full solver daemon, deployed endpoints and capacity readers, deployed-volume backup/restore and retention drill, alert delivery, live BIT/public-chain finality evidence, and independent review remain testnet gates.
+Status: the atomic settlement and RFQ/admission store, short-lived solver capability verifier, authenticated solver endpoint protocol, concrete capacity-reader protocols, exact signed Lightning dispatcher, EVM claim outbox, restart recovery, verified backup/fresh-path restore, startup integrity refusal, aggregate metrics, live Lightning lost-response campaigns, and local execution-client claim/reorg campaigns are implemented. Both actual direction-specific escrows now pass block replacement before authorization, after authorization, and after claim. The full solver daemon, independently operated endpoint/reader deployments, deployed-volume backup/restore and retention drill, alert delivery, live BIT/public-chain finality evidence, and independent review remain testnet gates.
 
 ## Separate trust domain
 
@@ -100,7 +100,7 @@ It deploys a test-only claim surface to a fresh Anvil chain, binds and broadcast
 Before funded testnet:
 
 1. prove finalized EVM claim success, reorgs before and after authorization/claim, dropped transactions, nonce contention, RPC disagreement, and relayer-key rotation against controlled forks and public testnet;
-2. deploy the implemented capability/endpoint protocol with concrete onchain/Lightning capacity readers, connect the complete solver state machine to the ledger, then qualify it on the deployed stable persistence service;
+2. deploy the implemented capability, endpoint, and reader protocols with independent operators, connect the complete solver state machine to the ledger, then qualify it on the deployed stable persistence service;
 3. repeat storage exhaustion, abrupt-kill/WAL recovery, corruption, and backup/restore against the deployed persistent volume; add encrypted off-site retention, measured recovery objectives, host-power-loss and coordinator-key-rotation drills;
 4. deploy structured metrics, alert routing, and automatic new-exposure halt while preserving exits;
 5. operate against independent relays and at least two independently run testnet solvers; and
