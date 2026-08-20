@@ -39,6 +39,8 @@ The campaign deploys the actual `TreeSwapOpenGate` with distinct test-only contr
 
 The deterministic campaign digest is `0x74481a51a58446577c0b6ec3843b286abdd66af13b11e02a830881d3f03f2c32`. The contract suite separately proves an emergency halt blocks new reservations/opens while existing claims, refunds, and solver withdrawals remain callable.
 
+Published checkpoint `4b40a3ca682b63f8d1fec11fa1900448d33676f5` passed 233 application/security tests, 81 direct pinned-runtime tests plus the bounded-filesystem rollback campaign, 68 contract tests, both web builds, this actual-gate campaign, and [hosted CI](https://github.com/bobofbuilding/treeswap/actions/runs/32345936040). All 28 sealed local qualification campaigns ran from `2026-08-20T07:52:32.228Z` through `2026-08-20T08:59:56.235Z`; independent canonical reconstruction matches `sha256:2644372eebed253ae9649c625a770953ed8c90b9d8da7876cb69ec514e265450`. The ignored mode-`0600` record is bound to clean published `main` and explicitly records local-only scope, a simulated EVM reservation, no public testnet, no production infrastructure, no independent review, and no funding authorization.
+
 ## Explicit limitations
 
 This is a local one-process harness with a test-only alert sink and local guardian signer. It is not a continuously scheduled service, independent observation network, public paging provider, production multisig, redundant transaction broadcaster, or incident drill. A process that is not running cannot submit a halt; production therefore also needs supervised redundant instances and a short reviewed gate-attestation lifetime that bounds monitor-outage exposure.
