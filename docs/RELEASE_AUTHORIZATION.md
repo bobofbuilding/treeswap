@@ -40,6 +40,12 @@ Successful verification is module-private provenance, not a copyable JSON claim.
 
 Nominal booleans such as `audited: true`, an arbitrary `webSolverFunding: true`, a copied capability object, stale state, or a different manifest cannot authorize funding.
 
+## Local qualification evidence
+
+Clean published source commit [`2e2917389b6191a4c62bdbe56f6bab9904141406`](https://github.com/bobofbuilding/treeswap/commit/2e2917389b6191a4c62bdbe56f6bab9904141406) passed 252 application/security tests, 91 direct pinned-runtime tests plus the bounded-filesystem rollback campaign, 68 contract tests, both web build paths, all 31 sealed local qualification campaigns, and [hosted CI](https://github.com/bobofbuilding/treeswap/actions/runs/32384877772). The sealed run lasted from `2026-08-20T15:15:57.828Z` through `2026-08-20T16:34:26.514Z`. Its ignored mode-`0600` evidence independently reconstructs to `sha256:22011a8ab9c608dbbac34cc88b09074d9f4a562626666d33e208ae22922a6fa3`.
+
+This checkpoint proves the local release-authorization, permissionless-admission, EVM-fault, Lightning-regtest, coordinator-recovery, and safety-monitor campaigns against the published source. It explicitly records `publicTestnetIncluded: false`, `independentReviewIncluded: false`, `productionInfrastructureIncluded: false`, and `simulatedEvmReservation: true`. It contains no production multisigs, hardware signers, independently operated providers, public-testnet solvers, external reviews, infrastructure evidence, inventory, or funding authorization.
+
 ## Remaining external boundary
 
 The repository can verify signatures and configured provider agreement; it cannot prove that provider identities are independently operated, Safe owners use hardware keys, evidence artifacts are truthful, operators are organizationally independent, or reviewers are qualified. Those facts require retained external evidence and human review.
