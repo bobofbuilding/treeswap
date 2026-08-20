@@ -66,6 +66,7 @@ No repository checkbox can substitute for deployed evidence. A gate becomes comp
   - [x] Published safety-monitor checkpoint `4b40a3ca682b63f8d1fec11fa1900448d33676f5` passed 233 application/security tests, 81 direct pinned-runtime tests plus the bounded-filesystem rollback campaign, 68 contract tests, both builds, all 28 sealed local campaigns, and [hosted CI](https://github.com/bobofbuilding/treeswap/actions/runs/32345936040). Its independently reconstructed digest is `sha256:2644372eebed253ae9649c625a770953ed8c90b9d8da7876cb69ec514e265450`; the record is local-only and grants no funding authorization.
   - [ ] Deploy independent continuous collectors, redundant guardian broadcasters, public alert routing, retention, and operator escalation; repeat against deployed escrows with outstanding testnet liabilities.
 - [ ] Run at least two independent solvers with tiny testnet limits and no public deposits or rewards.
+  - [x] The candidate public-testnet evidence boundary requires two signed solver operators plus two providers, observers, monitors, relays, and alert channels; at least seven days; at least twenty selected swaps per solver with ten in each direction; exact fault scenarios; closed start/end gates; and final zero-liability reconciliation. This verifier is not evidence that those external operators exist.
 - [ ] Deploy durable SIWE/session storage only if accounts are enabled; otherwise disable the account feature. Keep email delivery disabled.
 
 ## Capped mainnet beta — blocked

@@ -23,6 +23,7 @@ Status: Gate 0 is complete. Gates 1 through 4 are in progress. No funded testnet
 - [ ] Capture the observation through two independently operated Ethereum RPC providers and compare every field.
 - [ ] Obtain independent review of both matched source bundles, compiler inputs, roles, storage, and upgrade behavior.
 - [ ] Promote the reviewed observation into a signed deployment manifest; never promote an `unreviewed-live-observation` automatically.
+  - [x] The public-testnet evidence policy binds the exact reviewed deployment-manifest, source, admission, risk, and fee digests into every participant attestation. It cannot create or promote the manifest, and a changed digest invalidates every signature.
 - [ ] Run controlled execution-client reorgs before and after escrow authorization/claim and attach finality-rollback evidence.
   - [x] A deterministic Anvil campaign replaces actual vault and user-escrow blocks before authorization, after authorization, and after claim; both directions reject stale authorization/dispatch, roll back orphaned receipts and balances, and recover through one canonical beneficiary-bound claim.
   - [x] Published commit `1908b539e2bcb6fa48ce9c2883a0770979b82b01` repeats all six block-replacement boundaries on an Anvil fork of exact Ethereum block `25788856` using the pinned live BIT proxy and implementation. The clean-published, secret-free result has digest `0x1475c60668bf57ded78659302e1e03382f17a26c1d8479835f8a8a2436176507`; [hosted CI](https://github.com/bobofbuilding/treeswap/actions/runs/32366965287) passed 240 application/security tests, 89 pinned-runtime tests plus disk-full rollback, 68 contract tests, both builds, and every noncredentialed EVM campaign.
@@ -130,6 +131,7 @@ The coordinator state, crash semantics, live evidence, runtime qualification ris
 ## Gate 4 — permissionless solver testnet
 
 - [ ] Deploy and demonstrate open solver competition on public testnet through multiple independent operators and delivery paths.
+  - [x] An exact candidate-evidence verifier now requires at least two separately identified and signing EVM providers, Lightning observers, monitors, relays, solvers, and alert channels; a seven-day bidirectional campaign; twenty-four mandatory adversarial scenarios; per-solver reliability/halt metrics; a final closed gate; and zero unreconciled liabilities. Its derived output has no funding authority. See [Public-testnet campaign evidence](./PUBLIC_TESTNET_EVIDENCE.md).
   - [x] Repository admission has no solver allowlist: any solver may publish an indicative offer, while only a fully verified EVM, endpoint, LND-node, escrow-runtime, and independently observed capacity declaration can produce an executable offer.
   - [x] An executable offer binds the exact capability and capacity-snapshot digests, observed inventory, per-solver capacity epoch, endpoint key, quote expiry, and direction-specific settlement runtime code hash. An indicative book cannot authorize invoice payment or settlement.
   - [x] Lightning → BIT is admitted only against exact, independently verified, already deposited solver-owned BIT inventory plus sufficient inbound Lightning capacity.
@@ -144,6 +146,7 @@ The coordinator state, crash semantics, live evidence, runtime qualification ris
   - [ ] Deploy the authenticated endpoint and reader protocols, then prove all repository bindings and risk caps across at least two independently operated testnet solvers, observers, and relays.
 - [ ] Run two or more independently operated solvers through adversarial churn, withholding, relay censorship, restarts, and insolvency simulations.
 - [ ] Publish fill rate, timeout rate, median completion, capacity freshness, and halt history per solver without claiming a globally best price.
+  - [x] The verified adoption summary derives those rates from reconciled integer outcomes, publishes only solver digests and aggregate metrics, and omits participant signers, endpoints, invoices, payment hashes, and preimages. No real campaign summary exists yet.
 
 ## Gate 5 — deploy governance and operations
 

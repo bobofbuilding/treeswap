@@ -66,6 +66,7 @@ jobs:
       - run: node --check lib/deployment-policy.mjs
       - run: node --check lib/qualification-evidence.mjs
       - run: node --check lib/release-authorization.mjs
+      - run: node --check lib/public-testnet-evidence.mjs
       - run: node --check lib/solver-capability.mjs
       - run: node --check lib/solver-endpoint-transport.mjs
       - run: node --check lib/solver-capacity-readers.mjs
@@ -86,6 +87,8 @@ jobs:
       - run: bash -n scripts/run-deployment-rehearsal-smoke.sh
       - run: bash -n scripts/run-live-bit-reorg-smoke.sh
       - run: node --check scripts/run-local-qualification.mjs
+      - run: node --check scripts/prepare-public-testnet-attestation.mjs
+      - run: node --check scripts/verify-public-testnet-evidence.mjs
       - run: npm run test:coordinator-evm
       - run: npm run test:evm-outbox-faults
       - run: npm run test:safety-monitor

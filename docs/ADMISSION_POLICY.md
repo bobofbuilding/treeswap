@@ -27,6 +27,8 @@ For BIT → Lightning, Ethereum cannot force an offchain Lightning payment. The 
 
 These are repository controls, not evidence of a public permissionless service. The web product must not publish executable funded quotes until multiple independent testnet solvers, relays, capacity observers, durable infrastructure, monitoring, incident drills, and review satisfy the production checklist.
 
+The exact candidate record for that external campaign is defined in [Public-testnet campaign evidence](./PUBLIC_TESTNET_EVIDENCE.md). It requires at least two solver operators, twenty selected swaps per solver with ten in each direction, reconciled outcome totals, bounded timeout/failure rates, capacity freshness, halt history, relay-censorship and solver-fault drills, a final closed gate, and zero unexplained liabilities. The verifier produces adoption telemetry and release inputs, not executable quotes or funding authority.
+
 Clean published commit `430a829bed99e88596d27326aecb6e3aca21a35a` passed the dedicated 40-test permissionless-admission campaign, the complete 246-test application/security suite, 91 direct pinned-runtime tests plus bounded-filesystem rollback, 68 contract tests, both builds, all 30 sealed local campaigns, and [hosted CI](https://github.com/bobofbuilding/treeswap/actions/runs/32375971751). Its ignored mode-`0600` local-only evidence independently reconstructs to `sha256:acd75e9bd650883329ffac589e802c6c429d6afecab96e63d80bd220ec9e64c3`; it grants no funding authorization.
 
 These controls follow the firm, short-lived RFQ shape used by established offchain-quote systems, but TreeSwap does not inherit their liquidity, monitoring, or execution guarantees.

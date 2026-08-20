@@ -22,12 +22,13 @@ Protect exits before availability. Halt only new RFQs, firm quotes, reservations
 1. The monitor stops quote issuance and the guardian calls `halt` with a public reason digest.
 2. The coordinator stops creating new invoices and payment authorizations; the adapter rejects new value-moving RPCs.
 3. Operators preserve logs without invoices, macaroons, preimages, email, or unnecessary addresses and record finalized chain/node snapshots.
-4. Existing safe claims, refunds, and solver withdrawals continue. Operators publish any BIT-level pause that prevents an exit and monitor until recovery.
-5. Reconcile every solver's available BIT, locked BIT, Lightning budget, in-flight HTLCs, terminal swaps, and fees. Treat an unexplained difference as loss until resolved.
-6. Rotate or revoke the affected credential/root-key ID, session secret, signer, RPC endpoint, or TLS pin. Do not reuse a suspected secret.
-7. Publish a plain-language incident notice describing affected directions, times, limits, user action, and known uncertainty without exposing private invoice data.
-8. Prepare a reviewed root-cause record and remediation test. A controller may schedule reopening only with a fresh risk digest.
-9. Wait the immutable reopen delay. Anyone may verify and execute the exact staged digest only while it remains fresh.
+4. For the public-testnet campaign, every baseline incident receives its own nonzero evidence digest, bounded timestamps, and at least two retained observer-operator commitments. The complete record remains invalid until the gate is closed, exits were shown to remain available, and final reconciliation reports zero unexplained liabilities. See [Public-testnet campaign evidence](./PUBLIC_TESTNET_EVIDENCE.md).
+5. Existing safe claims, refunds, and solver withdrawals continue. Operators publish any BIT-level pause that prevents an exit and monitor until recovery.
+6. Reconcile every solver's available BIT, locked BIT, Lightning budget, in-flight HTLCs, terminal swaps, and fees. Treat an unexplained difference as loss until resolved.
+7. Rotate or revoke the affected credential/root-key ID, session secret, signer, RPC endpoint, or TLS pin. Do not reuse a suspected secret.
+8. Publish a plain-language incident notice describing affected directions, times, limits, user action, and known uncertainty without exposing private invoice data.
+9. Prepare a reviewed root-cause record and remediation test. A controller may schedule reopening only with a fresh risk digest.
+10. Wait the immutable reopen delay. Anyone may verify and execute the exact staged digest only while it remains fresh.
 
 ## Required evidence before reopening
 
