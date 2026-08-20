@@ -21,7 +21,7 @@ Retirement never migrates a live swap. Users and solvers exit through the exact 
 1. Freeze a source commit, compiler/toolchain versions, dependency lock, and threat-model delta.
 2. Deploy the complete new immutable contract set in the closed state.
 3. Seal the registry to exactly the two new escrows and reproduce every constructor immutable and runtime code hash.
-4. Publish a release manifest containing the old and new versions, contract addresses, hashes, fee caps, risk caps, BIT observation, test evidence, and independent-review digests.
+4. Publish a release manifest containing the old and new versions, contract addresses, hashes, fee caps, risk caps, the normalized admission-policy digest, BIT observation, test evidence, and independent-review digests.
 5. Wait the governance review period. Controller, guardian, Lightning operator, security reviewer, and incident commander sign the same manifest.
 6. Run a capped canary with operator-owned inventory. Do not route ordinary users automatically to the candidate.
 7. Open the candidate for a short expiring window. Keep the prior release available until the candidate is proven.
@@ -39,7 +39,7 @@ Use distinct hardware-backed owners and thresholds. Any optional onchain release
 ## Component upgrades
 
 - **Escrows, gate, registry:** deploy a complete new immutable version.
-- **Coordinator and relays:** use backwards-compatible message versions; roll out canaries and retain the last known-good binary for rollback.
+- **Coordinator and relays:** use backwards-compatible message versions; roll out canaries and retain the last known-good binary for rollback. The first RFQ binds one admission-policy digest to the durable coordinator namespace. A cap or threshold change uses a new release namespace and database; the prior coordinator closes new RFQs and drains all existing liabilities instead of mutating policy underneath them.
 - **Lightning adapter:** pin binary/config hashes and LND compatibility; rotate credentials during a staged maintenance window.
 - **Web client:** ship signed release manifests and reject unknown versions or code hashes.
 - **External BIT proxy:** TreeSwap cannot govern it. An EIP-1967 implementation change or pause automatically closes new exposure and requires a new reviewed BIT observation before reopening.

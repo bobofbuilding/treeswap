@@ -1,18 +1,37 @@
 import assert from "node:assert/strict";
+import { generateKeyPairSync, sign } from "node:crypto";
 import test from "node:test";
 import { Wallet, id } from "ethers";
 import {
+  EXECUTABLE_RFQ_OFFER_TYPES,
   RFQ_OFFER_TYPES,
   ZERO_BYTES32,
   bindSelectedSolverInvoice,
+  buildExecutableQuoteBook,
   buildReceivedQuoteBook,
   fallbackAuthorization,
   rfqDomain,
   selectReceivedQuote,
+  validateExecutableSolverOffer,
+  validateSolverOffer,
 } from "../lib/rfq.mjs";
+import {
+  SOLVER_CAPABILITY_TYPES,
+  solverCapabilityClaimsDigest,
+  solverCapabilityDomain,
+  solverCapabilityProofMessage,
+  solverEndpointOriginDigest,
+  solverEndpointPublicKeyDigest,
+  solverLightningNodePubkeyDigest,
+  verifiedSolverQuoteBinding,
+  verifySolverCapability,
+} from "../lib/solver-capability.mjs";
 
 const NOW = 2_000_000_000;
 const BIT = 10n ** 18n;
+const LIGHTNING_TO_BIT_CODE_HASH = id("rfq-lightning-to-bit-runtime");
+const BIT_TO_LIGHTNING_CODE_HASH = id("rfq-bit-to-lightning-runtime");
+const BIT_TO_LIGHTNING_CONTRACT = "0x7777777777777777777777777777777777777777";
 const solvers = [new Wallet(`0x${"11".repeat(32)}`), new Wallet(`0x${"22".repeat(32)}`), new Wallet(`0x${"33".repeat(32)}`)];
 const request = {
   requestId: id("request-1"),
@@ -25,7 +44,6 @@ const request = {
   invoiceDigest: ZERO_BYTES32,
   nonce: 7n,
   expiresAt: NOW + 120,
-  capacityEpoch: 42,
   exactBitOutputWei: 100n * BIT,
   exactLightningOutputSats: 0n,
   maxRoutingFeeSats: 20n,
@@ -56,7 +74,102 @@ function offer(solver, index, lightningAmountSats) {
     requestNonce: request.nonce,
     offerNonce: BigInt(index),
     expiresAt: NOW + 60,
-    capacityEpoch: request.capacityEpoch,
+    capacityEpoch: 42,
+  };
+}
+
+async function executableCapability(solver, index, direction = "lightning-to-bit") {
+  const endpointKeys = generateKeyPairSync("ed25519");
+  const endpointPublicKey = endpointKeys.publicKey.export({ format: "pem", type: "spki" }).toString();
+  const endpointOrigin = `https://solver-${index}.example`;
+  const lightningNodePubkey = `02${index.toString(16).padStart(2, "0").repeat(32)}`;
+  const verifyingContract = direction === "lightning-to-bit" ? request.verifyingContract : BIT_TO_LIGHTNING_CONTRACT;
+  const availableBitWei = direction === "lightning-to-bit" ? String(200n * BIT) : "0";
+  const availableLightningSats = "250000";
+  const capacityEpoch = 40 + index;
+  const capabilityPolicy = {
+    chainId: "1",
+    lightningToBitContract: request.verifyingContract,
+    bitToLightningContract: BIT_TO_LIGHTNING_CONTRACT,
+    lightningToBitContractCodeHash: LIGHTNING_TO_BIT_CODE_HASH,
+    bitToLightningContractCodeHash: BIT_TO_LIGHTNING_CODE_HASH,
+    maxCapabilityTtlSeconds: 120,
+    maxCapacityObservationAgeSeconds: 30,
+    maxClockSkewSeconds: 5,
+  };
+  const claims = {
+    capabilityId: id(`rfq-capability-${direction}-${index}`),
+    direction: id(direction),
+    solver: solver.address,
+    lightningNodePubkeyDigest: solverLightningNodePubkeyDigest(lightningNodePubkey),
+    endpointPublicKeyDigest: solverEndpointPublicKeyDigest(endpointPublicKey),
+    endpointOriginDigest: solverEndpointOriginDigest(endpointOrigin),
+    availableBitWei,
+    availableLightningSats,
+    capacityEpoch: String(capacityEpoch),
+    issuedAt: NOW,
+    expiresAt: NOW + 90,
+  };
+  const declaration = {
+    ...claims,
+    proofChallenge: solverCapabilityClaimsDigest(claims, {
+      chainId: capabilityPolicy.chainId,
+      verifyingContract,
+    }),
+  };
+  const proofMessage = solverCapabilityProofMessage(declaration.proofChallenge);
+  const envelope = {
+    declaration,
+    endpointOrigin,
+    endpointPublicKey,
+    endpointSignature: sign(null, proofMessage, endpointKeys.privateKey).toString("base64"),
+    evmSignature: await solver.signTypedData(
+      solverCapabilityDomain({ chainId: capabilityPolicy.chainId, verifyingContract }),
+      SOLVER_CAPABILITY_TYPES,
+      declaration,
+    ),
+    lightningNodePubkey,
+    lightningSignature: "y".repeat(104),
+  };
+  const verification = await verifySolverCapability({
+    envelope,
+    now: NOW,
+    policy: capabilityPolicy,
+    verifyLightningNodeSignature: async () => ({ valid: true, pubkey: lightningNodePubkey }),
+    readVerifiedBitInventory: async () => ({ availableBitWei, observedAt: NOW, solverId: solver.address }),
+    readVerifiedLightningCapacity: async () => ({
+      availableLightningSats,
+      capacityEpoch: String(capacityEpoch),
+      nodePubkey: lightningNodePubkey,
+      observedAt: NOW,
+    }),
+  });
+  assert.equal(verification.valid, true);
+  return verification;
+}
+
+async function executableEnvelope(solver, index, lightningAmountSats, source, direction = "lightning-to-bit") {
+  const verification = await executableCapability(solver, index, direction);
+  const binding = verifiedSolverQuoteBinding(verification);
+  const signedOffer = {
+    ...offer(solver, index, lightningAmountSats),
+    direction: id(direction),
+    capabilityDigest: binding.capabilityDigest,
+    capacitySnapshotDigest: binding.capacitySnapshotDigest,
+    endpointPublicKeyDigest: binding.endpointPublicKeyDigest,
+    settlementContractCodeHash: binding.settlementContractCodeHash,
+    capacityEpoch: binding.capacityEpoch,
+    availableBitWei: BigInt(binding.availableBitWei),
+    availableLightningSats: BigInt(binding.availableLightningSats),
+  };
+  return {
+    verification,
+    envelope: {
+      source,
+      receivedAt: NOW,
+      offer: signedOffer,
+      signature: await solver.signTypedData(rfqDomain(request), EXECUTABLE_RFQ_OFFER_TYPES, signedOffer),
+    },
   };
 }
 
@@ -124,11 +237,12 @@ test("requires an explicit selection from the committed received set", async () 
   });
   const selection = selectReceivedQuote(book, id("offer-1"));
   assert.equal(selection.requiresExactUserAuthorization, true);
+  assert.equal(selection.executable, false);
   assert.equal(selection.receiptDigest, book.receiptDigest);
-  const selectedIntent = bindSelectedSolverInvoice(request, book, id("offer-1"));
-  assert.equal(selectedIntent.paymentHash, id("payment-hash-1"));
-  assert.equal(selectedIntent.invoiceDigest, id("invoice-1"));
-  assert.equal(selectedIntent.selectedSolver, solvers[0].address);
+  assert.throws(
+    () => bindSelectedSolverInvoice(request, book, id("offer-1")),
+    /executable selection requires capability-bound/,
+  );
   assert.throws(() => { book.offers[0].offer.paymentHash = id("post-verification-mutation"); }, /read only/);
   assert.throws(
     () => bindSelectedSolverInvoice({ ...request, maxFeeBps: 99n }, book, id("offer-1")),
@@ -226,6 +340,11 @@ test("bounds work before signature verification", async () => {
     () => buildReceivedQuoteBook({ request, envelopes: [], now: NOW, policy: { ...policy, minimumIndependentSolvers: 1 } }),
     /minimum is outside policy/,
   );
+  const oversized = await envelope(solvers[0], 2, 10_000, "relay-a");
+  oversized.offer.grossBitAmount = "9".repeat(10_000);
+  const result = validateSolverOffer({ request, envelope: oversized, now: NOW, policy });
+  assert.equal(result.valid, false);
+  assert.match(result.reasons.join("; "), /canonical bounded unsigned integer/);
 });
 
 test("rejects untrusted relay labels instead of normalizing signed receipt data", async () => {
@@ -237,17 +356,104 @@ test("rejects untrusted relay labels instead of normalizing signed receipt data"
   );
 });
 
-test("rejects stale capacity epochs and routing costs above the signed request cap", async () => {
-  const stale = await envelope(solvers[0], 1, 10_000, "relay-a");
-  stale.offer.capacityEpoch = request.capacityEpoch - 1;
-  stale.signature = await solvers[0].signTypedData(rfqDomain(request), RFQ_OFFER_TYPES, stale.offer);
+test("rejects routing costs above the signed request cap", async () => {
   const expensive = await envelope(solvers[1], 2, 10_000, "relay-b");
   expensive.offer.maxRoutingFeeSats = request.maxRoutingFeeSats + 1n;
   expensive.signature = await solvers[1].signTypedData(rfqDomain(request), RFQ_OFFER_TYPES, expensive.offer);
-  const valid = await envelope(solvers[2], 3, 10_100, "direct-c");
 
   assert.throws(
-    () => buildReceivedQuoteBook({ request, envelopes: [stale, expensive, valid], now: NOW, policy }),
+    () => buildReceivedQuoteBook({ request, envelopes: [expensive], now: NOW, policy }),
     /not enough independent valid solver offers/,
   );
+});
+
+test("binds an executable selection to independently verified capability, inventory, endpoint, and code", async () => {
+  const first = await executableEnvelope(solvers[0], 1, 10_000, "relay-a");
+  const second = await executableEnvelope(solvers[1], 2, 10_100, "direct-b");
+  const book = buildExecutableQuoteBook({
+    request,
+    envelopes: [first.envelope, second.envelope],
+    capabilityVerifications: [first.verification, second.verification],
+    now: NOW,
+    policy,
+  });
+  assert.equal(book.executable, true);
+  assert.equal(book.offers[0].offer.capacityEpoch, 41);
+  assert.equal(book.offers[1].offer.capacityEpoch, 42);
+  const selection = selectReceivedQuote(book, id("offer-1"));
+  assert.equal(selection.executable, true);
+  const selectedIntent = bindSelectedSolverInvoice(request, book, id("offer-1"));
+  assert.equal(selectedIntent.paymentHash, id("payment-hash-1"));
+  assert.equal(selectedIntent.invoiceDigest, id("invoice-1"));
+  assert.equal(selectedIntent.selectedSolver, solvers[0].address);
+  assert.equal(selectedIntent.capabilityDigest, first.verification.capabilityDigest);
+  assert.equal(selectedIntent.capacitySnapshotDigest, first.verification.capacitySnapshotDigest);
+  assert.equal(selectedIntent.endpointPublicKeyDigest, first.verification.binding.endpointPublicKeyDigest);
+  assert.equal(selectedIntent.settlementContractCodeHash, LIGHTNING_TO_BIT_CODE_HASH);
+  assert.equal(selectedIntent.capacityEpoch, 41);
+});
+
+test("rejects executable offer rebinding and forged capability provenance", async () => {
+  const first = await executableEnvelope(solvers[0], 1, 10_000, "relay-a");
+  const second = await executableEnvelope(solvers[1], 2, 10_100, "relay-b");
+  const third = await executableEnvelope(solvers[2], 3, 10_200, "direct-c");
+  assert.throws(
+    () => buildExecutableQuoteBook({
+      request,
+      envelopes: [first.envelope, second.envelope],
+      capabilityVerifications: [{ ...first.verification }, second.verification],
+      now: NOW,
+      policy,
+    }),
+    /locally verified capability/,
+  );
+
+  for (const [changedRequest, reason] of [
+    [{ ...request, chainId: 2n }, /capability chain changed/],
+    [{ ...request, verifyingContract: BIT_TO_LIGHTNING_CONTRACT }, /capability settlement contract changed/],
+  ]) {
+    const reboundEnvelope = {
+      ...first.envelope,
+      signature: await solvers[0].signTypedData(
+        rfqDomain(changedRequest),
+        EXECUTABLE_RFQ_OFFER_TYPES,
+        first.envelope.offer,
+      ),
+    };
+    const result = validateExecutableSolverOffer({
+      request: changedRequest,
+      envelope: reboundEnvelope,
+      capabilityVerification: first.verification,
+      now: NOW,
+      policy,
+    });
+    assert.equal(result.valid, false);
+    assert.match(result.reasons.join("; "), reason);
+  }
+
+  for (const [field, changed, reason] of [
+    ["capabilityDigest", id("changed-capability"), /capability digest changed/],
+    ["capacitySnapshotDigest", id("changed-snapshot"), /capacity snapshot digest changed/],
+    ["endpointPublicKeyDigest", id("changed-endpoint"), /endpoint key changed/],
+    ["settlementContractCodeHash", id("changed-runtime"), /contract version changed/],
+    ["capacityEpoch", 999, /capacity declaration is stale/],
+    ["availableBitWei", 199n * BIT, /BIT inventory snapshot changed/],
+    ["availableLightningSats", 249_999n, /Lightning capacity snapshot changed/],
+  ]) {
+    const mutatedOffer = { ...first.envelope.offer, [field]: changed };
+    const mutated = {
+      ...first.envelope,
+      offer: mutatedOffer,
+      signature: await solvers[0].signTypedData(rfqDomain(request), EXECUTABLE_RFQ_OFFER_TYPES, mutatedOffer),
+    };
+    const book = buildExecutableQuoteBook({
+      request,
+      envelopes: [mutated, second.envelope, third.envelope],
+      capabilityVerifications: [first.verification, second.verification, third.verification],
+      now: NOW,
+      policy,
+    });
+    assert.equal(book.solverCount, 2);
+    assert.match(book.rejected[0].reasons.join("; "), reason);
+  }
 });

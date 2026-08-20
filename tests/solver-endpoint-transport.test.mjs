@@ -27,6 +27,8 @@ const ORIGIN = "https://solver.example";
 const OTHER_ORIGIN = "https://other.example";
 const SOLVER_CONTRACT = "0x1111111111111111111111111111111111111111";
 const OTHER_CONTRACT = "0x2222222222222222222222222222222222222222";
+const SOLVER_CONTRACT_CODE_HASH = id("solver-contract-runtime");
+const OTHER_CONTRACT_CODE_HASH = id("other-contract-runtime");
 const NODE_PUBKEY = `02${"33".repeat(32)}`;
 const LND_SIGNATURE = "y".repeat(104);
 const solver = new Wallet(`0x${"55".repeat(32)}`);
@@ -36,6 +38,8 @@ const policy = {
   chainId: "1",
   lightningToBitContract: SOLVER_CONTRACT,
   bitToLightningContract: OTHER_CONTRACT,
+  lightningToBitContractCodeHash: SOLVER_CONTRACT_CODE_HASH,
+  bitToLightningContractCodeHash: OTHER_CONTRACT_CODE_HASH,
   maxCapabilityTtlSeconds: 120,
   maxCapacityObservationAgeSeconds: 30,
   maxClockSkewSeconds: 5,

@@ -12,6 +12,7 @@ const USER = "0x1111111111111111111111111111111111111111";
 const SOLVER = "0x2222222222222222222222222222222222222222";
 const SOLVER_TWO = "0x3333333333333333333333333333333333333333";
 const BIT = 10n ** 18n;
+const SETTLE_INVOICE = "/invoicesrpc.Invoices/SettleInvoice";
 
 function hash(label) {
   return id(label).toLowerCase();
@@ -31,6 +32,10 @@ function policy(overrides = {}) {
     maxConsecutiveFailures: 2,
     minimumReliabilitySample: "4",
     minimumReliabilityBps: "9000",
+    minimumCompletedFillsForEstablished: "3",
+    unknownSolverMaxBitToLightningSats: "5000",
+    establishedSolverMaxBitToLightningSats: "100000",
+    maxGlobalBitToLightningInFlightSats: "500000",
     ...overrides,
   };
 }
@@ -85,6 +90,63 @@ function reservation(value, label, overrides = {}) {
   };
 }
 
+function completeSelectedSettlement(store, firmOffer, label, proofDigest) {
+  const settlement = {
+    settlementId: hash(`settlement:${label}`),
+    pricingId: hash(`pricing:${label}`),
+    direction: "lightning-to-bit",
+    nonceAuthorityDigest: hash(`nonce-authority:${label}`),
+    intentNonce: String(100 + firmOffer.capacityEpoch),
+    intentDigest: hash(`intent:${label}`),
+    paymentHash: hash(`payment:${label}`),
+    invoiceDigest: hash(`invoice:${label}`),
+    amountSats: "10000",
+    quoteReceiptDigest: hash(`quote-receipt:${label}`),
+    selectedSetDigest: hash(`selected-set:${label}`),
+    selectedOfferId: firmOffer.offerId,
+    capacityEpoch: firmOffer.capacityEpoch,
+    createdAt: NOW + 2,
+  };
+  store.acceptSettlement(settlement);
+  store.recordReservation({
+    settlementId: settlement.settlementId,
+    reservationId: hash(`reservation:${label}`),
+    reservationTxHash: hash(`reservation-tx:${label}`),
+    reservationBlockNumber: 20_000_000,
+    reservationBlockHash: hash(`reservation-block:${label}`),
+    reservationIntentDigest: settlement.intentDigest,
+    observedAt: NOW + 3,
+  });
+  const action = store.planAction({
+    actionId: hash(`action:${label}`),
+    settlementId: settlement.settlementId,
+    method: SETTLE_INVOICE,
+    requestId: hash(`action-request:${label}`),
+    payloadDigest: hash(`action-payload:${label}`),
+    intentDigest: settlement.intentDigest,
+    paymentHash: settlement.paymentHash,
+    invoiceDigest: settlement.invoiceDigest,
+    amountSats: settlement.amountSats,
+    capacityEpoch: settlement.capacityEpoch,
+    plannedAt: NOW + 4,
+  });
+  store.claimAction(action.actionId, NOW + 5);
+  store.recordActionResult({
+    actionId: action.actionId,
+    outcome: "confirmed",
+    resultDigest: hash(`action-result:${label}`),
+    resultCode: "SETTLED",
+    recordedAt: NOW + 6,
+  });
+  store.recordTerminal({
+    settlementId: settlement.settlementId,
+    terminalState: "COMPLETED",
+    proofDigest,
+    assetsReconciled: true,
+    recordedAt: NOW + 7,
+  });
+}
+
 test("persists exact rolling RFQ quotas, idempotency, and backward-clock rejection across restart", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "treeswap-admission-rolling-"));
   const path = join(directory, "coordinator.sqlite");
@@ -134,6 +196,7 @@ test("persists cancellation sequences, releases affected requests, and counts ca
   const path = join(directory, "coordinator.sqlite");
   t.after(() => rm(directory, { recursive: true, force: true }));
   const store = await CoordinatorStore.open(path);
+  const admissionPolicy = policy({ maxRequestsPerWindow: 10, maxCancellationsPerWindow: 1 });
   const one = request("cancel-one", 2);
   const two = request("cancel-two", 3);
   const cancellation = {
@@ -143,8 +206,17 @@ test("persists cancellation sequences, releases affected requests, and counts ca
     recordedAt: NOW + 2,
   };
   try {
-    store.admitRfq({ identity: identity(), request: one, policy: policy(), now: NOW });
-    store.admitRfq({ identity: identity(), request: two, policy: policy(), now: NOW + 1 });
+    store.admitRfq({ identity: identity(), request: one, policy: admissionPolicy, now: NOW });
+    assert.throws(
+      () => store.admitRfq({
+        identity: identity(),
+        request: request("policy-drift", 9),
+        policy: policy({ maxRequestsPerWindow: 11, maxCancellationsPerWindow: 1 }),
+        now: NOW + 1,
+      }),
+      /policy changed after the coordinator policy was bound/,
+    );
+    store.admitRfq({ identity: identity(), request: two, policy: admissionPolicy, now: NOW + 1 });
     const canceled = store.cancelRfqs(cancellation);
     assert.deepEqual(canceled, { cancellationSequence: "2", canceledRequests: 1, idempotent: false });
     assert.equal(store.getRfqRequest(one.requestId).state, "CANCELED");
@@ -158,7 +230,7 @@ test("persists cancellation sequences, releases affected requests, and counts ca
       () => store.admitRfq({
         identity: identity(),
         request: request("canceled-nonce-reuse", 2),
-        policy: policy({ maxRequestsPerWindow: 10 }),
+        policy: admissionPolicy,
         now: NOW + 3,
       }),
       /cancelled or already superseded/,
@@ -167,7 +239,7 @@ test("persists cancellation sequences, releases affected requests, and counts ca
       () => store.admitRfq({
         identity: identity(),
         request: request("cancellation-churn", 4),
-        policy: policy({ maxRequestsPerWindow: 10, maxCancellationsPerWindow: 1 }),
+        policy: admissionPolicy,
         now: NOW + 3,
       }),
       /cancellation quota exhausted/,
@@ -175,7 +247,7 @@ test("persists cancellation sequences, releases affected requests, and counts ca
     const recovered = store.admitRfq({
       identity: identity(),
       request: request("after-cancel-window", 4, { expiresAt: NOW + 180 }),
-      policy: policy({ maxRequestsPerWindow: 10, maxCancellationsPerWindow: 1 }),
+      policy: admissionPolicy,
       now: NOW + 63,
     });
     assert.equal(recovered.request.state, "ACTIVE");
@@ -253,13 +325,15 @@ test("atomically persists firm capacity, fails closed on conflicting snapshots, 
 
 test("attributes solver failures durably while user abandonment does not damage reliability", async () => {
   const store = await CoordinatorStore.open(":memory:", { allowMemory: true });
+  const admissionPolicy = policy({ maxRequestsPerWindow: 10 });
   try {
     store.recordSolverCapacity(snapshot());
     for (const [index, nonce] of [[1, 2], [2, 3]]) {
       const rfq = request(`solver-failure-${index}`, nonce);
-      store.admitRfq({ identity: identity(), request: rfq, policy: policy(), now: NOW + index - 1 });
+      store.admitRfq({ identity: identity(), request: rfq, policy: admissionPolicy, now: NOW + index - 1 });
       const firm = store.reserveVerifiedFirmOffer(reservation(rfq, `solver-failure-${index}`, {
         offer: { ...reservation(rfq, `solver-failure-${index}`).offer, bitAmountWei: String(10n * BIT) },
+        policy: admissionPolicy,
         now: NOW + index,
       }));
       store.recordFirmOfferOutcome({
@@ -267,7 +341,7 @@ test("attributes solver failures durably while user abandonment does not damage 
         outcome: "solver-failed",
         evidenceDigest: hash(`solver-failure-proof-${index}`),
         recordedAt: NOW + index + 1,
-        policy: policy(),
+        policy: admissionPolicy,
       });
     }
     const suspended = store.getSolverCapacity(SOLVER);
@@ -276,11 +350,11 @@ test("attributes solver failures durably while user abandonment does not damage 
     assert.equal(suspended.suspended, true);
 
     const blocked = request("suspended-solver", 4);
-    store.admitRfq({ identity: identity(), request: blocked, policy: policy({ maxRequestsPerWindow: 10 }), now: NOW + 4 });
+    store.admitRfq({ identity: identity(), request: blocked, policy: admissionPolicy, now: NOW + 4 });
     assert.throws(
       () => store.reserveVerifiedFirmOffer(reservation(blocked, "suspended-solver", {
         offer: { ...reservation(blocked, "suspended-solver").offer, bitAmountWei: String(10n * BIT) },
-        policy: policy({ maxRequestsPerWindow: 10 }),
+        policy: admissionPolicy,
         now: NOW + 5,
       })),
       /solver is suspended/,
@@ -327,11 +401,19 @@ test("records a fill, exercises its RFQ, and releases every competing firm offer
       offer: { ...reservation(rfq, "atomic-fill-competing").offer, bitAmountWei: String(10n * BIT) },
     }));
     const proof = hash("atomic-fill-proof");
-    store.recordFirmOfferOutcome({
+    assert.throws(() => store.recordFirmOfferOutcome({
       offerId: selected.offerId,
       outcome: "filled",
       evidenceDigest: proof,
       recordedAt: NOW + 2,
+      policy: policy(),
+    }), /reconciled completed-settlement proof/);
+    completeSelectedSettlement(store, selected, "atomic-fill", proof);
+    store.recordFirmOfferOutcome({
+      offerId: selected.offerId,
+      outcome: "filled",
+      evidenceDigest: proof,
+      recordedAt: NOW + 8,
       policy: policy(),
     });
     assert.equal(store.getFirmOffer(selected.offerId).state, "FILLED");
@@ -342,6 +424,93 @@ test("records a fill, exercises its RFQ, and releases every competing firm offer
     assert.equal(store.getSolverCapacity(SOLVER).committedBitWei, "0");
     assert.equal(store.getSolverCapacity(SOLVER_TWO).attributableFailures, "0");
     assert.equal(store.getSolverCapacity(SOLVER_TWO).committedBitWei, "0");
+  } finally {
+    store.close();
+  }
+});
+
+test("opens admission without an allowlist while enforcing the unknown BIT-to-Lightning cap", async () => {
+  const store = await CoordinatorStore.open(":memory:", { allowMemory: true });
+  try {
+    store.recordSolverCapacity(snapshot(7, { availableBitWei: "0" }));
+    const above = request("unknown-cap-above", 2, {
+      direction: "bit-to-lightning",
+      notionalSats: "5001",
+    });
+    store.admitRfq({ identity: identity(), request: above, policy: policy(), now: NOW });
+    assert.throws(() => store.reserveVerifiedFirmOffer(reservation(above, "unknown-cap-above", {
+      offer: {
+        ...reservation(above, "unknown-cap-above").offer,
+        direction: "bit-to-lightning",
+        bitAmountWei: "0",
+        lightningAmountSats: "5001",
+      },
+    })), /unknown solver BIT-to-Lightning cap exceeded/);
+
+    const bounded = request("unknown-cap-bounded", 3, {
+      direction: "bit-to-lightning",
+      notionalSats: "5000",
+    });
+    store.admitRfq({
+      identity: identity(),
+      request: bounded,
+      policy: policy(),
+      now: NOW,
+    });
+    const accepted = store.reserveVerifiedFirmOffer(reservation(bounded, "unknown-cap-bounded", {
+      offer: {
+        ...reservation(bounded, "unknown-cap-bounded").offer,
+        direction: "bit-to-lightning",
+        bitAmountWei: "0",
+        lightningAmountSats: "5000",
+      },
+      policy: policy(),
+    }));
+    assert.equal(accepted.state, "ACTIVE");
+    assert.equal(store.getSolverCapacity(SOLVER).successfulFills, "0");
+  } finally {
+    store.close();
+  }
+});
+
+test("atomically caps aggregate BIT-to-Lightning exposure across permissionless solver identities", async () => {
+  const store = await CoordinatorStore.open(":memory:", { allowMemory: true });
+  const boundedPolicy = policy({
+    establishedSolverMaxBitToLightningSats: "5000",
+    maxGlobalBitToLightningInFlightSats: "9000",
+  });
+  try {
+    store.recordSolverCapacity(snapshot(7, { availableBitWei: "0" }));
+    store.recordSolverCapacity(snapshot(7, {
+      solverId: SOLVER_TWO,
+      capabilityDigest: hash("solver-two-capability"),
+      availableBitWei: "0",
+    }));
+
+    const first = request("global-cap-first", 2, { direction: "bit-to-lightning", notionalSats: "5000" });
+    const second = request("global-cap-second", 3, { direction: "bit-to-lightning", notionalSats: "5000" });
+    store.admitRfq({ identity: identity(), request: first, policy: boundedPolicy, now: NOW });
+    store.admitRfq({ identity: identity(), request: second, policy: boundedPolicy, now: NOW });
+    store.reserveVerifiedFirmOffer(reservation(first, "global-cap-first", {
+      offer: {
+        ...reservation(first, "global-cap-first").offer,
+        direction: "bit-to-lightning",
+        bitAmountWei: "0",
+        lightningAmountSats: "5000",
+      },
+      policy: boundedPolicy,
+    }));
+    assert.equal(store.admissionMetrics().activeBitToLightningInFlightSats, "5000");
+    assert.throws(() => store.reserveVerifiedFirmOffer(reservation(second, "global-cap-second", {
+      solverId: SOLVER_TWO,
+      offer: {
+        ...reservation(second, "global-cap-second").offer,
+        direction: "bit-to-lightning",
+        bitAmountWei: "0",
+        lightningAmountSats: "5000",
+      },
+      policy: boundedPolicy,
+    })), /global BIT-to-Lightning in-flight cap exceeded/);
   } finally {
     store.close();
   }
@@ -415,6 +584,7 @@ test("stores only opaque identity commitments and exposes aggregate admission me
     firmOfferStates: { ACTIVE: 1 },
     solverHealth: { total: 1, failureSuspended: 0, capacityConflicted: 0 },
     activeCommitments: 1,
+    activeBitToLightningInFlightSats: "0",
   });
   assert.equal(JSON.stringify(metrics).includes(USER), false);
   assert.equal(JSON.stringify(metrics).includes(rfq.requestId), false);

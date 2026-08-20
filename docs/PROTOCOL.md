@@ -20,7 +20,7 @@ The user experience is invoice-first. BIT → Lightning starts with one exact, a
 | BIT vault | Segregates solver balances and locks exact BIT amounts to one beneficiary and payment hash. |
 | Lightning adapter | Runs beside the solver node with least-privilege credentials and enforces invoice, amount, hash, and capacity policy. |
 
-There is no central limit order book, shared LP pool, market-making reward, partial fill, or permissionless solver admission in v1.
+There is no central limit order book, shared LP pool, market-making reward, or partial fill in v1. Repository solver admission is open and cryptographic, with tiny unknown-solver exposure and objective completed-fill promotion; public permissionless execution remains a deployment gate.
 
 The target production architecture opens quote creation and solver competition without opening public pooled custody. See [`PERMISSIONLESS_AUTOMATION.md`](PERMISSIONLESS_AUTOMATION.md). Optional EVM-to-Lightning identity linking is described in [`LIGHTNING_ACCOUNTS.md`](LIGHTNING_ACCOUNTS.md), and immutable version transitions are described in [`UPGRADES.md`](UPGRADES.md).
 

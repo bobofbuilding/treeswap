@@ -11,12 +11,15 @@ import {
   solverEndpointOriginDigest,
   solverEndpointPublicKeyDigest,
   solverLightningNodePubkeyDigest,
+  verifiedSolverQuoteBinding,
   verifySolverCapability,
 } from "../lib/solver-capability.mjs";
 
 const NOW = 2_000_000_000;
 const LIGHTNING_TO_BIT = "0x1111111111111111111111111111111111111111";
 const BIT_TO_LIGHTNING = "0x2222222222222222222222222222222222222222";
+const LIGHTNING_TO_BIT_CODE_HASH = id("lightning-to-bit-runtime");
+const BIT_TO_LIGHTNING_CODE_HASH = id("bit-to-lightning-runtime");
 const NODE_PUBKEY = `02${"33".repeat(32)}`;
 const OTHER_NODE_PUBKEY = `03${"44".repeat(32)}`;
 const LND_SIGNATURE = "y".repeat(104);
@@ -28,6 +31,8 @@ const policy = {
   chainId: "1",
   lightningToBitContract: LIGHTNING_TO_BIT,
   bitToLightningContract: BIT_TO_LIGHTNING,
+  lightningToBitContractCodeHash: LIGHTNING_TO_BIT_CODE_HASH,
+  bitToLightningContractCodeHash: BIT_TO_LIGHTNING_CODE_HASH,
   maxCapabilityTtlSeconds: 120,
   maxCapacityObservationAgeSeconds: 30,
   maxClockSkewSeconds: 5,
@@ -114,6 +119,26 @@ test("binds one short-lived EVM, Lightning-node, and HTTPS endpoint capability",
   assert.equal(result.binding.solverId, solver.address.toLowerCase());
   assert.equal(result.binding.lightningNodePubkey, NODE_PUBKEY);
   assert.equal(result.binding.endpointOrigin, endpointOrigin);
+  assert.equal(result.binding.settlementContractCodeHash, LIGHTNING_TO_BIT_CODE_HASH);
+  assert.match(result.capacitySnapshotDigest, /^0x[0-9a-f]{64}$/);
+  assert.deepEqual(verifiedSolverQuoteBinding(result), {
+    chainId: "1",
+    direction: "lightning-to-bit",
+    solverId: solver.address.toLowerCase(),
+    capabilityDigest: result.capabilityDigest,
+    capacitySnapshotDigest: result.capacitySnapshotDigest,
+    endpointPublicKeyDigest: solverEndpointPublicKeyDigest(endpointPublicKey),
+    settlementContract: LIGHTNING_TO_BIT,
+    settlementContractCodeHash: LIGHTNING_TO_BIT_CODE_HASH,
+    capacityEpoch: 7,
+    availableBitWei: String(100n * 10n ** 18n),
+    availableLightningSats: "250000",
+    expiresAt: NOW + 60,
+  });
+  assert.throws(
+    () => verifiedSolverQuoteBinding({ ...result }),
+    /locally verified capability/,
+  );
   assert.deepEqual(result.capacitySnapshot, {
     solverId: solver.address.toLowerCase(),
     capabilityDigest: result.capabilityDigest,

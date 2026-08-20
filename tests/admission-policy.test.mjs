@@ -23,6 +23,10 @@ const policy = {
   maxConsecutiveFailures: 2,
   minimumReliabilitySample: 4n,
   minimumReliabilityBps: 9_000n,
+  minimumCompletedFillsForEstablished: 3n,
+  unknownSolverMaxBitToLightningSats: 5_000n,
+  establishedSolverMaxBitToLightningSats: 100_000n,
+  maxGlobalBitToLightningInFlightSats: 500_000n,
 };
 
 function request(overrides = {}) {
@@ -43,7 +47,8 @@ function usage(overrides = {}) {
 
 function solver(overrides = {}) {
   return {
-    admitted: true,
+    capabilityDigest: id("verified-capability"),
+    snapshotDigest: id("verified-capacity-snapshot"),
     suspended: false,
     capacityObservedAt: NOW - 2,
     capabilityExpiresAt: NOW + 30,
@@ -105,13 +110,14 @@ test("rejects request flooding, cancellation churn, stale nonces, and dust", () 
   }
 });
 
-test("requires vetted, fresh, reliable, signed solver capacity", () => {
+test("requires cryptographically verified, fresh, reliable, signed solver capacity", () => {
   const accepted = assessFirmOffer({ offer: offer(), solver: solver(), policy, now: NOW });
   assert.equal(accepted.allowed, true);
   assert.equal(accepted.reliabilityBps, 9_000n);
 
   for (const [changed, reason] of [
-    [solver({ admitted: false }), /not admitted/],
+    [solver({ capabilityDigest: "operator-admitted" }), /not cryptographically verified/],
+    [solver({ snapshotDigest: "operator-approved" }), /not cryptographically bound/],
     [solver({ capabilityExpiresAt: NOW }), /capability expired/],
     [solver({ capabilityExpiresAt: NOW + 10 }), /outlives solver capability/],
     [solver({ capacityObservedAt: NOW - 11 }), /capacity is stale/],
@@ -121,6 +127,51 @@ test("requires vetted, fresh, reliable, signed solver capacity", () => {
     const result = assessFirmOffer({ offer: offer(), solver: changed, policy, now: NOW });
     assert.equal(result.allowed, false);
     assert.match(result.reasons.join("; "), reason);
+  }
+});
+
+test("caps unknown BIT-to-Lightning solvers and promotes only from completed-fill history", () => {
+  const unknown = solver({ successfulFills: 0n, attributableFailures: 0n });
+  const withinCap = assessFirmOffer({
+    offer: offer({ direction: "bit-to-lightning", bitAmountWei: 0n, lightningAmountSats: 5_000n }),
+    solver: unknown,
+    policy,
+    now: NOW,
+  });
+  assert.equal(withinCap.allowed, true);
+  assert.equal(withinCap.exposureTier, "unknown");
+  assert.equal(withinCap.exposureCapSats, 5_000n);
+
+  const aboveCap = assessFirmOffer({
+    offer: offer({ direction: "bit-to-lightning", bitAmountWei: 0n, lightningAmountSats: 5_001n }),
+    solver: unknown,
+    policy,
+    now: NOW,
+  });
+  assert.equal(aboveCap.allowed, false);
+  assert.match(aboveCap.reasons.join("; "), /unknown solver BIT-to-Lightning cap exceeded/);
+
+  const established = assessFirmOffer({
+    offer: offer({ direction: "bit-to-lightning", bitAmountWei: 0n, lightningAmountSats: 50_000n }),
+    solver: solver({ successfulFills: 3n, attributableFailures: 0n }),
+    policy,
+    now: NOW,
+  });
+  assert.equal(established.allowed, true);
+  assert.equal(established.exposureTier, "established");
+  assert.equal(established.exposureCapSats, 100_000n);
+});
+
+test("rejects malformed solver exposure policy instead of weakening after promotion", () => {
+  for (const changedPolicy of [
+    { ...policy, minimumCompletedFillsForEstablished: 0n },
+    { ...policy, unknownSolverMaxBitToLightningSats: 0n },
+    { ...policy, establishedSolverMaxBitToLightningSats: 4_999n },
+  ]) {
+    assert.throws(
+      () => assessFirmOffer({ offer: offer(), solver: solver(), policy: changedPolicy, now: NOW }),
+      RangeError,
+    );
   }
 });
 

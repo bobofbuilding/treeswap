@@ -1,6 +1,6 @@
 # Solver endpoint protocol
 
-Status: the local authenticated endpoint, finalized BIT-vault reader, and privacy-minimized Lightning-capacity protocol are implemented and qualified. No public solver endpoint, independently operated production reader, or permissionless admission service is deployed.
+Status: the local authenticated endpoint, finalized BIT-vault reader, privacy-minimized Lightning-capacity protocol, and open cryptographic repository admission are implemented. No public solver endpoint, independently operated production reader, or permissionless execution service is deployed.
 
 ## Purpose
 
@@ -36,13 +36,13 @@ This prevents DNS rebinding from turning an open solver URL into access to a coo
 
 An executable capability requires all of the following:
 
-1. the solver EVM key signed the exact EIP-712 declaration in the direction-specific escrow domain;
+1. the solver EVM key signed the exact EIP-712 declaration in the direction-specific escrow domain, including that escrow's expected runtime code hash;
 2. the endpoint Ed25519 key proved possession and signed the fresh response;
 3. the declared LND node signed the domain-bound proof and an independent verifier recovered that exact node public key;
 4. finalized onchain reads prove enough solver-owned BIT at the bound address or vault; and
 5. a least-privilege internal Lightning reader proves enough active directional capacity at the bound node and epoch.
 
-Signed self-report can only reduce the admitted amount; it never substitutes for either capacity reader. Onchain BIT inventory can be compared across independent finalized RPC providers. Lightning channel liquidity is private node state and cannot be made trustless by an intent wrapper. It therefore also requires tiny unknown-solver limits, reserved capacity, continuous reconciliation, completed-swap history, and a fail-closed operator boundary.
+Signed self-report can only reduce the admitted amount; it never substitutes for either capacity reader. The executable offer must reproduce the verifier-issued capability and snapshot digests, exact capacities, endpoint-key digest, runtime code hash, epoch, and expiry. Onchain BIT inventory can be compared across independent finalized RPC providers. Lightning channel liquidity is private node state and cannot be made trustless by an intent wrapper. It therefore also requires tiny unknown-solver limits, reserved capacity, continuous reconciliation, completed-swap history, and a fail-closed operator boundary.
 
 ## Remaining deployment gates
 
