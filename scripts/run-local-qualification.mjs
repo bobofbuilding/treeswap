@@ -72,6 +72,8 @@ const configurationFiles = [
   "lib/solver-capacity-readers.mjs",
   "lib/lightning-capacity-protocol.mjs",
   "lib/solver-daemon-planner.mjs",
+  "lib/solver-daemon-runtime.mjs",
+  "lib/solver-private-packet.mjs",
   "lib/settlement-policy.mjs",
 ];
 const configurationHashes = {};

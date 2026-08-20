@@ -1,13 +1,10 @@
-import { createHash, createPrivateKey, randomBytes } from "node:crypto";
+import { createHash, createPrivateKey, generateKeyPairSync, randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import {
-  dispatchLightningAction,
-  lightningActionCommitment,
-  readConfirmedLightningPaymentProof,
-  reconcileLightningAction,
-} from "../../lib/coordinator-action-runner.mjs";
+import { readConfirmedLightningPaymentProof } from "../../lib/coordinator-action-runner.mjs";
 import { CoordinatorStore, coordinatorCommitmentDigest } from "../../lib/coordinator-store.mjs";
 import { invoiceDigest } from "../../lib/lnd-rest-client.mjs";
+import { createAuthenticatedPrivatePacketClient, executeSolverDaemonStep } from "../../lib/solver-daemon-runtime.mjs";
+import { buildSignedPrivatePacketResponse } from "../../lib/solver-private-packet.mjs";
 
 const BYTES32 = /^0x[0-9a-f]{64}$/;
 
@@ -79,29 +76,10 @@ const settlement = {
   capacityEpoch: 1,
   createdAt: now,
 };
-const operation = {
-  paymentRequest: input.paymentRequest,
-  timeoutSeconds: 30,
-  feeLimitSats: "10",
-};
-const actionDraft = {
-  actionId: randomHash(),
-  settlementId: settlement.settlementId,
-  method: "/routerrpc.Router/SendPaymentV2",
-  requestId: randomHash(),
-  payloadDigest: randomHash(),
-  intentDigest: settlement.intentDigest,
-  paymentHash: settlement.paymentHash,
-  invoiceDigest: settlement.invoiceDigest,
-  amountSats: settlement.amountSats,
-  capacityEpoch: settlement.capacityEpoch,
-  plannedAt: now + 1,
-};
-const action = { ...actionDraft, payloadDigest: lightningActionCommitment(actionDraft, operation) };
 const databasePath = required("COORDINATOR_DATABASE_PATH");
 let store = await CoordinatorStore.open(databasePath);
 store.acceptSettlement(settlement);
-store.recordReservation({
+const observedReservation = {
   settlementId: settlement.settlementId,
   reservationId: randomHash(),
   reservationTxHash: randomHash(),
@@ -109,15 +87,86 @@ store.recordReservation({
   reservationBlockHash: randomHash(),
   reservationIntentDigest: settlement.intentDigest,
   observedAt: now + 1,
+};
+store.recordReservation(observedReservation);
+
+const packetRequesterKeys = generateKeyPairSync("ed25519");
+const packetProviderKeys = generateKeyPairSync("ed25519");
+const packetClient = createAuthenticatedPrivatePacketClient({
+  providerOrigin: "http://private-packet-provider.internal",
+  requesterPrivateKey: packetRequesterKeys.privateKey,
+  requesterKeyId: "coordinator-regtest",
+  providerPublicKey: packetProviderKeys.publicKey,
+  providerKeyId: "packet-provider-regtest",
+  minimumEvmSafetySeconds: 600,
+  requestTtlSeconds: 15,
+  nowSeconds: () => Math.floor(Date.now() / 1_000),
+  requestImpl: async (_url, options) => {
+    const request = JSON.parse(options.body);
+    const servedAt = Math.floor(Date.now() / 1_000);
+    const binding = request.payload;
+    const packet = {
+      settlementId: binding.settlementId,
+      reservationId: binding.reservationId,
+      actionId: binding.actionId,
+      payloadDigest: binding.payloadDigest,
+      purpose: binding.purpose,
+      direction: binding.direction,
+      intentDigest: binding.intentDigest,
+      paymentHash: binding.paymentHash,
+      invoiceDigest: binding.invoiceDigest,
+      quoteReceiptDigest: binding.quoteReceiptDigest,
+      selectedSetDigest: binding.selectedSetDigest,
+      selectedOfferId: binding.selectedOfferId,
+      capacityEpoch: binding.capacityEpoch,
+      quoteExpiresAt: servedAt + 60,
+      lightningActionDeadline: servedAt + 120,
+      evmRefundAt: servedAt + 720,
+      operation: {
+        paymentRequest: input.paymentRequest,
+        timeoutSeconds: 30,
+        feeLimitSats: "10",
+      },
+    };
+    const signed = buildSignedPrivatePacketResponse({
+      requestEnvelope: request,
+      requesterPublicKey: packetRequesterKeys.publicKey,
+      expectedRequesterKeyId: "coordinator-regtest",
+      packet,
+      providerKeyId: "packet-provider-regtest",
+      providerPrivateKey: packetProviderKeys.privateKey,
+      servedAt,
+      expiresAt: servedAt + 10,
+      minimumEvmSafetySeconds: 600,
+    });
+    return new Response(JSON.stringify(signed), { status: 200, headers: { "content-type": "application/json" } });
+  },
 });
-store.planAction(action);
+
+const controls = {
+  authorizeLightning: async ({ action, packet, packetResponseDigest }) => ({
+    authorized: true,
+    settlementId: settlement.settlementId,
+    reservationId: observedReservation.reservationId,
+    reservationBlockHash: observedReservation.reservationBlockHash,
+    actionId: action.actionId,
+    intentDigest: settlement.intentDigest,
+    packetResponseDigest,
+    quoteExpiresAt: packet.quoteExpiresAt,
+    lightningActionDeadline: packet.lightningActionDeadline,
+    evmRefundAt: packet.evmRefundAt,
+    expiresAt: Math.floor(Date.now() / 1_000) + 10,
+    evidenceDigest: coordinatorCommitmentDigest({
+      settlementId: settlement.settlementId,
+      reservationBlockHash: observedReservation.reservationBlockHash,
+      actionId: action.actionId,
+      packetResponseDigest,
+    }),
+  }),
+};
 
 let responseWasLost = false;
-try {
-  await dispatchLightningAction({
-    store,
-    actionId: action.actionId,
-    operation,
+const lightning = {
     privateKey,
     keyId: required("COORDINATOR_KEY_ID"),
     adapterUrl: "http://payer-adapter:3000",
@@ -125,15 +174,33 @@ try {
     requestImpl: async (url, options) => {
       const response = await fetch(url, options);
       const body = await response.clone().json();
-      if (response.ok && body?.result?.status === "SUCCEEDED") {
+      const method = JSON.parse(options.body).payload.method;
+      if (method === "/routerrpc.Router/SendPaymentV2" && response.ok && body?.result?.status === "SUCCEEDED") {
         responseWasLost = true;
         throw new Error("simulated loss after successful adapter response");
       }
       return response;
     },
-  });
-} catch (error) {
-  if (!responseWasLost || error?.ambiguous !== true) throw error;
+};
+
+const planned = await executeSolverDaemonStep({
+  store,
+  settlementId: settlement.settlementId,
+  packetClient,
+  controls,
+  lightning,
+});
+if (planned.outcome !== "ACTION_PLANNED") throw new Error("daemon did not plan the live payment action");
+const action = store.getAction(planned.actionId);
+const ambiguous = await executeSolverDaemonStep({
+  store,
+  settlementId: settlement.settlementId,
+  packetClient,
+  controls,
+  lightning,
+});
+if (!responseWasLost || ambiguous.outcome !== "DISPATCH_AMBIGUOUS") {
+  throw new Error("daemon did not preserve the lost payment response as ambiguous");
 }
 if (store.getAction(action.actionId)?.state !== "UNKNOWN") throw new Error("lost response did not enter UNKNOWN");
 store.close();
@@ -144,26 +211,21 @@ if (store.recoverInterruptedActions(Math.floor(Date.now() / 1_000)) !== 0) {
 }
 let reconciled;
 for (let attempt = 0; attempt < 40; attempt += 1) {
-  reconciled = await reconcileLightningAction({
+  reconciled = await executeSolverDaemonStep({
     store,
-    actionId: action.actionId,
-    reconciliationRequestId: randomHash(),
-    privateKey,
-    keyId: required("COORDINATOR_KEY_ID"),
-    adapterUrl: "http://payer-adapter:3000",
-    nowSeconds: () => Math.floor(Date.now() / 1_000),
+    settlementId: settlement.settlementId,
+    packetClient,
+    controls,
+    lightning,
   });
   if (reconciled.disposition !== "unresolved") break;
   await new Promise((resolve) => setTimeout(resolve, 250));
 }
-if (reconciled.disposition !== "confirmed" || reconciled.action.dispatchCount !== 1) {
+const reconciledAction = store.getAction(action.actionId);
+if (reconciled.disposition !== "confirmed" || reconciledAction.dispatchCount !== 1) {
   throw new Error(
-    `read-only reconciliation did not confirm exactly one dispatch: disposition=${reconciled.disposition}, actionState=${reconciled.action.state}, dispatchCount=${reconciled.action.dispatchCount}`,
+    `read-only reconciliation did not confirm exactly one dispatch: disposition=${reconciled.disposition}, actionState=${reconciledAction.state}, dispatchCount=${reconciledAction.dispatchCount}`,
   );
-}
-const recoveredPreimage = reconciled.transientResult?.preimage;
-if (!BYTES32.test(String(recoveredPreimage)) || paymentHashFor(recoveredPreimage) !== paymentHash) {
-  throw new Error("read-only reconciliation did not recover the exact payment preimage");
 }
 store.close();
 store = await CoordinatorStore.open(databasePath);
@@ -176,8 +238,9 @@ const restartedProof = await readConfirmedLightningPaymentProof({
   adapterUrl: "http://payer-adapter:3000",
   nowSeconds: () => Math.floor(Date.now() / 1_000),
 });
-if (restartedProof.preimage !== recoveredPreimage) {
-  throw new Error("confirmed payment proof changed after coordinator restart");
+const recoveredPreimage = restartedProof.preimage;
+if (!BYTES32.test(String(recoveredPreimage)) || paymentHashFor(recoveredPreimage) !== paymentHash) {
+  throw new Error("confirmed payment proof did not match after coordinator restart");
 }
 store.close();
 if (await databaseContains(databasePath, [
@@ -196,6 +259,8 @@ const evidence = {
   lostResponseState: "UNKNOWN",
   reconciliationState: "CONFIRMED",
   dispatchCount: 1,
+  daemonRuntime: true,
+  authenticatedPrivatePacket: true,
   rawInvoicePersisted: false,
   rawPreimagePersisted: false,
   evidenceDigest: coordinatorCommitmentDigest({
@@ -203,6 +268,8 @@ const evidence = {
     status: "passed",
     amountSats: input.amountSats,
     dispatchCount: 1,
+    daemonRuntime: true,
+    authenticatedPrivatePacket: true,
     rawInvoicePersisted: false,
     rawPreimagePersisted: false,
   }),

@@ -13,7 +13,8 @@ docker run --rm --read-only \
   "$runtime_image" \
   --test tests/admission-store.test.mjs tests/coordinator-store.test.mjs \
     tests/coordinator-action-runner.test.mjs tests/solver-capability.test.mjs \
-    tests/solver-daemon-planner.test.mjs tests/solver-endpoint-transport.test.mjs
+    tests/solver-daemon-planner.test.mjs tests/solver-daemon-runtime.test.mjs \
+    tests/solver-endpoint-transport.test.mjs tests/solver-private-packet.test.mjs
 docker run --rm --read-only \
   --tmpfs /tmp:rw,noexec,nosuid,size=64m \
   --tmpfs /data:rw,noexec,nosuid,size=512k,mode=0700,uid=1000,gid=1000 \
