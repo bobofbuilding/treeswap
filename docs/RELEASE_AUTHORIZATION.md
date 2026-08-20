@@ -52,4 +52,6 @@ The repository can verify signatures and configured provider agreement; it canno
 
 No production record, signer set, provider set, code hash, deployment manifest, review digest, or incident evidence is embedded in this repository. The shipped profile remains closed. A public-testnet record must be assembled only after the independent deployments exist; a mainnet record must additionally bind the completed public-testnet campaign and every independent review.
 
+The deployment-manifest input must first pass the [signed deployment-manifest promotion](./DEPLOYMENT_PROMOTION.md) boundary. That verifier rechecks the exact policy, source, canonical finalized provider observations, observed topology and code, and review bundle before distinct provider, contract-reviewer, and operations-reviewer signatures can derive candidate deployment evidence. Its output cannot activate a release capability.
+
 The candidate campaign format and verifier are specified in [Public-testnet campaign evidence](./PUBLIC_TESTNET_EVIDENCE.md). Its provenance-bound mapper supplies exact deployment, policy, provider, solver, monitoring, backup, incident, qualification, finding-disposition, campaign, and operator-count inputs for release assembly. It does not sign a release or activate capabilities.

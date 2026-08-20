@@ -24,7 +24,7 @@ Policies cannot weaken the absolute seven-day, operator-count, bidirectional sam
 
 ## Operator workflow
 
-1. Freeze a reviewed source commit, policies, fee schedule, and closed testnet deployment manifest.
+1. Freeze a reviewed source commit, policies, fee schedule, and closed testnet deployment manifest. Promote the manifest only through the [signed deployment-manifest promotion](./DEPLOYMENT_PROMOTION.md) boundary after matching independent observations and reviews exist.
 2. Record retained organizational evidence for every participant. An operator digest is a pseudonymous commitment, not proof of independence.
 3. Run the campaign using only operator-owned test assets. Preserve secret-free evidence digests for all required scenarios and alert deliveries.
 4. Close the gate, reconcile BIT, Lightning, and in-flight state to zero unexplained liabilities, and assemble the canonically ordered record.

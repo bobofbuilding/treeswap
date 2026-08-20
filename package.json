@@ -48,6 +48,8 @@
     "qualify:local": "node scripts/run-local-qualification.mjs",
     "prepare:testnet-attestation": "node scripts/prepare-public-testnet-attestation.mjs",
     "verify:testnet-evidence": "node scripts/verify-public-testnet-evidence.mjs",
+    "prepare:deployment-promotion": "node scripts/prepare-deployment-promotion-approval.mjs",
+    "verify:deployment-promotion": "node scripts/verify-deployment-promotion.mjs",
     "regtest:status": "bash infra/regtest/lab.sh status",
     "regtest:down": "bash infra/regtest/lab.sh down"
   },

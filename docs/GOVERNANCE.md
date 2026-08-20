@@ -1,6 +1,6 @@
 # Governance and deployment boundary
 
-Status: immutable contracts, a fail-closed deployment policy, a finalized RPC observer, a closed local deployment rehearsal, and a cryptographic release-authorization boundary are implemented. No production roles, contracts, or signed release record have been deployed.
+Status: immutable contracts, a fail-closed deployment policy, a finalized RPC observer, a provider- and reviewer-signed manifest-promotion boundary, a closed local deployment rehearsal, and a cryptographic release-authorization boundary are implemented. No production roles, contracts, signed manifest promotion, or signed release record have been deployed.
 
 TreeSwap’s two asset escrows have no administrator, proxy, fee setter, treasury setter, or pause function. Their token, payment-hash registry, safety gate, fee collector, reference limits, volume limits, and absolute fee caps are constructor immutables. The payment-hash registry accepts exactly two escrow consumers and is then irreversibly sealed.
 
@@ -18,6 +18,8 @@ Before deployment approval, a manifest must prove:
 Funding authorization is a separate later step. It requires one exact expiring release record and its exact policy digest approved by controller, guardian, Lightning operator, security reviewer, and incident commander. Controller and guardian ERC-1271 approvals must agree at one canonical finalized block across at least two configured provider identities and match the reviewed wallet runtime hashes. The record also binds external evidence, reviews, operator counts, feature exclusions, and exact risk limits. See [Release authorization boundary](./RELEASE_AUTHORIZATION.md).
 
 `lib/deployment-observer.mjs` reconstructs those facts at one canonical finalized block. It reads contract-wallet owners and thresholds, EIP-1967 BIT implementation state, every runtime code hash, gate roles and closed state, both escrow immutable bindings and limits, and the sealed registry set. Two observations are eligible only when distinct provider identities agree on the exact block and canonical manifest digest.
+
+Matching observations remain unreviewed until the [signed deployment-manifest promotion](./DEPLOYMENT_PROMOTION.md) ceremony passes. That boundary revalidates the deployment policy and exact observations, binds the review bundle and findings disposition, and requires every provider plus separate contract and operations reviewers to sign one short-lived EIP-712 record and policy. Its module-private result can derive candidate evidence only; it cannot open the gate or authorize funding.
 
 ## Local closed-deployment evidence
 

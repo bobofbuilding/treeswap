@@ -21,6 +21,7 @@ The prototype assumes a business par value of **1 BIT = 100 sats**. This value i
 - Fail-closed market, proxy, finality, and inventory policy in [`docs/RISK_POLICY.md`](docs/RISK_POLICY.md)
 - Secret-free fail-closed monitoring and actual-gate halt evidence in [`docs/MONITORING.md`](docs/MONITORING.md)
 - Finalized read-only deployment observation and closed governance rehearsal in [`docs/GOVERNANCE.md`](docs/GOVERNANCE.md)
+- Provider- and reviewer-signed deployment-manifest promotion in [`docs/DEPLOYMENT_PROMOTION.md`](docs/DEPLOYMENT_PROMOTION.md)
 - Deterministic cross-chain clock and payment-authorization policy in [`docs/SETTLEMENT_POLICY.md`](docs/SETTLEMENT_POLICY.md)
 - Multi-solver signed RFQ validation and deterministic received-set policy in [`docs/RFQ_POLICY.md`](docs/RFQ_POLICY.md)
 - Canonical integer units and BIT-only fee policy in [`docs/UNITS_AND_ROUNDING.md`](docs/UNITS_AND_ROUNDING.md) and [`docs/FEES.md`](docs/FEES.md)
@@ -28,6 +29,7 @@ The prototype assumes a business par value of **1 BIT = 100 sats**. This value i
 - Phase-by-phase evidence ledger in [`docs/LAUNCH_CHECKLIST.md`](docs/LAUNCH_CHECKLIST.md)
 - Ordered production gates in [`docs/PRODUCTION_READINESS.md`](docs/PRODUCTION_READINESS.md)
 - Permissionless solver target in [`docs/PERMISSIONLESS_AUTOMATION.md`](docs/PERMISSIONLESS_AUTOMATION.md)
+- Signed multi-operator public-testnet campaign evidence in [`docs/PUBLIC_TESTNET_EVIDENCE.md`](docs/PUBLIC_TESTNET_EVIDENCE.md)
 - Authenticated solver request/response boundary in [`docs/SOLVER_ENDPOINT.md`](docs/SOLVER_ENDPOINT.md)
 - Optional Lightning account linking in [`docs/LIGHTNING_ACCOUNTS.md`](docs/LIGHTNING_ACCOUNTS.md)
 - Immutable version transitions in [`docs/UPGRADES.md`](docs/UPGRADES.md)
@@ -46,7 +48,7 @@ Email preferences are attached to the signed-in wallet account, never included i
 
 ## Security status
 
-This repository is not audited and the bridge is not ready for real funds. The design removes the shared public pool, public order book, and rewards from v1. Immutable escrows, deterministic timeout policy, signed quote selection, a three-key short-lived solver capability verifier, an authenticated replay-resistant solver endpoint protocol, a dual-provider finalized BIT-vault reader, privacy-minimized signed Lightning-capacity observations, fail-closed risk gates, a pinned BIT mainnet-fork campaign, isolated invoice/payer LND adapters with live credential, node-possession, and hold-invoice fault evidence, a crash-safe Lightning coordinator, an authenticated one-use private-packet protocol, a bounded solver executor, an exact-transaction EVM claim outbox, and a secret-free actual-gate halt monitor now pass locally. Production deployment of those readers, packet providers, endpoints, and monitor, independent-provider/operator evidence, public-testnet finality and chain/channel campaigns, deployed solver daemons and persistence, multisigs, live alert delivery, incident drills, and independent review remain release-blocking. Direct sends are ordinary wallet payments rather than bridge transactions, but they are irreversible and depend on the user's wallet, destination, token contract, and invoice validation.
+This repository is not audited and the bridge is not ready for real funds. The design removes the shared public pool, public order book, and rewards from v1. Immutable escrows, deterministic timeout policy, signed quote selection, a three-key short-lived solver capability verifier, an authenticated replay-resistant solver endpoint protocol, a dual-provider finalized BIT-vault reader, privacy-minimized signed Lightning-capacity observations, fail-closed risk gates, a pinned BIT mainnet-fork campaign, a provider- and reviewer-signed manifest-promotion boundary, isolated invoice/payer LND adapters with live credential, node-possession, and hold-invoice fault evidence, a crash-safe Lightning coordinator, an authenticated one-use private-packet protocol, a bounded solver executor, an exact-transaction EVM claim outbox, and a secret-free actual-gate halt monitor now pass locally. Production deployment of those readers, packet providers, endpoints, and monitor, genuinely independent provider/reviewer evidence, public-testnet finality and chain/channel campaigns, deployed solver daemons and persistence, multisigs, live alert delivery, incident drills, and independent review remain release-blocking. Direct sends are ordinary wallet payments rather than bridge transactions, but they are irreversible and depend on the user's wallet, destination, token contract, and invoice validation.
 
 ## Local preview
 
