@@ -62,6 +62,7 @@ jobs:
       - run: node --check lib/evm-action-runner.mjs
       - run: node --check lib/qualification-evidence.mjs
       - run: node --check lib/solver-capability.mjs
+      - run: node --check lib/solver-endpoint-transport.mjs
       - run: node --check infra/coordinator/smoke.mjs
       - run: node --check infra/coordinator/invoice-smoke.mjs
       - run: node --check infra/coordinator/disk-full-smoke.mjs

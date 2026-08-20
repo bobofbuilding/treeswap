@@ -11,7 +11,8 @@ docker run --rm --read-only \
   --mount type=bind,src="$project_root/tests",dst=/app/tests,readonly \
   --entrypoint node \
   "$runtime_image" \
-  --test tests/admission-store.test.mjs tests/coordinator-store.test.mjs tests/solver-capability.test.mjs
+  --test tests/admission-store.test.mjs tests/coordinator-store.test.mjs \
+    tests/solver-capability.test.mjs tests/solver-endpoint-transport.test.mjs
 docker run --rm --read-only \
   --tmpfs /tmp:rw,noexec,nosuid,size=64m \
   --tmpfs /data:rw,noexec,nosuid,size=512k,mode=0700,uid=1000,gid=1000 \

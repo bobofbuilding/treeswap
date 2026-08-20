@@ -62,6 +62,7 @@ const configurationFiles = [
   "lib/coordinator-action-runner.mjs",
   "lib/evm-action-runner.mjs",
   "lib/solver-capability.mjs",
+  "lib/solver-endpoint-transport.mjs",
   "lib/settlement-policy.mjs",
 ];
 const configurationHashes = {};
