@@ -40,6 +40,8 @@ const evidenceFields = [
   "admissionPolicy",
   "backupRestore",
   "deploymentManifest",
+  "deploymentPostflight",
+  "deploymentPromotion",
   "feeSchedule",
   "findingsDisposition",
   "incidentDrills",
@@ -56,7 +58,7 @@ const reviewFields = ["contracts", "coordinator", "identityPrivacy", "lightning"
 
 function record(overrides = {}) {
   const base = {
-    schema: "treeswap.release-record.v1",
+    schema: "treeswap.release-record.v2",
     releaseId: id("treeswap public testnet release 1").toLowerCase(),
     protocolVersion: "1.0.0-testnet.1",
     environment: "public-testnet",
@@ -107,12 +109,14 @@ function record(overrides = {}) {
 
 function policy(release = record(), overrides = {}) {
   const base = {
-    schema: "treeswap.release-policy.v1",
+    schema: "treeswap.release-policy.v2",
     environment: release.environment,
     chainId: release.chainId,
     verifyingContract: release.verifyingContract,
     reviewedBuildCommit: release.reviewedBuildCommit,
     deploymentManifestDigest: release.evidenceDigests.deploymentManifest,
+    deploymentPostflightDigest: release.evidenceDigests.deploymentPostflight,
+    deploymentPromotionDigest: release.evidenceDigests.deploymentPromotion,
     admissionPolicyDigest: release.evidenceDigests.admissionPolicy,
     riskPolicyDigest: release.evidenceDigests.riskPolicy,
     feeScheduleDigest: release.evidenceDigests.feeSchedule,
@@ -246,6 +250,8 @@ test("activates operator funding only from one exact five-role signed release re
     releaseRecordDigest: verification.recordDigest,
     releasePolicyDigest: verification.policyDigest,
     deploymentManifestDigest: release.evidenceDigests.deploymentManifest,
+    deploymentPostflightDigest: release.evidenceDigests.deploymentPostflight,
+    deploymentPromotionDigest: release.evidenceDigests.deploymentPromotion,
     gateOpen: true,
     openGateRiskDigest: id("active risk attestation").toLowerCase(),
     balancesReconciled: true,
@@ -334,6 +340,69 @@ test("rejects missing, duplicated, wrong-role, and record-replayed approvals", a
   assert.match(providerResult.reasons.join("; "), /quorum verifier does not match release policy/);
 });
 
+test("release and runtime funding require the exact promotion and postflight digests", async () => {
+  const legacy = record({ schema: "treeswap.release-record.v1" });
+  const legacyResult = await verifyReleaseAuthorization({
+    record: legacy,
+    policy: policy(record()),
+    approvals: [],
+    now: NOW,
+  });
+  assert.equal(legacyResult.valid, false);
+  assert.match(legacyResult.reasons.join("; "), /schema is invalid/);
+
+  const missingPostflight = record({
+    evidenceDigests: { ...record().evidenceDigests, deploymentPostflight: ZERO },
+  });
+  const missingResult = await verifyReleaseAuthorization({
+    record: missingPostflight,
+    policy: policy(record()),
+    approvals: [],
+    now: NOW,
+  });
+  assert.equal(missingResult.valid, false);
+  assert.match(missingResult.reasons.join("; "), /deploymentPostflight evidence is required/);
+
+  const substitutedPromotion = record({
+    evidenceDigests: {
+      ...record().evidenceDigests,
+      deploymentPromotion: id("substituted deployment promotion").toLowerCase(),
+    },
+  });
+  const substitutedResult = await verifyReleaseAuthorization({
+    record: substitutedPromotion,
+    policy: policy(record()),
+    approvals: [],
+    now: NOW,
+  });
+  assert.equal(substitutedResult.valid, false);
+  assert.match(substitutedResult.reasons.join("; "), /deploymentPromotion digest does not match release policy/);
+
+  const release = record();
+  const verification = await verify(release);
+  const capabilities = activateReleaseCapabilities({ verification, now: NOW });
+  const runtime = {
+    releaseRecordDigest: verification.recordDigest,
+    releasePolicyDigest: verification.policyDigest,
+    deploymentManifestDigest: release.evidenceDigests.deploymentManifest,
+    deploymentPostflightDigest: id("wrong runtime postflight").toLowerCase(),
+    deploymentPromotionDigest: release.evidenceDigests.deploymentPromotion,
+    gateOpen: true,
+    openGateRiskDigest: id("runtime risk").toLowerCase(),
+    balancesReconciled: true,
+    reconciliationDigest: id("runtime reconciliation").toLowerCase(),
+    observedAt: NOW,
+  };
+  const decision = authorizeSolverFunding({
+    session: { authenticated: true, role: "solver", capabilityVerified: true },
+    deployment: runtime,
+    capabilities,
+    now: NOW,
+  });
+  assert.equal(decision.allowed, false);
+  assert.match(decision.reasons.join("; "), /not bound to the authorized release/);
+});
+
 test("enforces independent-operator counts, caps, reserves, lifetime, and current runtime state", async () => {
   const underCount = record({
     counts: { ...record().counts, independentSolvers: 1 },
@@ -387,6 +456,8 @@ test("copied verification objects, copied capabilities, stale observations, and 
     releaseRecordDigest: verification.recordDigest,
     releasePolicyDigest: verification.policyDigest,
     deploymentManifestDigest: verification.record.evidenceDigests.deploymentManifest,
+    deploymentPostflightDigest: verification.record.evidenceDigests.deploymentPostflight,
+    deploymentPromotionDigest: verification.record.evidenceDigests.deploymentPromotion,
     gateOpen: true,
     openGateRiskDigest: id("risk").toLowerCase(),
     balancesReconciled: true,
@@ -435,7 +506,7 @@ test("copied verification objects, copied capabilities, stale observations, and 
   assert.match(arbitrary.reasons.join("; "), /cryptographically verified/);
 });
 
-test("mainnet beta cannot omit a prior release, public-testnet evidence, reviews, or finding disposition", async () => {
+test("release v2 cannot authorize mainnet before an equivalent mainnet postflight exists", async () => {
   const base = record();
   const mainnet = record({
     environment: "capped-mainnet-beta",
@@ -456,7 +527,7 @@ test("mainnet beta cannot omit a prior release, public-testnet evidence, reviews
     now: NOW,
   });
   assert.equal(result.valid, false);
-  assert.match(result.reasons.join("; "), /prior release digest|publicTestnet evidence|review/);
+  assert.match(result.reasons.join("; "), /only the closed public-testnet/);
 });
 
 test("expired signed records and closed records cannot produce active funding capabilities", async () => {

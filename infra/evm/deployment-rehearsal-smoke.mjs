@@ -11,6 +11,7 @@ import {
   id,
   keccak256,
   parseEther,
+  toUtf8Bytes,
 } from "ethers";
 import { BIT_MAINNET_CONTRACT, createJsonRpcClient } from "../../lib/bit-deployment-observer.mjs";
 import { buildClosedTestnetDeploymentPlan } from "../../lib/closed-testnet-deployment-plan.mjs";
@@ -34,6 +35,11 @@ import {
   observeDeploymentManifest,
 } from "../../lib/deployment-observer.mjs";
 import { validateDeploymentManifest } from "../../lib/deployment-policy.mjs";
+import {
+  buildDeploymentPromotionApprovalMessage,
+  buildDeploymentPromotionReleaseEvidence,
+  verifyDeploymentManifestPromotion,
+} from "../../lib/deployment-manifest-promotion.mjs";
 
 const RPC_URL = process.env.DEPLOYMENT_REHEARSAL_RPC_URL;
 const MNEMONIC = process.env.DEPLOYMENT_REHEARSAL_MNEMONIC;
@@ -41,8 +47,29 @@ const SOURCE_COMMIT = String(process.env.DEPLOYMENT_REHEARSAL_SOURCE_COMMIT ?? "
 const PROXY_PORT = Number(process.env.DEPLOYMENT_REHEARSAL_PROXY_PORT);
 const ANVIL_VERSION = String(process.env.DEPLOYMENT_REHEARSAL_ANVIL_VERSION ?? "");
 const CHAIN_ID = 11_155_111n;
-const NO_REVIEW_DIGEST = id("treeswap-deployment-rehearsal:no-independent-review").toLowerCase();
+const LOCAL_REVIEW_ARTIFACTS = Object.freeze({
+  compilerInputs: id("deployment rehearsal compiler inputs").toLowerCase(),
+  findingsDisposition: id("deployment rehearsal findings disposition").toLowerCase(),
+  providerIndependence: id("deployment rehearsal provider non-independence").toLowerCase(),
+  rolesAndStorage: id("deployment rehearsal roles and storage").toLowerCase(),
+  sourceBundles: id("deployment rehearsal source bundles").toLowerCase(),
+  upgradeBehavior: id("deployment rehearsal upgrade behavior").toLowerCase(),
+});
 const MAINNET_BIT_IMPLEMENTATION = "0xa27b118c0770939295f052aE1b003366E5eF806F";
+
+function canonical(value) {
+  if (Array.isArray(value)) return value.map(canonical);
+  if (value && typeof value === "object") {
+    return Object.fromEntries(Object.keys(value).sort().map((key) => [key, canonical(value[key])]));
+  }
+  return value;
+}
+
+function keccakCanonical(value) {
+  return keccak256(toUtf8Bytes(JSON.stringify(canonical(value)))).toLowerCase();
+}
+
+const LOCAL_REVIEW_DIGEST = keccakCanonical(LOCAL_REVIEW_ARTIFACTS);
 
 if (!RPC_URL || !MNEMONIC) throw new Error("deployment rehearsal requires an ephemeral RPC URL and mnemonic");
 if (!/^[0-9a-f]{40}$/.test(SOURCE_COMMIT)) throw new Error("deployment rehearsal source commit is invalid");
@@ -161,7 +188,7 @@ try {
     environment: "public-testnet",
     chainId: String(CHAIN_ID),
     reviewedBuildCommit: SOURCE_COMMIT,
-    independentReviewDigest: NO_REVIEW_DIGEST,
+    independentReviewDigest: LOCAL_REVIEW_DIGEST,
     deployer: wallets[0].address,
     startingNonce: String(startingNonce),
     roles: {
@@ -340,9 +367,9 @@ try {
   const observationInput = {
     addresses,
     reviewedBuildCommit: SOURCE_COMMIT,
-    independentReviewDigest: NO_REVIEW_DIGEST,
+    independentReviewDigest: LOCAL_REVIEW_DIGEST,
     targetBlockNumber: sealReceipt.blockNumber,
-    observedAt: new Date("2026-08-20T09:00:00.000Z"),
+    observedAt: new Date(),
   };
   const [primaryObservation, proxyObservation] = await Promise.all([
     observeDeploymentManifest({
@@ -367,7 +394,7 @@ try {
   const localPolicy = {
     chainId: Number(CHAIN_ID),
     reviewedBuildCommit: SOURCE_COMMIT,
-    independentReviewDigest: NO_REVIEW_DIGEST,
+    independentReviewDigest: LOCAL_REVIEW_DIGEST,
     minResumeDelaySeconds: 86_400,
     maxOpenDurationSeconds: 604_800,
     absoluteMaxFeeBps: 500,
@@ -484,6 +511,81 @@ try {
   assert.equal(postflightVerification.status, "cryptographically-verified-finalized-deployment-execution");
   assert.equal(postflightVerification.fundingAuthorization, false);
 
+  const promotionObservations = [primaryObservation, proxyObservation]
+    .sort((left, right) => left.providerIdentity.localeCompare(right.providerIdentity));
+  const promotionProviderObservations = promotionObservations.map((observation) => ({
+    providerIdentity: observation.providerIdentity,
+    observationDigest: keccakCanonical(observation),
+  }));
+  const promotedAt = Math.floor(Date.now() / 1_000);
+  const promotionRecord = {
+    schema: "treeswap.deployment-promotion-record.v2",
+    promotionId: id(`treeswap-deployment-rehearsal:promotion:${promotedAt}`).toLowerCase(),
+    environment: "public-testnet",
+    chainId: String(CHAIN_ID),
+    verifyingContract: await gate.getAddress(),
+    reviewedBuildCommit: SOURCE_COMMIT,
+    deploymentPolicyDigest: keccakCanonical(localPolicy),
+    manifestDigest: primaryObservation.manifestDigest,
+    postflightRecordDigest: postflightVerification.recordDigest,
+    postflightPolicyDigest: postflightVerification.policyDigest,
+    finalizedBlockNumber: String(primaryObservation.finalizedBlock.number),
+    finalizedBlockHash: primaryObservation.finalizedBlock.hash,
+    providerObservations: promotionProviderObservations,
+    reviewArtifacts: LOCAL_REVIEW_ARTIFACTS,
+    promotedAt,
+    validUntil: promotedAt + 3_600,
+  };
+  const promotionPolicy = {
+    schema: "treeswap.deployment-promotion-policy.v2",
+    environment: promotionRecord.environment,
+    chainId: promotionRecord.chainId,
+    verifyingContract: promotionRecord.verifyingContract,
+    reviewedBuildCommit: promotionRecord.reviewedBuildCommit,
+    deploymentPolicyDigest: promotionRecord.deploymentPolicyDigest,
+    manifestDigest: promotionRecord.manifestDigest,
+    postflightRecordDigest: promotionRecord.postflightRecordDigest,
+    postflightPolicyDigest: promotionRecord.postflightPolicyDigest,
+    minimumProviderCount: 2,
+    maximumObservationAgeSeconds: 3_600,
+    maximumPromotionLifetimeSeconds: 86_400,
+    approvers: postflightApprovers.map((approver) => ({
+      role: approver.role,
+      approverId: approver.approverId,
+      signer: approver.wallet.address,
+    })),
+  };
+  const promotionAttestations = [];
+  for (const approver of postflightApprovers) {
+    const approval = buildDeploymentPromotionApprovalMessage({
+      record: promotionRecord,
+      policy: promotionPolicy,
+      deploymentPolicy: localPolicy,
+      observations: promotionObservations,
+      postflightVerification,
+      role: approver.role,
+      approverId: approver.approverId,
+    });
+    promotionAttestations.push({
+      role: approver.role,
+      approverId: approver.approverId,
+      signer: approver.wallet.address,
+      signature: await approver.wallet.signTypedData(approval.domain, approval.types, approval.value),
+    });
+  }
+  const promotionVerification = verifyDeploymentManifestPromotion({
+    record: promotionRecord,
+    policy: promotionPolicy,
+    deploymentPolicy: localPolicy,
+    observations: promotionObservations,
+    postflightVerification,
+    attestations: promotionAttestations,
+    now: promotedAt,
+  });
+  const promotionReleaseEvidence = buildDeploymentPromotionReleaseEvidence(promotionVerification);
+  assert.equal(promotionReleaseEvidence.deploymentPostflight, postflightVerification.recordDigest);
+  assert.equal(promotionReleaseEvidence.deploymentPromotion, promotionVerification.recordDigest);
+
   const captured = structuredClone(manifest);
   captured.guardian.ownerAddresses = [...captured.controller.ownerAddresses];
   const capturedResult = validateDeploymentManifest(captured, localPolicy);
@@ -547,7 +649,7 @@ try {
   });
 
   const evidence = Object.freeze({
-    schema: "treeswap.deployment-rehearsal-smoke.v3",
+    schema: "treeswap.deployment-rehearsal-smoke.v4",
     chainId: String(CHAIN_ID),
     executionClient: ANVIL_VERSION,
     actualTreeSwapGateRegistryAndEscrows: true,
@@ -562,6 +664,12 @@ try {
       === "cryptographically-verified-finalized-deployment-execution",
     postflightProviderSignatures: 2,
     postflightReviewerSignatures: 2,
+    postflightBoundPromotionVerified: promotionVerification.status
+      === "cryptographically-verified-deployment-promotion",
+    promotionProviderSignatures: 2,
+    promotionReviewerSignatures: 2,
+    promotionPostflightDigest: promotionReleaseEvidence.deploymentPostflight,
+    promotionDigest: promotionReleaseEvidence.deploymentPromotion,
     exactCreationAndSafeReceiptsReconstructed: true,
     deploymentPlanDigest: deploymentPlan.planDigest,
     finalizedCanonicalRpcObservation: true,

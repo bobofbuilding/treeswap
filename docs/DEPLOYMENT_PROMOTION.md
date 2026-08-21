@@ -1,23 +1,24 @@
 # Signed deployment-manifest promotion
 
-Status: the repository can verify promotion of matching finalized deployment observations into candidate reviewed-manifest evidence. Observation schema `treeswap.deployment-observation.v2` additionally binds the raw BIT balances and contract accounting at that same canonical block. No independent provider, reviewer, deployed public-testnet contract, Safe, hardware signer, or funding authorization is included.
+Status: the repository can verify promotion of matching finalized closed public-testnet deployment observations into candidate reviewed-manifest evidence. Observation schema `treeswap.deployment-observation.v2` additionally binds the raw BIT balances and contract accounting at that same canonical block. Mainnet promotion remains unsupported until an equivalent mainnet preflight/postflight ceremony exists. No independent provider, reviewer, deployed public-testnet contract, Safe, hardware signer, or funding authorization is included.
 
-Promotion validates finalized state and the external review-artifact set. It does not reconstruct the transactions that created that state. The separate [signed deployment postflight](./CLOSED_TESTNET_DEPLOYMENT_POSTFLIGHT.md) binds the exact preflight to all four creation receipts and three Safe receipts. Both ceremonies are required; making release authorization cryptographically require the postflight digest remains an open release blocker.
+Promotion validates finalized state and the external review-artifact set. It does not reconstruct the transactions itself. Instead, promotion v2 accepts only a module-private verification of the complete [signed deployment postflight](./CLOSED_TESTNET_DEPLOYMENT_POSTFLIGHT.md), then binds that exact postflight record and policy digest into every promotion signature.
 
 ## Purpose
 
 An RPC observation is not a reviewed deployment manifest. A label such as “provider two,” a matching JSON file, or a copied `eligible: true` result cannot prove who observed the deployment, which policy was applied, which reviews were completed, or what exact finalized block was approved.
 
-`lib/deployment-manifest-promotion.mjs` therefore requires one exact `treeswap.deployment-promotion-record.v1` under one exact `treeswap.deployment-promotion-policy.v1`. The record binds:
+`lib/deployment-manifest-promotion.mjs` therefore requires one exact `treeswap.deployment-promotion-record.v2` under one exact `treeswap.deployment-promotion-policy.v2`. Legacy v1 objects fail closed. The record binds:
 
 - the environment, chain, gate, reviewed source commit, exact deployment-policy digest, and exact manifest digest;
+- the exact verified postflight record and policy digests;
 - one canonical finalized block number and hash;
 - at least two canonically ordered provider identities and their exact observation digests;
 - nonzero review digests for matched source bundles, compiler inputs, roles and storage, upgrade behavior, provider independence, and findings disposition;
 - observations no more than one hour old when promoted and a promotion valid for no more than one day; and
 - distinct provider signers plus exactly one distinct contract reviewer and one distinct operations reviewer.
 
-The verifier rechecks every observation rather than trusting a comparison result. All providers must report the identical source, chain, finalized block, canonical EIP-1898 anchor, manifest, and manifest digest. It then applies the strict deployment policy to the observed closed gate, role-separated contract wallets, sealed two-escrow registry, immutable escrows, BIT proxy and implementation, EIP-1967 slot, bytecode hashes, fee and price limits, reference price, and exact zero-balance postconditions. The vault's `totalAvailable`, `totalLocked`, `accountedBalance`, and raw BIT balance must all reconcile and equal zero. The user escrow's `totalLocked` and raw BIT balance must reconcile and equal zero. A consistent but pre-funded deployment is still rejected.
+The verifier first re-verifies the complete signed postflight in the same process. A copied summary has no provenance and fails. The promotion must retain the exact postflight provider and reviewer set and match its deployment policy, source, chain, gate, manifest, finalized block, and validity window. It then rechecks every fresh promotion observation rather than trusting a comparison result. All providers must report the identical source, chain, finalized block, canonical EIP-1898 anchor, manifest, and manifest digest. The strict deployment policy is applied again, including exact zero-balance postconditions. A consistent but pre-funded deployment is still rejected.
 
 The aggregate review-bundle digest must be the exact `independentReviewDigest` in both the observed manifest and deployment policy. Any changed review artifact, observation, policy, code hash, signer, validity window, or block invalidates every approval.
 
@@ -49,7 +50,46 @@ npm run observe:deployment-manifest -- \
 
 RPC URLs are accepted only through the environment and never written to evidence. Outputs are non-overwriting mode-`0600` files. Do not treat two endpoints backed by one operator or execution backend as independent.
 3. Assemble the canonical record, policy, deployment policy, and ordered observation set. The deployment must still be closed and the payment-hash registry must already be irreversibly sealed to the two exact escrows.
-4. Each listed provider operator and reviewer independently prepares the exact EIP-712 payload:
+4. Retain the complete preflight and postflight files. Place them into one exact, secret-free `treeswap.deployment-promotion-postflight-bundle.v1` JSON object with these fields:
+
+```json
+{
+  "schema": "treeswap.deployment-promotion-postflight-bundle.v1",
+  "plan": {},
+  "preflightPolicy": {},
+  "preflightRecord": {},
+  "preflightObservations": [],
+  "preflightAttestations": [],
+  "policy": {},
+  "record": {},
+  "observations": [],
+  "attestations": []
+}
+```
+
+The command validates the exact bundle shape and re-verifies all nested records, observations, and signatures. It never trusts a previously emitted summary.
+
+Create the non-overwriting mode-`0600` bundle with:
+
+```sh
+npm run prepare:deployment-promotion-postflight -- \
+  --plan unsigned-plan.json \
+  --preflight-policy preflight-policy.json \
+  --preflight-record preflight-record.json \
+  --preflight-observations preflight-observations.json \
+  --preflight-attestations preflight-attestations.json \
+  --deployment-policy deployment-policy.json \
+  --policy postflight-policy.json \
+  --record postflight-record.json \
+  --observations postflight-observations.json \
+  --attestations postflight-attestations.json \
+  --promotion-record promotion-record.json \
+  --out postflight-bundle.json
+```
+
+The preparer refuses a bundle whose verified record or policy digest is not already named by the promotion record.
+
+5. Each retained provider operator and reviewer independently prepares the exact EIP-712 payload:
 
 ```sh
 npm run prepare:deployment-promotion -- \
@@ -57,13 +97,14 @@ npm run prepare:deployment-promotion -- \
   --policy promotion-policy.json \
   --deployment-policy deployment-policy.json \
   --observations observations.json \
+  --postflight-bundle postflight-bundle.json \
   --role provider \
   --approver-id 0x...
 ```
 
 The command emits typed data only. It never accepts a private key or signs for an operator. Each approver signs with the separately controlled identity named in policy.
 
-5. Collect one canonically ordered attestation per approver and verify the complete bundle:
+6. Collect one canonically ordered attestation per approver and verify the complete bundle:
 
 ```sh
 npm run verify:deployment-promotion -- \
@@ -71,14 +112,15 @@ npm run verify:deployment-promotion -- \
   --policy promotion-policy.json \
   --deployment-policy deployment-policy.json \
   --observations observations.json \
-  --attestations attestations.json
+  --attestations attestations.json \
+  --postflight-bundle postflight-bundle.json
 ```
 
 The verifier returns the exact record and policy digests, a privacy-safe summary, and candidate deployment/provider/findings evidence. It returns no funding capability.
 
 ## Fail-closed boundary
 
-Unknown fields, a legacy observation schema, an unreviewed status change, one provider, duplicate identities, shared signer identities, missing reviewer roles, noncanonical ordering, disagreement, stale or future observations, an unfinalized or noncanonical anchor, the wrong EIP-1967 slot, topology or code drift, an unsealed registry, an open gate, nonzero or unreconciled escrow balances, a review mismatch, replayed signatures, expired promotion, secret-bearing fields, endpoints, invoices, and private-key material all fail closed. Input files used by the CLIs must be regular non-symlink JSON files no larger than 1 MB.
+Unknown fields, legacy v1 schemas, a copied or substituted postflight result, changed postflight digests, replacement providers or reviewers, block/deployment drift, an unreviewed status change, one provider, duplicate identities, shared signer identities, missing reviewer roles, noncanonical ordering, disagreement, stale or future observations, an unfinalized or noncanonical anchor, the wrong EIP-1967 slot, topology or code drift, an unsealed registry, an open gate, nonzero or unreconciled escrow balances, a review mismatch, replayed signatures, expired promotion, secret-bearing fields, endpoints, invoices, and private-key material all fail closed. Input files used by the CLIs must be regular non-symlink JSON files no larger than 1 MB.
 
 Module-private provenance protects the derived release mapping. A copied or reconstructed verification object cannot create candidate evidence. The mapping is explicitly scoped `candidate-release-evidence-no-funding-authorization`; it cannot open the gate, fund a solver, sign a release, or promote itself into production.
 

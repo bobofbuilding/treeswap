@@ -1,6 +1,6 @@
 # Release authorization boundary
 
-Status: exact release records, five-role approvals, finalized ERC-1271 quorum verification, and provenance-bound capability activation are implemented locally. TreeSwap has no signed public-testnet or mainnet release record, and `V1_CAPABILITIES.webSolverFunding` remains disabled.
+Status: exact public-testnet v2 release records, five-role approvals, finalized ERC-1271 quorum verification, postflight/promotion binding, and provenance-bound capability activation are implemented locally. Release v2 rejects mainnet; a later schema may add it only after an equivalent mainnet preflight/postflight and promotion ceremony exists. TreeSwap has no signed public-testnet release record, and `V1_CAPABILITIES.webSolverFunding` remains disabled.
 
 ## Purpose
 
@@ -9,13 +9,13 @@ A build flag, administrator assertion, green CI run, or document checkbox must n
 The record commits:
 
 - release ID, protocol version, environment, chain, gate, source commit, prior release, validity window, and the exact finalized approval block number/hash/timestamp and provider-set digest;
-- deployment, admission, risk, fee, qualification, provider, solver, monitoring, backup, incident, loss-allocation, support, and finding-disposition evidence digests;
+- deployment manifest, signed deployment postflight, signed deployment promotion, admission, risk, fee, qualification, provider, solver, monitoring, backup, incident, loss-allocation, support, and finding-disposition evidence digests;
 - contract, Lightning, coordinator, identity/privacy, and operations review digests;
 - independent provider, observer, relay, solver, alert-channel, and multisig counts;
 - exact per-swap, epoch, daily Lightning, in-flight, routing, price-band, and reserve limits; and
 - the complete feature set, while public deposits, shares, yield, rewards, and partial fills remain forbidden.
 
-Unknown or extra fields, non-canonical integers, zero required digests, excessive limits, insufficient reserves or operator counts, validity longer than policy, and an environment/funding-mode mismatch fail closed. A capped-mainnet record additionally requires a prior release, public-testnet evidence, every external evidence digest, every review digest, and the disposition of all findings.
+`treeswap.release-record.v2` and `treeswap.release-policy.v2` both require the exact deployment-postflight and deployment-promotion digests. Legacy v1 records, all mainnet environments and funding modes, unknown or extra fields, non-canonical integers, zero required digests, digest substitution, excessive limits, insufficient reserves or operator counts, validity longer than policy, and an environment/funding-mode mismatch fail closed.
 
 ## Five independent approvals
 
@@ -33,7 +33,7 @@ Successful verification is module-private provenance, not a copyable JSON claim.
 
 - the provenance-bound release profile;
 - an authenticated solver session whose cryptographic solver capability passed;
-- one exact runtime snapshot bound to the signed release-record digest, signed release-policy digest, and deployment-manifest digest;
+- one exact runtime snapshot bound to the signed release-record digest, signed release-policy digest, deployment-manifest digest, verified postflight digest, and verified promotion digest;
 - a fresh observation inside the signed policy's maximum age;
 - an open risk gate with a nonzero risk digest; and
 - reconciled balances with a nonzero reconciliation digest.
@@ -50,10 +50,10 @@ This checkpoint proves the local release-authorization, permissionless-admission
 
 The repository can verify signatures and configured provider agreement; it cannot prove that provider identities are independently operated, Safe owners use hardware keys, evidence artifacts are truthful, operators are organizationally independent, or reviewers are qualified. Those facts require retained external evidence and human review.
 
-No production record, signer set, provider set, code hash, deployment manifest, review digest, or incident evidence is embedded in this repository. The shipped profile remains closed. A public-testnet record must be assembled only after the independent deployments exist; a mainnet record must additionally bind the completed public-testnet campaign and every independent review.
+No production record, signer set, provider set, code hash, deployment manifest, review digest, or incident evidence is embedded in this repository. The shipped profile remains closed. A public-testnet record must be assembled only after the independent deployments exist. A future mainnet schema must additionally bind the completed public-testnet campaign, an equivalent mainnet deployment ceremony, and every independent review; v2 cannot authorize it.
 
-The deployment-manifest input must first pass the [signed deployment-manifest promotion](./DEPLOYMENT_PROMOTION.md) boundary. That verifier rechecks the exact policy, source, canonical finalized provider observations, observed topology and code, and review bundle before distinct provider, contract-reviewer, and operations-reviewer signatures can derive candidate deployment evidence. Its output cannot activate a release capability.
+The deployment-manifest input must first pass the [signed deployment-manifest promotion](./DEPLOYMENT_PROMOTION.md) boundary. Promotion v2 re-verifies the complete signed postflight in-process, retains its exact providers and reviewers, and rechecks the exact policy, source, canonical finalized provider observations, observed topology and code, and review bundle. Its provenance-bound release mapping supplies the exact postflight and promotion digests; those values must be copied into both release record and policy before the five release roles sign. The promotion output cannot activate a release capability by itself.
 
 The local promotion implementation at clean published commit [`bcbf2b03e7064be136cb54a8c567f905abec8516`](https://github.com/bobofbuilding/treeswap/commit/bcbf2b03e7064be136cb54a8c567f905abec8516) passed 33 sealed campaigns and [hosted CI](https://github.com/bobofbuilding/treeswap/actions/runs/32401732721). Its independently reconstructed evidence digest is `sha256:cbb4f5b62033429e8db734a8fd98f29db6b4c444ccdf5ec18949f91059f90152`; the record is local-only and supplies none of the external provider, reviewer, deployment, signer-custody, or funding facts required by a release.
 
-The candidate campaign format and verifier are specified in [Public-testnet campaign evidence](./PUBLIC_TESTNET_EVIDENCE.md). Its provenance-bound mapper supplies exact deployment, policy, provider, solver, monitoring, backup, incident, qualification, finding-disposition, campaign, and operator-count inputs for release assembly. It does not sign a release or activate capabilities.
+The candidate campaign format and verifier are specified in [Public-testnet campaign evidence](./PUBLIC_TESTNET_EVIDENCE.md). Its provenance-bound mapper supplies exact deployment, policy, provider, solver, monitoring, backup, incident, qualification, finding-disposition, campaign, and operator-count inputs for release assembly. Release assembly must combine that output with the separate provenance-bound promotion mapping that supplies `deploymentPostflight` and `deploymentPromotion`; neither mapper signs a release or activates capabilities.

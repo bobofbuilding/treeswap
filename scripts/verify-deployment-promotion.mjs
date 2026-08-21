@@ -1,18 +1,20 @@
-import { lstat, readFile } from "node:fs/promises";
+import { readBoundedJson } from "../lib/closed-testnet-deployment-files.mjs";
 import {
   buildDeploymentPromotionReleaseEvidence,
   buildDeploymentPromotionSummary,
   verifyDeploymentManifestPromotion,
 } from "../lib/deployment-manifest-promotion.mjs";
+import { verifyDeploymentPromotionPostflightBundle } from "../lib/deployment-promotion-postflight-bundle.mjs";
 
 const FLAGS = Object.freeze([
   "--attestations",
   "--deployment-policy",
   "--observations",
+  "--postflight-bundle",
   "--policy",
   "--record",
 ]);
-const USAGE = "Usage: verify-deployment-promotion --record record.json --policy policy.json --deployment-policy deployment-policy.json --observations observations.json --attestations attestations.json";
+const USAGE = "Usage: verify-deployment-promotion --record record.json --policy policy.json --deployment-policy deployment-policy.json --observations observations.json --attestations attestations.json --postflight-bundle postflight-bundle.json";
 
 function argumentsFromCommandLine(values) {
   const result = {};
@@ -26,31 +28,26 @@ function argumentsFromCommandLine(values) {
   return result;
 }
 
-async function boundedJson(path, name) {
-  const state = await lstat(path);
-  if (!state.isFile() || state.isSymbolicLink() || state.size === 0 || state.size > 1_000_000) {
-    throw new Error(`${name} must be a non-symlink JSON file no larger than 1 MB`);
-  }
-  try {
-    return JSON.parse(await readFile(path, "utf8"));
-  } catch {
-    throw new Error(`${name} is not valid JSON`);
-  }
-}
-
 const args = argumentsFromCommandLine(process.argv.slice(2));
-const [record, policy, deploymentPolicy, observations, attestations] = await Promise.all([
-  boundedJson(args["--record"], "record"),
-  boundedJson(args["--policy"], "policy"),
-  boundedJson(args["--deployment-policy"], "deployment policy"),
-  boundedJson(args["--observations"], "observations"),
-  boundedJson(args["--attestations"], "attestations"),
+const [record, policy, deploymentPolicy, observations, attestations, postflightBundle] = await Promise.all([
+  readBoundedJson(args["--record"], "record"),
+  readBoundedJson(args["--policy"], "policy"),
+  readBoundedJson(args["--deployment-policy"], "deployment policy"),
+  readBoundedJson(args["--observations"], "observations"),
+  readBoundedJson(args["--attestations"], "attestations"),
+  readBoundedJson(args["--postflight-bundle"], "postflight bundle"),
 ]);
+const postflightVerification = verifyDeploymentPromotionPostflightBundle({
+  bundle: postflightBundle,
+  deploymentPolicy,
+  promotedAt: record.promotedAt,
+});
 const verification = verifyDeploymentManifestPromotion({
   record,
   policy,
   deploymentPolicy,
   observations,
+  postflightVerification,
   attestations,
 });
 process.stdout.write(`${JSON.stringify({

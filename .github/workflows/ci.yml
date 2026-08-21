@@ -65,6 +65,7 @@ jobs:
       - run: node --check lib/deployment-observer.mjs
       - run: node --check lib/deployment-policy.mjs
       - run: node --check lib/deployment-manifest-promotion.mjs
+      - run: node --check lib/deployment-promotion-postflight-bundle.mjs
       - run: node --check lib/closed-testnet-deployment-files.mjs
       - run: node --check lib/closed-testnet-deployment-plan.mjs
       - run: node --check lib/closed-testnet-deployment-preflight-observer.mjs
@@ -115,6 +116,7 @@ jobs:
       - run: node --check scripts/prepare-public-testnet-attestation.mjs
       - run: node --check scripts/verify-public-testnet-evidence.mjs
       - run: node --check scripts/prepare-deployment-promotion-approval.mjs
+      - run: node --check scripts/prepare-deployment-promotion-postflight-bundle.mjs
       - run: node --check scripts/verify-deployment-promotion.mjs
       - run: forge build --quiet
       - run: node --test tests/closed-testnet-deployment-files.test.mjs tests/closed-testnet-deployment-plan.test.mjs tests/closed-testnet-deployment-preflight.test.mjs tests/closed-testnet-deployment-postflight.test.mjs
