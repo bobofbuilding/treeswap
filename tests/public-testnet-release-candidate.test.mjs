@@ -4,7 +4,7 @@ import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { Wallet, id } from "ethers";
+import { Interface, Wallet, hexlify, id, toUtf8Bytes } from "ethers";
 import {
   createVerifiedDeploymentPromotionFixture,
   NOW as PROMOTION_NOW,
@@ -40,12 +40,270 @@ import {
   buildReleaseApprovalMessage,
   erc1271ProviderSetDigest,
 } from "../lib/release-authorization.mjs";
-import { inspectPreparedPublicTestnetReleaseCandidate } from "../lib/public-testnet-release-approval.mjs";
+import {
+  createPublicTestnetReleaseApprovalProviderSet,
+  inspectPreparedPublicTestnetReleaseCandidate,
+} from "../lib/public-testnet-release-approval.mjs";
+import {
+  activatePublicTestnetRelease,
+  authorizeSolverFunding,
+  buildPublicTestnetRuntimeReconciliationApproval,
+  publicTestnetReleaseOpenRiskDigest,
+} from "../lib/capabilities.mjs";
 
 const ZERO = `0x${"00".repeat(32)}`;
 const LIGHTNING_OPERATOR = new Wallet(`0x${"55".repeat(32)}`);
 const SECURITY_REVIEWER = new Wallet(`0x${"66".repeat(32)}`);
 const INCIDENT_COMMANDER = new Wallet(`0x${"77".repeat(32)}`);
+const ERC1271 = new Interface([
+  "function isValidSignature(bytes32 digest, bytes signature) view returns (bytes4)",
+]);
+const GATE = new Interface([
+  "function isOpen() view returns (bool)",
+  "function emergencyHalted() view returns (bool)",
+  "function openUntil() view returns (uint64)",
+  "function activeRiskDigest() view returns (bytes32)",
+]);
+const WALLET = new Interface([
+  "function getOwners() view returns (address[])",
+  "function getThreshold() view returns (uint256)",
+]);
+const REGISTRY = new Interface([
+  "function isSealed() view returns (bool)",
+  "function escrowCount() view returns (uint8)",
+  "function approvedEscrow(address escrow) view returns (bool)",
+]);
+const VAULT = new Interface([
+  "function totalAvailable() view returns (uint256)",
+  "function totalLocked() view returns (uint256)",
+  "function accountedBalance() view returns (uint256)",
+]);
+const USER_ESCROW = new Interface(["function totalLocked() view returns (uint256)"]);
+const BIT = new Interface([
+  "function balanceOf(address account) view returns (uint256)",
+  "function paused() view returns (bool)",
+  "function decimals() view returns (uint8)",
+  "function symbol() view returns (string)",
+]);
+const REVIEWED_CONTRACT_CODE = hexlify(toUtf8Bytes("shared postflight reviewed contract runtime"));
+const CONTROLLER_CODE = hexlify(toUtf8Bytes("shared postflight role 2 runtime"));
+const FEE_COLLECTOR_CODE = hexlify(toUtf8Bytes("shared postflight role 3 runtime"));
+const GUARDIAN_CODE = hexlify(toUtf8Bytes("shared postflight role 4 runtime"));
+const BIT_PROXY_CODE = hexlify(toUtf8Bytes("shared postflight BIT proxy"));
+const BIT_IMPLEMENTATION_CODE = hexlify(toUtf8Bytes("shared postflight BIT implementation"));
+
+function encodedCallResult(data, values) {
+  for (const [contractInterface, functionName, result] of values) {
+    if (data.startsWith(contractInterface.getFunction(functionName).selector)) {
+      return contractInterface.encodeFunctionResult(functionName, result);
+    }
+  }
+  throw new Error(`unexpected runtime call selector ${data.slice(0, 10)}`);
+}
+
+function releaseRpcFetch({ candidate, deployment, now, overrides = {} }) {
+  const manifest = deployment.verification.manifest;
+  const headHash = id("same-process release activation head").toLowerCase();
+  const riskDigest = overrides.riskDigest ?? publicTestnetReleaseOpenRiskDigest(candidate);
+  const available = BigInt(overrides.vaultAvailableWei ?? candidate.record.limits.minBitReserveWei);
+  const vaultLocked = BigInt(overrides.vaultLockedWei ?? "0");
+  const userLocked = BigInt(overrides.userEscrowLockedWei ?? "0");
+  const accounted = BigInt(overrides.vaultAccountedBalanceWei ?? available + vaultLocked);
+  const vaultBalance = BigInt(overrides.vaultBitBalanceWei ?? accounted);
+  const userBalance = BigInt(overrides.userEscrowBitBalanceWei ?? userLocked);
+  return async (url, options) => {
+    const payload = JSON.parse(options.body);
+    const providerTwo = new URL(url).hostname.startsWith("two");
+    let result;
+    if (payload.method === "eth_chainId") {
+      result = "0xaa36a7";
+    } else if (payload.method === "eth_getBlockByNumber") {
+      const tag = payload.params[0];
+      if (tag === `0x${Number(candidate.record.approvalBlockNumber).toString(16)}`) {
+        result = {
+          number: tag,
+          hash: candidate.record.approvalBlockHash,
+          timestamp: `0x${candidate.record.approvalBlockTimestamp.toString(16)}`,
+        };
+      } else {
+        result = {
+          number: "0x4b0",
+          hash: providerTwo && overrides.providerDisagreement
+            ? id("disagreeing release activation head").toLowerCase()
+            : headHash,
+          timestamp: `0x${now.toString(16)}`,
+        };
+      }
+    } else if (payload.method === "eth_getStorageAt") {
+      const implementation = overrides.implementationAddress ?? manifest.bit.implementationAddress;
+      result = `0x${implementation.slice(2).padStart(64, "0")}`;
+    } else if (payload.method === "eth_getCode") {
+      const target = String(payload.params[0]).toLowerCase();
+      const codes = new Map([
+        [manifest.controller.address.toLowerCase(), CONTROLLER_CODE],
+        [manifest.feeCollector.address.toLowerCase(), FEE_COLLECTOR_CODE],
+        [manifest.guardian.address.toLowerCase(), GUARDIAN_CODE],
+        [manifest.gate.address.toLowerCase(), REVIEWED_CONTRACT_CODE],
+        [manifest.paymentHashRegistry.address.toLowerCase(), REVIEWED_CONTRACT_CODE],
+        [manifest.vault.address.toLowerCase(), REVIEWED_CONTRACT_CODE],
+        [manifest.userEscrow.address.toLowerCase(), REVIEWED_CONTRACT_CODE],
+        [manifest.bit.proxyAddress.toLowerCase(), BIT_PROXY_CODE],
+        [manifest.bit.implementationAddress.toLowerCase(), BIT_IMPLEMENTATION_CODE],
+      ]);
+      result = codes.get(target) ?? REVIEWED_CONTRACT_CODE;
+    } else if (payload.method === "eth_call") {
+      const target = String(payload.params[0].to).toLowerCase();
+      const data = payload.params[0].data;
+      if ([manifest.controller.address, manifest.guardian.address, manifest.feeCollector.address]
+        .map((value) => value.toLowerCase()).includes(target)) {
+        const role = [manifest.controller, manifest.guardian, manifest.feeCollector]
+          .find((value) => value.address.toLowerCase() === target);
+        if (data.startsWith(ERC1271.getFunction("isValidSignature").selector)) {
+          result = ERC1271.encodeFunctionResult("isValidSignature", ["0x1626ba7e"]);
+        } else {
+          const owners = role === manifest.controller && overrides.controllerOwners
+            ? overrides.controllerOwners
+            : role.ownerAddresses;
+          result = encodedCallResult(data, [
+            [WALLET, "getOwners", [owners]],
+            [WALLET, "getThreshold", [role.threshold]],
+          ]);
+        }
+      } else if (target === manifest.gate.address.toLowerCase()) {
+        result = encodedCallResult(data, [
+          [GATE, "isOpen", [overrides.gateOpen ?? true]],
+          [GATE, "emergencyHalted", [overrides.emergencyHalted ?? false]],
+          [GATE, "openUntil", [overrides.openUntil ?? candidate.record.validUntil]],
+          [GATE, "activeRiskDigest", [riskDigest]],
+        ]);
+      } else if (target === manifest.paymentHashRegistry.address.toLowerCase()) {
+        result = encodedCallResult(data, [
+          [REGISTRY, "isSealed", [overrides.registrySealed ?? true]],
+          [REGISTRY, "escrowCount", [2]],
+          [REGISTRY, "approvedEscrow", [true]],
+        ]);
+      } else if (target === manifest.vault.address.toLowerCase()) {
+        result = encodedCallResult(data, [
+          [VAULT, "totalAvailable", [available]],
+          [VAULT, "totalLocked", [vaultLocked]],
+          [VAULT, "accountedBalance", [accounted]],
+        ]);
+      } else if (target === manifest.userEscrow.address.toLowerCase()) {
+        result = USER_ESCROW.encodeFunctionResult("totalLocked", [userLocked]);
+      } else if (target === manifest.bit.proxyAddress.toLowerCase()) {
+        if (data.startsWith(BIT.getFunction("paused").selector)) {
+          result = BIT.encodeFunctionResult("paused", [overrides.bitPaused ?? false]);
+        } else if (data.startsWith(BIT.getFunction("decimals").selector)) {
+          result = BIT.encodeFunctionResult("decimals", [overrides.bitDecimals ?? manifest.bit.decimals]);
+        } else if (data.startsWith(BIT.getFunction("symbol").selector)) {
+          result = BIT.encodeFunctionResult("symbol", [manifest.bit.symbol]);
+        } else {
+          const account = BIT.decodeFunctionData("balanceOf", data)[0];
+          result = BIT.encodeFunctionResult("balanceOf", [
+            account.toLowerCase() === manifest.vault.address.toLowerCase() ? vaultBalance : userBalance,
+          ]);
+        }
+      } else {
+        throw new Error(`unexpected runtime target ${target}`);
+      }
+    } else {
+      throw new Error(`unexpected release activation RPC ${payload.method}`);
+    }
+    return new Response(JSON.stringify({ jsonrpc: "2.0", id: payload.id, result }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  };
+}
+
+function providerSetFor({ candidate, campaign, deployment, now, overrides = {} }) {
+  const providerIdentities = campaign.candidate.record.participants
+    .filter((value) => value.role === "evm-provider")
+    .map((value) => value.operatorId);
+  return createPublicTestnetReleaseApprovalProviderSet({
+    configuration: {
+      schema: "treeswap.public-testnet-release-approval-providers.v1",
+      providers: [
+        { identity: providerIdentities[0], urlEnvironmentVariable: "TREESWAP_RELEASE_RPC_ONE_URL" },
+        { identity: providerIdentities[1], urlEnvironmentVariable: "TREESWAP_RELEASE_RPC_TWO_URL" },
+      ],
+    },
+    environment: {
+      TREESWAP_RELEASE_RPC_ONE_URL: "https://one.example/rpc/private-token",
+      TREESWAP_RELEASE_RPC_TWO_URL: "https://two.example/rpc/private-token",
+    },
+    fetchImpl: releaseRpcFetch({ candidate, deployment, now, overrides }),
+    expectedProviderCount: 2,
+    expectedProviderSetDigest: candidate.record.approvalProviderSetDigest,
+  });
+}
+
+async function releaseApprovalBundle(candidate) {
+  const approvals = [];
+  for (const role of ["controller", "guardian"]) {
+    approvals.push({ role, signer: candidate.policy.approvers[role].address, signatureKind: "erc1271", signature: "0x1234" });
+  }
+  for (const [role, wallet] of [
+    ["lightningOperator", LIGHTNING_OPERATOR],
+    ["securityReviewer", SECURITY_REVIEWER],
+    ["incidentCommander", INCIDENT_COMMANDER],
+  ]) {
+    approvals.push({
+      role,
+      signer: wallet.address,
+      signatureKind: "eip712",
+      signature: await wallet.signTypedData(
+        { ...candidate.approval.domain, chainId: BigInt(candidate.approval.domain.chainId) },
+        candidate.approval.types,
+        candidate.approval.message,
+      ),
+    });
+  }
+  return {
+    schema: "treeswap.public-testnet-release-approvals.v1",
+    releaseId: candidate.record.releaseId,
+    recordDigest: candidate.recordDigest,
+    policyDigest: candidate.policyDigest,
+    approvals,
+  };
+}
+
+async function runtimeReconciliation(candidate, now, overrides = {}) {
+  const reconciliation = {
+    schema: "treeswap.runtime-reconciliation.v1",
+    releaseId: candidate.record.releaseId,
+    releaseRecordDigest: candidate.recordDigest,
+    releasePolicyDigest: candidate.policyDigest,
+    observedAt: now,
+    validUntil: now + 20,
+    lightningAvailableSats: candidate.record.limits.minLightningReserveSats,
+    lightningInFlightSats: "0",
+    epochVolumeSats: "0",
+    dailyLightningSats: "0",
+    unreconciledLiabilities: "0",
+    lightningInventoryDigest: id("live Lightning inventory").toLowerCase(),
+    coordinatorStateDigest: id("live coordinator state").toLowerCase(),
+    inFlightDigest: id("live in-flight state").toLowerCase(),
+    ...overrides,
+  };
+  const payload = buildPublicTestnetRuntimeReconciliationApproval({ candidate, reconciliation });
+  const approvals = [];
+  for (const [role, wallet] of [
+    ["lightningOperator", LIGHTNING_OPERATOR],
+    ["securityReviewer", SECURITY_REVIEWER],
+  ]) {
+    approvals.push({
+      role,
+      signer: wallet.address,
+      signature: await wallet.signTypedData(
+        { ...payload.domain, chainId: BigInt(payload.domain.chainId) },
+        payload.types,
+        payload.value,
+      ),
+    });
+  }
+  return { approvals, reconciliation };
+}
 
 function recordTemplate(approvalBlockTimestamp = PROMOTION_NOW + 60) {
   return {
@@ -226,6 +484,127 @@ test("derives one exact release candidate from verified deployment, campaign, an
   const summary = buildPublicTestnetReleaseCandidateSummary(candidate);
   assert.equal(summary.fundingAuthorization, false);
   assert.equal(summary.recordDigest, candidate.recordDigest);
+});
+
+test("activates funding only after same-process evidence, approvals, reconciliation, and live RPC quorum checks", async () => {
+  const { campaign, candidate, deployment } = await fixture();
+  const now = candidate.record.approvalBlockTimestamp + 120;
+  const approvalBundle = await releaseApprovalBundle(candidate);
+  const providerSet = providerSetFor({ candidate, campaign, deployment, now });
+  const reconciliation = await runtimeReconciliation(candidate, now);
+  const activation = await activatePublicTestnetRelease({
+    candidate,
+    approvalBundle,
+    providerSet,
+    reconciliation: reconciliation.reconciliation,
+    reconciliationApprovals: reconciliation.approvals,
+    now,
+  });
+  assert.equal(activation.status, "same-process-release-and-runtime-verification-active");
+  assert.equal(activation.receipt.authorizations.funding, false);
+  assert.equal(activation.runtimeBlockNumber, 1_200);
+  const decision = authorizeSolverFunding({
+    session: { authenticated: true, role: "solver", capabilityVerified: true },
+    deployment: activation.deployment,
+    capabilities: activation.capabilities,
+    now,
+  });
+  assert.deepEqual(decision, { allowed: true, reasons: [] });
+  const expiredReconciliation = authorizeSolverFunding({
+    session: { authenticated: true, role: "solver", capabilityVerified: true },
+    deployment: activation.deployment,
+    capabilities: activation.capabilities,
+    now: activation.validUntil + 1,
+  });
+  assert.equal(expiredReconciliation.allowed, false);
+  assert.match(expiredReconciliation.reasons.join("; "), /runtime reconciliation is expired/);
+
+  const copiedSnapshot = authorizeSolverFunding({
+    session: { authenticated: true, role: "solver", capabilityVerified: true },
+    deployment: structuredClone(activation.deployment),
+    capabilities: activation.capabilities,
+    now,
+  });
+  assert.equal(copiedSnapshot.allowed, false);
+  assert.match(copiedSnapshot.reasons.join("; "), /same-process live runtime activation/);
+  const copiedCapability = authorizeSolverFunding({
+    session: { authenticated: true, role: "solver", capabilityVerified: true },
+    deployment: activation.deployment,
+    capabilities: { ...activation.capabilities },
+    now,
+  });
+  assert.equal(copiedCapability.allowed, false);
+  assert.match(copiedCapability.reasons.join("; "), /cryptographically verified release capability/);
+});
+
+test("release activation rejects copied provenance, stale or bad signatures, provider disagreement, and unsafe live state", async () => {
+  const { campaign, candidate, deployment } = await fixture();
+  const now = candidate.record.approvalBlockTimestamp + 120;
+  const approvalBundle = await releaseApprovalBundle(candidate);
+  const reconciliation = await runtimeReconciliation(candidate, now);
+  const nominalProviderSet = providerSetFor({ candidate, campaign, deployment, now });
+
+  await assert.rejects(activatePublicTestnetRelease({
+    candidate: structuredClone(candidate),
+    approvalBundle,
+    providerSet: nominalProviderSet,
+    reconciliation: reconciliation.reconciliation,
+    reconciliationApprovals: reconciliation.approvals,
+    now,
+  }), /candidate provenance/);
+  await assert.rejects(activatePublicTestnetRelease({
+    candidate,
+    approvalBundle,
+    providerSet: { ...nominalProviderSet },
+    reconciliation: reconciliation.reconciliation,
+    reconciliationApprovals: reconciliation.approvals,
+    now,
+  }), /provider set was not configured by this process/);
+
+  const badApprovals = structuredClone(reconciliation.approvals);
+  badApprovals[0].signature = badApprovals[1].signature;
+  await assert.rejects(activatePublicTestnetRelease({
+    candidate,
+    approvalBundle,
+    providerSet: nominalProviderSet,
+    reconciliation: reconciliation.reconciliation,
+    reconciliationApprovals: badApprovals,
+    now,
+  }), /runtime reconciliation signature is invalid/);
+
+  const stale = await runtimeReconciliation(candidate, now, {
+    observedAt: now - 30,
+    validUntil: now - 10,
+  });
+  await assert.rejects(activatePublicTestnetRelease({
+    candidate,
+    approvalBundle,
+    providerSet: nominalProviderSet,
+    reconciliation: stale.reconciliation,
+    reconciliationApprovals: stale.approvals,
+    now,
+  }), /not currently active/);
+
+  for (const [overrides, expected] of [
+    [{ providerDisagreement: true }, /providers disagree/],
+    [{ riskDigest: id("substituted release risk").toLowerCase() }, /release-bound open gate/],
+    [{ vaultBitBalanceWei: "0" }, /balances do not reconcile/],
+    [{ vaultAvailableWei: "0", vaultAccountedBalanceWei: "0", vaultBitBalanceWei: "0" }, /reserve is below/],
+    [{ bitPaused: true }, /BIT token state changed/],
+    [{ bitDecimals: 17 }, /BIT token state changed/],
+    [{ controllerOwners: ["0x9999999999999999999999999999999999999999"] }, /ownership changed/],
+    [{ implementationAddress: "0x9999999999999999999999999999999999999999" }, /implementation changed/],
+  ]) {
+    const providerSet = providerSetFor({ candidate, campaign, deployment, now, overrides });
+    await assert.rejects(activatePublicTestnetRelease({
+      candidate,
+      approvalBundle,
+      providerSet,
+      reconciliation: reconciliation.reconciliation,
+      reconciliationApprovals: reconciliation.approvals,
+      now,
+    }), expected);
+  }
 });
 
 test("derives a distinct tiny-limit bootstrap candidate before campaign evidence exists", async () => {

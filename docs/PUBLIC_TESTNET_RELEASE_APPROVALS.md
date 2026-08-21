@@ -97,7 +97,7 @@ For controller and guardian, every configured provider must agree on:
 
 The verifier also recovers the other three EIP-712 signatures, checks all five distinct policy identities, checks expiry and replay bindings, and hashes the normalized approval bundle. Provider URLs and raw signatures never enter the receipt or summary. The receipt is written once with mode `0600`.
 
-The receipt records `upstreamEvidenceReverifiedFromReceipt: false`, `activationProvenance: false`, and false signing, broadcast, gate-opening, and funding authority. Passing it to `activateReleaseCapabilities` fails. A production coordinator must reverify the candidate, approvals, and live provider quorum in the same process that evaluates a fresh release-bound runtime snapshot; this command intentionally provides no activation route.
+The receipt records `upstreamEvidenceReverifiedFromReceipt: false`, `activationProvenance: false`, and false signing, broadcast, gate-opening, and funding authority. Passing it to `activateReleaseCapabilities` fails. A production coordinator must use the separate [same-process activation boundary](./PUBLIC_TESTNET_RELEASE_ACTIVATION.md), which rebuilds the provenance-bound candidate, re-verifies this approval bundle through the live provider set, verifies a fresh two-party reconciliation, and observes the release-bound deployment without restarting. This command intentionally provides no activation route.
 
 ## Fail-closed cases
 
