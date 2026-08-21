@@ -149,7 +149,7 @@ The three deadlines are derived by the fail-closed policy in [`SETTLEMENT_POLICY
 
 TreeSwap uses EIP-4361 Sign-In with Ethereum only for an offchain account session. This authentication signature is separate from the EIP-712 selected-quote signature and cannot approve BIT, reserve inventory, or authorize a swap.
 
-The server issues a random 128-bit, ten-minute nonce bound to an allowlisted request origin, exact domain and URI. Verification requires Ethereum mainnet, the exact no-transaction statement, matching message times, a valid wallet signature, and an unused nonce. A successful sign-in replaces prior sessions for the wallet and creates an opaque 24-hour session in a `Secure`, `HttpOnly`, `SameSite=Strict`, host-only cookie; only its hash is stored server-side.
+The server issues a random 128-bit, ten-minute nonce bound to an allowlisted request origin, exact domain and URI. Verification requires Ethereum mainnet, the exact no-transaction statement, matching message times, a valid wallet signature, and an unused nonce. A successful sign-in transactionally replaces prior sessions for the wallet and creates an opaque 24-hour session in a `Secure`, `HttpOnly`, `SameSite=Strict`, host-only cookie; only its hash is stored server-side. Concurrent replacements serialize to one surviving wallet session.
 
 The account surface is deployment-gated. It is advertised only after the bound durable database proves that every required nonce, session, and notification table exists. A missing, partial, malformed, or unavailable binding returns an explicit disabled capability and rejects nonce creation before a wallet signature is requested.
 
