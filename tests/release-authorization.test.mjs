@@ -72,11 +72,12 @@ function record(overrides = {}) {
     reviewedBuildCommit: "a".repeat(40),
     priorReleaseDigest: ZERO,
     evidenceDigests: digests(evidenceFields, "release evidence"),
-    reviewDigests: digests(reviewFields, "release review", true),
+    reviewDigests: digests(reviewFields, "release review"),
     counts: {
       alertChannels: 2,
       independentEvmProviders: 2,
       independentLightningObservers: 2,
+      independentMonitors: 2,
       independentRelays: 2,
       independentSolvers: 2,
       multisigOwnerCount: 3,
@@ -126,6 +127,7 @@ function policy(release = record(), overrides = {}) {
       alertChannels: 2,
       independentEvmProviders: 2,
       independentLightningObservers: 2,
+      independentMonitors: 2,
       independentRelays: 2,
       independentSolvers: 2,
       multisigOwnerCount: 3,
@@ -403,6 +405,92 @@ test("release and runtime funding require the exact promotion and postflight dig
   assert.match(decision.reasons.join("; "), /not bound to the authorized release/);
 });
 
+test("operator funding requires every campaign, operations, support, and review commitment", async () => {
+  for (const field of ["findingsDisposition", "lossAllocation", "publicTestnet", "supportPolicy"]) {
+    const base = record();
+    const missing = record({ evidenceDigests: { ...base.evidenceDigests, [field]: ZERO } });
+    const result = await verifyReleaseAuthorization({
+      record: missing,
+      policy: policy(base),
+      approvals: [],
+      now: NOW,
+    });
+    assert.equal(result.valid, false);
+    assert.match(result.reasons.join("; "), new RegExp(`${field} evidence is required`));
+  }
+  for (const field of reviewFields) {
+    const base = record();
+    const missing = record({ reviewDigests: { ...base.reviewDigests, [field]: ZERO } });
+    const result = await verifyReleaseAuthorization({
+      record: missing,
+      policy: policy(base),
+      approvals: [],
+      now: NOW,
+    });
+    assert.equal(result.valid, false);
+    assert.match(result.reasons.join("; "), new RegExp(`${field} review evidence is required`));
+  }
+  const insufficientMonitors = record({
+    counts: { ...record().counts, independentMonitors: 1 },
+  });
+  const monitorResult = await verifyReleaseAuthorization({
+    record: insufficientMonitors,
+    policy: policy(record()),
+    approvals: [],
+    now: NOW,
+  });
+  assert.equal(monitorResult.valid, false);
+  assert.match(monitorResult.reasons.join("; "), /independentMonitors/);
+});
+
+test("a separate bootstrap mode may precede the campaign only under absolute tiny limits", async () => {
+  const base = record();
+  const bootstrap = record({
+    fundingMode: "operator-testnet-bootstrap",
+    evidenceDigests: { ...base.evidenceDigests, publicTestnet: ZERO },
+    limits: {
+      ...base.limits,
+      maxDailyLightningSats: "10000",
+      maxEpochSats: "5000",
+      maxInFlightSats: "1000",
+      maxPriceBandBps: "250",
+      maxRoutingFeeSats: "50",
+      maxSwapSats: "500",
+    },
+  });
+  const bootstrapPolicy = policy(bootstrap, {
+    limitPolicy: {
+      maximums: {
+        maxDailyLightningSats: "10000",
+        maxEpochSats: "5000",
+        maxInFlightSats: "1000",
+        maxPriceBandBps: "250",
+        maxRoutingFeeSats: "50",
+        maxSwapSats: "500",
+      },
+      minimumReserves: {
+        minBitReserveWei: bootstrap.limits.minBitReserveWei,
+        minLightningReserveSats: bootstrap.limits.minLightningReserveSats,
+      },
+    },
+  });
+  const accepted = await verify(bootstrap, bootstrapPolicy);
+  assert.equal(accepted.valid, true);
+
+  const excessive = record({
+    ...bootstrap,
+    limits: { ...bootstrap.limits, maxSwapSats: "501" },
+  });
+  const rejected = await verifyReleaseAuthorization({
+    record: excessive,
+    policy: policy(excessive),
+    approvals: [],
+    now: NOW,
+  });
+  assert.equal(rejected.valid, false);
+  assert.match(rejected.reasons.join("; "), /maxSwapSats exceeds the absolute testnet-bootstrap maximum/);
+});
+
 test("enforces independent-operator counts, caps, reserves, lifetime, and current runtime state", async () => {
   const underCount = record({
     counts: { ...record().counts, independentSolvers: 1 },
@@ -411,13 +499,13 @@ test("enforces independent-operator counts, caps, reserves, lifetime, and curren
   assert.equal(countVerification.valid, false);
   assert.match(countVerification.reasons.join("; "), /independentSolvers/);
 
-  const release = record({
-    limits: { ...record().limits, maxSwapSats: "5001", minLightningReserveSats: "24999" },
-    validUntil: NOW + 90_000,
-  });
-  const verification = await verify(release, policy(record()), []);
-  assert.equal(verification.valid, false);
-  for (const expected of ["maxSwapSats", "minLightningReserveSats", "validity exceeds"]) {
+  for (const [release, expected] of [
+    [record({ limits: { ...record().limits, maxSwapSats: "5001" } }), "maxSwapSats"],
+    [record({ limits: { ...record().limits, minLightningReserveSats: "24999" } }), "minLightningReserveSats"],
+    [record({ validUntil: NOW + 90_000 }), "validity exceeds"],
+  ]) {
+    const verification = await verify(release, policy(record()), []);
+    assert.equal(verification.valid, false);
     assert.match(verification.reasons.join("; "), new RegExp(expected));
   }
 
@@ -436,6 +524,7 @@ test("enforces independent-operator counts, caps, reserves, lifetime, and curren
     minimumCounts: {
       ...policy(record()).minimumCounts,
       independentEvmProviders: 0,
+      independentMonitors: 0,
       independentSolvers: 0,
       multisigThreshold: 0,
     },

@@ -105,7 +105,9 @@ npm run verify:testnet-evidence -- \
 
 The verifier returns the exact record and policy digests, release-evidence mapping, and privacy-safe per-solver adoption summary. It returns no funding capability.
 
-10. Independent reviewers must validate the entire snapshot chain, separately recorded checkpoint digests, organizational independence, external alert delivery, artifact truth, source/deployment correspondence, and findings disposition. Only then may the record digest be placed in a separately approved mainnet release record.
+10. Independent reviewers must validate the entire snapshot chain, separately recorded checkpoint digests, organizational independence, external alert delivery, artifact truth, source/deployment correspondence, and findings disposition.
+
+11. Re-observe and freshly promote the still-closed deployment, then derive the campaign-qualified testnet release with `npm run prepare:testnet-release-candidate`. The assembler requires the promotion and campaign to agree on source, chain, gate, manifest, and provider count; combines both record and policy digests; and cannot sign or fund. See [Public-testnet release candidates](./PUBLIC_TESTNET_RELEASE_CANDIDATES.md).
 
 ## Required scenarios
 
