@@ -21,7 +21,7 @@ The prototype assumes a business par value of **1 BIT = 100 sats**. This value i
 - Fail-closed market, proxy, finality, and inventory policy in [`docs/RISK_POLICY.md`](docs/RISK_POLICY.md)
 - Secret-free fail-closed monitoring and actual-gate halt evidence in [`docs/MONITORING.md`](docs/MONITORING.md)
 - Finalized read-only deployment observation and closed governance rehearsal in [`docs/GOVERNANCE.md`](docs/GOVERNANCE.md)
-- Deterministic unsigned Sepolia deployment preparation and independent reconstruction in [`docs/CLOSED_TESTNET_DEPLOYMENT.md`](docs/CLOSED_TESTNET_DEPLOYMENT.md)
+- Deterministic unsigned Sepolia deployment preparation, independent reconstruction, and a short-lived signed two-provider preflight in [`docs/CLOSED_TESTNET_DEPLOYMENT.md`](docs/CLOSED_TESTNET_DEPLOYMENT.md)
 - Provider- and reviewer-signed deployment-manifest promotion in [`docs/DEPLOYMENT_PROMOTION.md`](docs/DEPLOYMENT_PROMOTION.md)
 - Deterministic cross-chain clock and payment-authorization policy in [`docs/SETTLEMENT_POLICY.md`](docs/SETTLEMENT_POLICY.md)
 - Multi-solver signed RFQ validation and deterministic received-set policy in [`docs/RFQ_POLICY.md`](docs/RFQ_POLICY.md)

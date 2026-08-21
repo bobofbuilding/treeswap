@@ -1,6 +1,6 @@
 # Governance and deployment boundary
 
-Status: immutable contracts, a fail-closed deployment policy, a finalized RPC observer, a provider- and reviewer-signed manifest-promotion boundary, a closed local deployment rehearsal, and a cryptographic release-authorization boundary are implemented. No production roles, contracts, signed manifest promotion, or signed release record have been deployed.
+Status: immutable contracts, a fail-closed deployment policy, a finalized RPC observer, a provider- and reviewer-signed manifest-promotion boundary, a deterministic closed deployment plan, a short-lived signed live-preflight boundary, a closed local deployment rehearsal, and a cryptographic release-authorization boundary are implemented. No production roles, contracts, independent live preflight, signed manifest promotion, or signed release record have been deployed.
 
 TreeSwap’s two asset escrows have no administrator, proxy, fee setter, treasury setter, or pause function. Their token, payment-hash registry, safety gate, fee collector, reference limits, volume limits, and absolute fee caps are constructor immutables. The payment-hash registry accepts exactly two escrow consumers and is then irreversibly sealed.
 
@@ -25,7 +25,9 @@ Matching observations remain unreviewed until the [signed deployment-manifest pr
 
 The [closed public-testnet deployment workflow](./CLOSED_TESTNET_DEPLOYMENT.md) turns one exact reviewed input into four unsigned deterministic CREATE transactions and three hash-linked controller calls. Preparation and verification each require the exact clean commit already published on `origin/main`, force a fresh offline Foundry rebuild, compare artifact source commitments with that commit, and refuse any change to calldata or ordering. The generated plan grants no signing, broadcast, gate-opening, or funding authority.
 
-This closes the repository-side deployment reproducibility gap. Real Sepolia wallets, hardware owners, BIT test deployment, independent providers, external review, nonce preflight, signing, broadcast, finalized observation, monitoring, and zero-balance confirmation remain external gates.
+A second boundary proves the deployer has no runtime code, observes its block-anchored nonce and pending nonce immediately before and after the snapshot, proves all four predicted addresses are empty, and reconstructs all three contract wallets and the BIT proxy through each provider. At least two provider identities and one distinct operations reviewer must sign one EIP-712 record bound to the exact plan, input, source, review digest, block, and nonce. The record expires within fifteen minutes; provider disagreement, state movement, signature replay, or any mutation fails. Even a verified result is only a preflight fact and grants no signing, broadcast, gate-opening, or funding authority.
+
+This closes the repository-side deployment reproducibility and preflight-verification gaps. Different provider labels, commitments, endpoints, or keys do not prove organizational independence. Real Sepolia wallets, hardware owners, BIT test deployment, independently operated providers, external review, signing, broadcast, finalized post-deployment observation, monitoring, and zero-balance confirmation remain external gates.
 
 ## Local closed-deployment evidence
 

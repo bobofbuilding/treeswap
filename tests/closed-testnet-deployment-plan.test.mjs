@@ -127,6 +127,9 @@ test("builds one deterministic Sepolia plan with exact CREATE addresses and hash
   assert.equal(plan.requiredPostconditions.gateClosed, true);
   assert.equal(plan.requiredPostconditions.registrySealed, true);
   assert.equal(plan.requiredPostconditions.fundingAuthorization, false);
+  assert.equal(plan.requiredPreflight.deployerHasNoRuntimeCode, true);
+  assert.equal(plan.requiredPreflight.deploymentTargetsEmpty, true);
+  assert.equal(plan.requiredPreflight.pendingNonceStableBeforeAndAfterObservation, true);
   assert.deepEqual(plan.permissions, {
     signingAuthorization: false,
     broadcastAuthorization: false,
