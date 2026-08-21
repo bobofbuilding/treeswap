@@ -1,4 +1,3 @@
-import { lt } from "drizzle-orm";
 import { getDb, requireAccountStorage } from "@/db";
 import { siweNonces } from "@/db/schema";
 import {
@@ -18,7 +17,6 @@ export async function GET(request: Request) {
     const expiresAt = new Date(now.getTime() + SIWE_MESSAGE_TTL_SECONDS * 1_000);
     const nonce = randomHex(16);
 
-    await db.delete(siweNonces).where(lt(siweNonces.expiresAt, now.toISOString()));
     await db.insert(siweNonces).values({
       nonce,
       domain,
