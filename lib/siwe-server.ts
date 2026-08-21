@@ -128,12 +128,13 @@ export function safeErrorMessage(error: unknown): string {
   const message = error instanceof Error ? error.message : "Unexpected error";
   if (
     message.includes("D1 binding") ||
+    message.includes("Account feature") ||
     message.includes("no such table") ||
     message.includes("notification_preferences") ||
     message.includes("siwe_nonces") ||
     message.includes("auth_sessions")
   ) {
-    return "Account storage is not ready on this deployment.";
+    return "Accounts are unavailable on this deployment.";
   }
   return "The account request could not be completed.";
 }

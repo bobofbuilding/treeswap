@@ -134,6 +134,7 @@ const configurationFiles = [
   "lib/solver-private-packet.mjs",
   "lib/safety-monitor.mjs",
   "lib/settlement-policy.mjs",
+  "lib/account-capability.mjs",
   "lib/cross-chain-deadline-evidence.mjs",
   "lib/live-bit-cross-chain-deadline-evidence.mjs",
 ];

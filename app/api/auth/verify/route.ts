@@ -1,7 +1,7 @@
 import { and, eq, gt, isNull } from "drizzle-orm";
 import { cookies } from "next/headers";
 import { SiweMessage } from "siwe";
-import { getDb } from "@/db";
+import { getDb, requireAccountStorage } from "@/db";
 import { siweNonces } from "@/db/schema";
 import { validateSiweMessageFields } from "@/lib/siwe-policy.mjs";
 import {
@@ -21,6 +21,7 @@ export async function POST(request: Request) {
   if (!sameOrigin(request)) return noStoreJson({ error: "Cross-origin sign-in rejected." }, { status: 403 });
 
   try {
+    await requireAccountStorage();
     const body = (await request.json()) as VerifyBody;
     if (
       typeof body.message !== "string" ||
