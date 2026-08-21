@@ -1,6 +1,6 @@
 # Release authorization boundary
 
-Status: exact public-testnet v2 release records, distinct tiny-bootstrap and campaign-qualified modes, evidence-derived candidate preparation, five-role approvals, finalized ERC-1271 quorum verification, postflight/promotion binding, and provenance-bound capability activation are implemented locally. Release v2 rejects mainnet; a later schema may add it only after an equivalent mainnet preflight/postflight and promotion ceremony exists. TreeSwap has no signed public-testnet release record, and `V1_CAPABILITIES.webSolverFunding` remains disabled.
+Status: exact public-testnet v2 release records, distinct tiny-bootstrap and campaign-qualified modes, evidence-derived candidate preparation, guarded five-role payload preparation and receipt verification, finalized ERC-1271 quorum verification, postflight/promotion binding, and provenance-bound capability activation are implemented locally. Release v2 rejects mainnet; a later schema may add it only after an equivalent mainnet preflight/postflight and promotion ceremony exists. TreeSwap has no signed public-testnet release record, and `V1_CAPABILITIES.webSolverFunding` remains disabled.
 
 ## Purpose
 
@@ -30,6 +30,8 @@ Controller, guardian, Lightning operator, security reviewer, and incident comman
 - Every role identity must be distinct. A missing, duplicate, wrong-role, replayed, malformed, oversized, expired, wrong-chain, or wrong-contract approval fails closed.
 
 Successful verification is module-private provenance, not a copyable JSON claim. Copying or reconstructing a verification result or capability object cannot activate it in another process.
+
+[`PUBLIC_TESTNET_RELEASE_APPROVALS.md`](./PUBLIC_TESTNET_RELEASE_APPROVALS.md) defines the operator ceremony. One command reconstructs the exact payload for one policy role without accessing a key. A second command requires a candidate-bound five-role bundle and live configured provider quorum, then writes a mode-`0600`, non-overwriting receipt with no raw signatures or provider URLs. That command deliberately discards module-private verification provenance and never calls capability activation. Its receipt proves the supplied bundle passed at that moment; it does not prove upstream candidate provenance, organizational independence, signer custody, or funding authority.
 
 ## Runtime activation
 

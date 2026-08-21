@@ -64,6 +64,8 @@
     "verify:testnet-evidence": "node scripts/verify-public-testnet-evidence.mjs",
     "prepare:testnet-bootstrap-release-candidate": "node scripts/prepare-public-testnet-bootstrap-release-candidate.mjs",
     "prepare:testnet-release-candidate": "node scripts/prepare-public-testnet-release-candidate.mjs",
+    "prepare:testnet-release-approval": "node scripts/prepare-public-testnet-release-approval.mjs",
+    "verify:testnet-release-approvals": "node scripts/verify-public-testnet-release-approvals.mjs",
     "prepare:deployment-promotion-postflight": "node scripts/prepare-deployment-promotion-postflight-bundle.mjs",
     "prepare:deployment-promotion": "node scripts/prepare-deployment-promotion-approval.mjs",
     "verify:deployment-promotion": "node scripts/verify-deployment-promotion.mjs",

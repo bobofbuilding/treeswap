@@ -22,6 +22,7 @@ import {
   buildReleaseApprovalMessage,
   erc1271ProviderSetDigest,
 } from "../lib/release-authorization.mjs";
+import { inspectPreparedPublicTestnetReleaseCandidate } from "../lib/public-testnet-release-approval.mjs";
 
 const ZERO = `0x${"00".repeat(32)}`;
 
@@ -208,6 +209,10 @@ test("derives one exact release candidate from verified deployment and campaign 
   assert.notEqual(candidate.record.evidenceDigests.findingsDisposition, ZERO);
   assert.deepEqual(buildReleaseApprovalMessage(candidate.record, candidate.policy), candidate.approval.message);
   assert.equal(buildPublicTestnetReleaseApproval(candidate).value.recordDigest, candidate.recordDigest);
+  assert.equal(
+    inspectPreparedPublicTestnetReleaseCandidate(structuredClone(candidate)).recordDigest,
+    candidate.recordDigest,
+  );
   assert.throws(() => { candidate.record.limits.maxSwapSats = "999999"; }, /read only|Cannot assign/);
   assert.equal(candidate.record.limits.maxSwapSats, "5000");
   const summary = buildPublicTestnetReleaseCandidateSummary(candidate);
@@ -235,6 +240,10 @@ test("derives a distinct tiny-limit bootstrap candidate before campaign evidence
   );
   assert.equal(candidate.authorizations.funding, false);
   assert.equal(buildPublicTestnetReleaseApproval(candidate).value.recordDigest, candidate.recordDigest);
+  assert.equal(
+    inspectPreparedPublicTestnetReleaseCandidate(structuredClone(candidate)).candidateSchema,
+    "treeswap.prepared-public-testnet-bootstrap-release-candidate.v1",
+  );
 
   assert.throws(
     () => preparePublicTestnetBootstrapReleaseCandidate({
@@ -383,6 +392,20 @@ test("rejects stale ordering, incomplete external review, and deployment-wallet 
       policyTemplate: capturedOperator,
     }),
     /independent of every deployment-wallet owner/,
+  );
+  const contractOperator = policyTemplate(deployment.verification.manifest);
+  contractOperator.approvers.lightningOperator = {
+    address: Wallet.createRandom().address,
+    codeHash: id("unreviewed lightning operator contract").toLowerCase(),
+    signatureKind: "erc1271",
+  };
+  assert.throws(
+    () => preparePublicTestnetReleaseCandidate({
+      ...base,
+      recordTemplate: recordTemplate(),
+      policyTemplate: contractOperator,
+    }),
+    /lightningOperator approver must use.*EIP-712/,
   );
 });
 
