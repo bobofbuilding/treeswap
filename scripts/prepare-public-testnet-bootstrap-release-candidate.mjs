@@ -3,13 +3,16 @@
 import { readBoundedJson, writeExclusiveJson } from "../lib/closed-testnet-deployment-files.mjs";
 import { verifyDeploymentManifestPromotion } from "../lib/deployment-manifest-promotion.mjs";
 import { verifyDeploymentPromotionPostflightBundle } from "../lib/deployment-promotion-postflight-bundle.mjs";
+import { verifyPublicTestnetBootstrapEvidence } from "../lib/public-testnet-bootstrap-evidence.mjs";
 import {
   buildPublicTestnetReleaseCandidateSummary,
   preparePublicTestnetBootstrapReleaseCandidate,
 } from "../lib/public-testnet-release-candidate.mjs";
 
 const FLAGS = Object.freeze([
-  "--bootstrap-evidence",
+  "--bootstrap-attestations",
+  "--bootstrap-policy",
+  "--bootstrap-record",
   "--deployment-policy",
   "--out",
   "--policy-template",
@@ -20,7 +23,7 @@ const FLAGS = Object.freeze([
   "--promotion-record",
   "--record-template",
 ]);
-const USAGE = "Usage: prepare-public-testnet-bootstrap-release-candidate --record-template record-template.json --policy-template policy-template.json --bootstrap-evidence bootstrap-evidence.json --promotion-record promotion-record.json --promotion-policy promotion-policy.json --deployment-policy deployment-policy.json --promotion-observations promotion-observations.json --promotion-attestations promotion-attestations.json --postflight-bundle postflight-bundle.json --out bootstrap-release-candidate.json";
+const USAGE = "Usage: prepare-public-testnet-bootstrap-release-candidate --record-template record-template.json --policy-template policy-template.json --bootstrap-record bootstrap-record.json --bootstrap-policy bootstrap-policy.json --bootstrap-attestations bootstrap-attestations.json --promotion-record promotion-record.json --promotion-policy promotion-policy.json --deployment-policy deployment-policy.json --promotion-observations promotion-observations.json --promotion-attestations promotion-attestations.json --postflight-bundle postflight-bundle.json --out bootstrap-release-candidate.json";
 
 function argumentsFromCommandLine(values) {
   if (values.length !== FLAGS.length * 2) throw new Error(USAGE);
@@ -35,11 +38,14 @@ function argumentsFromCommandLine(values) {
 }
 
 const args = argumentsFromCommandLine(process.argv.slice(2));
-const [recordTemplate, policyTemplate, bootstrapEvidence, promotionRecord, promotionPolicy,
-  deploymentPolicy, promotionObservations, promotionAttestations, postflightBundle] = await Promise.all([
+const [recordTemplate, policyTemplate, bootstrapRecord, bootstrapPolicy, bootstrapAttestations,
+  promotionRecord, promotionPolicy, deploymentPolicy, promotionObservations, promotionAttestations,
+  postflightBundle] = await Promise.all([
   readBoundedJson(args["--record-template"], "bootstrap release record template"),
   readBoundedJson(args["--policy-template"], "bootstrap release policy template"),
-  readBoundedJson(args["--bootstrap-evidence"], "bootstrap evidence"),
+  readBoundedJson(args["--bootstrap-record"], "bootstrap evidence record"),
+  readBoundedJson(args["--bootstrap-policy"], "bootstrap evidence policy"),
+  readBoundedJson(args["--bootstrap-attestations"], "bootstrap evidence attestations"),
   readBoundedJson(args["--promotion-record"], "deployment promotion record"),
   readBoundedJson(args["--promotion-policy"], "deployment promotion policy"),
   readBoundedJson(args["--deployment-policy"], "deployment policy"),
@@ -61,10 +67,16 @@ const deploymentPromotionVerification = verifyDeploymentManifestPromotion({
   attestations: promotionAttestations,
   now: recordTemplate.approvalBlockTimestamp,
 });
+const bootstrapEvidenceVerification = verifyPublicTestnetBootstrapEvidence({
+  record: bootstrapRecord,
+  policy: bootstrapPolicy,
+  attestations: bootstrapAttestations,
+  now: recordTemplate.approvalBlockTimestamp,
+});
 const candidate = preparePublicTestnetBootstrapReleaseCandidate({
   recordTemplate,
   policyTemplate,
-  bootstrapEvidence,
+  bootstrapEvidenceVerification,
   deploymentPromotionVerification,
 });
 if (Buffer.byteLength(JSON.stringify(candidate)) > 1_000_000) {

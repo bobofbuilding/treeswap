@@ -81,6 +81,7 @@ Stopping new quotes must not disable valid claim, refund, or solver withdrawal p
 - [x] Full local Lightning failure injection and durable coordinator reconciliation, including restart, lost response, force close, stale chain, route failure, exact duplicates, and credential/TLS rotation
 - [x] Deterministic cross-clock timeout model and boundary tests
 - [x] Local dual-provider finalized BIT-vault reader and signed aggregate Lightning-capacity protocol
+- [x] Short-lived signed bootstrap roster with derived provider, observer, monitor, relay, solver, and alert-channel counts; exact deployment-provider matching; and provenance-only release-candidate integration
 - [ ] Deploy continuous reconciliation and capacity observations with independent operators
 - [ ] Two independent solver deployments
 - [ ] External review and tiny testnet limits

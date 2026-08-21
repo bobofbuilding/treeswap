@@ -1,6 +1,6 @@
 # Release authorization boundary
 
-Status: exact public-testnet v2 release records, distinct tiny-bootstrap and campaign-qualified modes, evidence-derived candidate preparation, guarded five-role payload preparation and receipt verification, finalized ERC-1271 quorum verification, postflight/promotion binding, and provenance-bound capability activation are implemented locally. Release v2 rejects mainnet; a later schema may add it only after an equivalent mainnet preflight/postflight and promotion ceremony exists. TreeSwap has no signed public-testnet release record, and `V1_CAPABILITIES.webSolverFunding` remains disabled.
+Status: exact public-testnet v2 release records, distinct tiny-bootstrap and campaign-qualified modes, signed bootstrap-operator evidence, evidence-derived candidate preparation, guarded five-role payload preparation and receipt verification, finalized ERC-1271 quorum verification, postflight/promotion binding, and provenance-bound capability activation are implemented locally. Release v2 rejects mainnet; a later schema may add it only after an equivalent mainnet preflight/postflight and promotion ceremony exists. TreeSwap has no signed public-testnet release record, and `V1_CAPABILITIES.webSolverFunding` remains disabled.
 
 ## Purpose
 
@@ -19,7 +19,7 @@ The record commits:
 
 ## Evidence-derived release candidates
 
-Operators must not hand-merge promotion and campaign JSON. [`PUBLIC_TESTNET_RELEASE_CANDIDATES.md`](./PUBLIC_TESTNET_RELEASE_CANDIDATES.md) defines two non-authorizing preparation commands. Both re-verify the complete postflight-bound deployment promotion and derive chain, gate, source, manifest, provider commitments, Safe counts, release evidence, policy digests, and EIP-712 approval payload. The qualified command additionally re-verifies the entire signed seven-day campaign and combines duplicated provider and findings domains rather than letting one source overwrite the other. Output is mode `0600`, non-overwriting, and has no signing, broadcasting, gate-opening, or funding authority.
+Operators must not hand-merge promotion, bootstrap, or campaign JSON. [`PUBLIC_TESTNET_RELEASE_CANDIDATES.md`](./PUBLIC_TESTNET_RELEASE_CANDIDATES.md) defines two non-authorizing preparation commands. Both re-verify the complete postflight-bound deployment promotion and derive chain, gate, source, manifest, provider commitments, Safe counts, release evidence, policy digests, and EIP-712 approval payload. The bootstrap command also re-verifies one attestation from every operator in the short-lived [bootstrap roster](./PUBLIC_TESTNET_BOOTSTRAP_EVIDENCE.md), derives every count, and requires its EVM provider identities and signers to match the promotion. The qualified command re-verifies the entire signed seven-day campaign and combines duplicated provider and findings domains rather than letting one source overwrite the other. Output is mode `0600`, non-overwriting, and has no signing, broadcasting, gate-opening, or funding authority.
 
 ## Five independent approvals
 

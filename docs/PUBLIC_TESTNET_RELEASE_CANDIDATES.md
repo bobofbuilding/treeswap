@@ -6,7 +6,7 @@ Status: TreeSwap can prepare two exact, non-authorizing public-testnet release c
 
 A seven-day multi-solver campaign cannot be required before any testnet execution is possible. It is also unsafe to let a pre-campaign bootstrap record silently become the ordinary testnet release. Release v2 therefore has two distinct funding modes:
 
-1. `operator-testnet-bootstrap` permits only operator-owned public-testnet inventory under hard code-level ceilings of 500 sats per swap, 1,000 sats in flight, 5,000 sats per epoch, 10,000 sats per day, 50 sats routing fee, and 250 basis points price band. It may omit the not-yet-existent campaign digest, but it still requires the exact signed deployment promotion, two operators in every critical role, two alert channels, all operational evidence, all five review digests, loss allocation, support policy, and five-role release approval.
+1. `operator-testnet-bootstrap` permits only operator-owned public-testnet inventory under hard code-level ceilings of 500 sats per swap, 1,000 sats in flight, 5,000 sats per epoch, 10,000 sats per day, 50 sats routing fee, and 250 basis points price band. It may omit the not-yet-existent campaign digest, but it still requires the exact signed deployment promotion, an independently signed bootstrap roster with two operators in every critical role, two alert channels, all operational evidence, all five review digests, loss allocation, support policy, and five-role release approval.
 2. `operator-testnet` is the campaign-qualified mode. It requires the complete signed seven-day campaign and derives its release record from both the fresh deployment promotion and campaign verification. It cannot reuse the bootstrap release or omit campaign evidence. Code-level ceilings remain 5,000 sats per swap, 10,000 sats in flight, 50,000 sats per epoch, 100,000 sats per day, 100 sats routing fee, and 500 basis points price band; signed policy may only tighten them.
 
 Both modes remain public-testnet-only. Release v2 rejects every mainnet environment and funding mode.
@@ -22,6 +22,8 @@ Both modes remain public-testnet-only. Release v2 rejects every mainnet environm
 - combines deployment and campaign provider-quorum evidence instead of allowing one to overwrite the other;
 - combines deployment review, deployment findings, and campaign findings into one release commitment;
 - binds the exact campaign EVM-provider identities into the ERC-1271 provider-set digest;
+- derives bootstrap counts from the complete signed operator roster and requires its EVM-provider identities and signers to match the deployment promotion exactly;
+- commits the bootstrap record, policy, participant set, and attestation set into the release's provider, monitoring, solver, backup, incident, qualification, and findings evidence;
 - requires independent monitor counts in addition to providers, Lightning observers, relays, solvers, alert channels, and multisig counts; and
 - refuses missing loss allocation, support policy, or any contract, Lightning, coordinator, identity/privacy, or operations review digest.
 
@@ -29,11 +31,15 @@ The output contains the exact release record, release policy, EIP-712 approval p
 
 ## Bootstrap preparation
 
-Prepare three secret-free inputs:
+First complete the [signed bootstrap operator-evidence workflow](./PUBLIC_TESTNET_BOOTSTRAP_EVIDENCE.md). It requires at least two EVM providers, Lightning observers, monitors, relays, and solvers. Every operator signs the same source-, deployment-, artifact-, feature-, and time-bound EIP-712 record. Counts are derived from distinct operator identities and signers; they are not accepted from an unsigned file.
+
+Then prepare five secret-free inputs:
 
 - `record-template.json`: release ID/version, finalized approval block, prior release, loss-allocation and support digests, all five review digests, exact 3-owner/2-threshold multisig values, tiny limits, safe features, and validity window;
 - `policy-template.json`: five release approvers, the same or tighter tiny-limit policy, maximum release lifetime, and maximum runtime-observation age; and
-- `bootstrap-evidence.json`: exact admission, risk, fee, qualification, provider, solver, monitoring, backup, incident, and findings digests, plus two-to-twenty counts for every operator role. Approval-provider identities are never accepted from this unsigned file; they are derived from the signed deployment promotion.
+- `bootstrap-record.json`: the exact operator roster, retained-evidence commitments, operational artifact digests, safe test-only features, and short validity interval;
+- `bootstrap-policy.json`: the exact source/deployment boundary, minimum counts, maximum one-hour freshness, and maximum one-day lifetime; and
+- `bootstrap-attestations.json`: exactly one canonical EIP-712 attestation from every listed operator.
 
 Then independently re-verify the complete postflight-bound promotion and derive the candidate:
 
@@ -41,7 +47,9 @@ Then independently re-verify the complete postflight-bound promotion and derive 
 npm run prepare:testnet-bootstrap-release-candidate -- \
   --record-template record-template.json \
   --policy-template policy-template.json \
-  --bootstrap-evidence bootstrap-evidence.json \
+  --bootstrap-record bootstrap-record.json \
+  --bootstrap-policy bootstrap-policy.json \
+  --bootstrap-attestations bootstrap-attestations.json \
   --promotion-record promotion-record.json \
   --promotion-policy promotion-policy.json \
   --deployment-policy deployment-policy.json \
@@ -51,7 +59,7 @@ npm run prepare:testnet-bootstrap-release-candidate -- \
   --out bootstrap-release-candidate.json
 ```
 
-The verifier rejects a stale or copied promotion, provider-count mismatch, non-canonical provider set, Safe substitution, zero review or operations digest, weak participant count, excessive bootstrap limit, unsafe feature, reversed time, symlink, overwrite, oversized file, or unknown field.
+The verifier rejects a stale or copied promotion or bootstrap verification, provider identity/signer/count mismatch, non-canonical roster, shared operator or signer, missing or replayed signature, Safe substitution, zero review or operations digest, weak participant count, excessive bootstrap limit, unsafe feature, a candidate validity window outside the signed bootstrap interval, symlink, overwrite, oversized file, or unknown field.
 
 ## Campaign-qualified preparation
 

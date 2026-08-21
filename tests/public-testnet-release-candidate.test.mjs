@@ -13,6 +13,12 @@ import {
   createVerifiedPublicTestnetCampaignFixture,
 } from "./fixtures/verified-public-testnet-campaign.mjs";
 import {
+  createVerifiedPublicTestnetBootstrapFixture,
+  fixture as bootstrapFixture,
+  sign as signBootstrapFixture,
+} from "./fixtures/verified-public-testnet-bootstrap.mjs";
+import { verifyPublicTestnetBootstrapEvidence } from "../lib/public-testnet-bootstrap-evidence.mjs";
+import {
   buildPublicTestnetReleaseApproval,
   buildPublicTestnetReleaseCandidateSummary,
   preparePublicTestnetBootstrapReleaseCandidate,
@@ -138,30 +144,6 @@ function bootstrapPolicyTemplate(manifest) {
   return value;
 }
 
-function bootstrapEvidence() {
-  return {
-    schema: "treeswap.public-testnet-bootstrap-evidence.v1",
-    admissionPolicy: id("bootstrap admission policy").toLowerCase(),
-    backupRestore: id("bootstrap backup restore drill").toLowerCase(),
-    feeSchedule: id("bootstrap fee schedule").toLowerCase(),
-    findingsDisposition: id("bootstrap findings disposition").toLowerCase(),
-    incidentDrills: id("bootstrap incident drills").toLowerCase(),
-    monitoring: id("bootstrap monitoring evidence").toLowerCase(),
-    providerQuorum: id("bootstrap provider quorum evidence").toLowerCase(),
-    riskPolicy: id("bootstrap risk policy").toLowerCase(),
-    solverOperations: id("bootstrap solver operations").toLowerCase(),
-    testQualification: id("bootstrap qualification evidence").toLowerCase(),
-    counts: {
-      alertChannels: 2,
-      independentEvmProviders: 2,
-      independentLightningObservers: 2,
-      independentMonitors: 2,
-      independentRelays: 2,
-      independentSolvers: 2,
-    },
-  };
-}
-
 function postflightBundle(deployment) {
   return {
     schema: "treeswap.deployment-promotion-postflight-bundle.v1",
@@ -222,16 +204,23 @@ test("derives one exact release candidate from verified deployment and campaign 
 
 test("derives a distinct tiny-limit bootstrap candidate before campaign evidence exists", async () => {
   const deployment = await createVerifiedDeploymentPromotionFixture();
+  const bootstrap = await createVerifiedPublicTestnetBootstrapFixture({
+    deployment,
+    preparedAt: PROMOTION_NOW,
+    now: PROMOTION_NOW + 60,
+  });
   const candidate = preparePublicTestnetBootstrapReleaseCandidate({
     recordTemplate: bootstrapRecordTemplate(),
     policyTemplate: bootstrapPolicyTemplate(deployment.verification.manifest),
-    bootstrapEvidence: bootstrapEvidence(),
+    bootstrapEvidenceVerification: bootstrap.verification,
     deploymentPromotionVerification: deployment.verification,
   });
   assert.equal(candidate.record.fundingMode, "operator-testnet-bootstrap");
   assert.equal(candidate.record.evidenceDigests.publicTestnet, ZERO);
   assert.equal(candidate.record.limits.maxSwapSats, "500");
   assert.equal(candidate.record.counts.independentMonitors, 2);
+  assert.notEqual(candidate.evidence.bootstrapEvidenceDigest, bootstrap.verification.recordDigest);
+  assert.notEqual(candidate.record.evidenceDigests.solverOperations, bootstrap.candidate.record.artifacts.solverOperations);
   assert.equal(
     candidate.record.approvalProviderSetDigest,
     erc1271ProviderSetDigest(
@@ -245,25 +234,51 @@ test("derives a distinct tiny-limit bootstrap candidate before campaign evidence
     "treeswap.prepared-public-testnet-bootstrap-release-candidate.v1",
   );
 
-  assert.throws(
-    () => preparePublicTestnetBootstrapReleaseCandidate({
-      recordTemplate: bootstrapRecordTemplate(),
-      policyTemplate: bootstrapPolicyTemplate(deployment.verification.manifest),
-      bootstrapEvidence: {
-        ...bootstrapEvidence(),
-        evmProviderIdentities: [id("attacker provider 1"), id("attacker provider 2")].sort(),
-      },
-      deploymentPromotionVerification: deployment.verification,
-    }),
-    /fields are not exact/,
-  );
+  assert.throws(() => preparePublicTestnetBootstrapReleaseCandidate({
+    recordTemplate: bootstrapRecordTemplate(),
+    policyTemplate: bootstrapPolicyTemplate(deployment.verification.manifest),
+    bootstrapEvidenceVerification: structuredClone(bootstrap.verification),
+    deploymentPromotionVerification: deployment.verification,
+  }), /bootstrap evidence provenance/);
+
+  const substitutedInput = bootstrapFixture({ deployment, preparedAt: PROMOTION_NOW });
+  const firstProvider = substitutedInput.record.participants.find((value) => value.role === "evm-provider");
+  const oldSigner = firstProvider.signer;
+  const attacker = Wallet.createRandom();
+  firstProvider.operatorId = id("attacker provider identity").toLowerCase();
+  firstProvider.signer = attacker.address;
+  substitutedInput.wallets.delete(oldSigner);
+  substitutedInput.wallets.set(attacker.address, attacker);
+  substitutedInput.record.participants.sort((left, right) => (
+    `${left.role}:${left.operatorId}`.localeCompare(`${right.role}:${right.operatorId}`)
+  ));
+  await signBootstrapFixture(substitutedInput);
+  const substitutedBootstrap = verifyPublicTestnetBootstrapEvidence({
+    ...substitutedInput,
+    now: PROMOTION_NOW + 60,
+  });
+  assert.throws(() => preparePublicTestnetBootstrapReleaseCandidate({
+    recordTemplate: bootstrapRecordTemplate(),
+    policyTemplate: bootstrapPolicyTemplate(deployment.verification.manifest),
+    bootstrapEvidenceVerification: substitutedBootstrap,
+    deploymentPromotionVerification: deployment.verification,
+  }), /EVM providers do not exactly match/);
+
+  const outsideEvidenceWindow = bootstrapRecordTemplate();
+  outsideEvidenceWindow.validUntil = bootstrap.verification.record.validUntil + 1;
+  assert.throws(() => preparePublicTestnetBootstrapReleaseCandidate({
+    recordTemplate: outsideEvidenceWindow,
+    policyTemplate: bootstrapPolicyTemplate(deployment.verification.manifest),
+    bootstrapEvidenceVerification: bootstrap.verification,
+    deploymentPromotionVerification: deployment.verification,
+  }), /validity is outside the signed operator-evidence interval/);
 
   const excessive = recordTemplate();
   assert.throws(
     () => preparePublicTestnetBootstrapReleaseCandidate({
       recordTemplate: excessive,
       policyTemplate: policyTemplate(deployment.verification.manifest),
-      bootstrapEvidence: bootstrapEvidence(),
+      bootstrapEvidenceVerification: bootstrap.verification,
       deploymentPromotionVerification: deployment.verification,
     }),
     /testnet-bootstrap maximum/,
@@ -273,7 +288,7 @@ test("derives a distinct tiny-limit bootstrap candidate before campaign evidence
     () => preparePublicTestnetBootstrapReleaseCandidate({
       recordTemplate: bootstrapRecordTemplate(),
       policyTemplate: bootstrapPolicyTemplate(deployment.verification.manifest),
-      bootstrapEvidence: bootstrapEvidence(),
+      bootstrapEvidenceVerification: bootstrap.verification,
       deploymentPromotionVerification: copied,
     }),
     /provenance/,
@@ -466,12 +481,19 @@ test("operator CLI writes a private non-overwriting candidate without authority"
 
 test("bootstrap operator CLI also writes only a private non-authorizing candidate", async () => {
   const deployment = await createVerifiedDeploymentPromotionFixture();
+  const bootstrap = await createVerifiedPublicTestnetBootstrapFixture({
+    deployment,
+    preparedAt: PROMOTION_NOW,
+    now: PROMOTION_NOW + 60,
+  });
   const directory = await mkdtemp(join(tmpdir(), "treeswap-bootstrap-release-candidate-"));
   try {
     const values = {
       recordTemplate: bootstrapRecordTemplate(),
       policyTemplate: bootstrapPolicyTemplate(deployment.verification.manifest),
-      bootstrapEvidence: bootstrapEvidence(),
+      bootstrapRecord: bootstrap.candidate.record,
+      bootstrapPolicy: bootstrap.candidate.policy,
+      bootstrapAttestations: bootstrap.candidate.attestations,
       promotionRecord: deployment.candidate.record,
       promotionPolicy: deployment.candidate.policy,
       deploymentPolicy: deployment.candidate.deploymentPolicy,
@@ -489,7 +511,9 @@ test("bootstrap operator CLI also writes only a private non-authorizing candidat
       "scripts/prepare-public-testnet-bootstrap-release-candidate.mjs",
       "--record-template", paths.recordTemplate,
       "--policy-template", paths.policyTemplate,
-      "--bootstrap-evidence", paths.bootstrapEvidence,
+      "--bootstrap-record", paths.bootstrapRecord,
+      "--bootstrap-policy", paths.bootstrapPolicy,
+      "--bootstrap-attestations", paths.bootstrapAttestations,
       "--promotion-record", paths.promotionRecord,
       "--promotion-policy", paths.promotionPolicy,
       "--deployment-policy", paths.deploymentPolicy,

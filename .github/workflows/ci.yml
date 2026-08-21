@@ -77,6 +77,7 @@ jobs:
       - run: node --check lib/public-testnet-release-approval.mjs
       - run: node --check lib/public-testnet-campaign-workflow.mjs
       - run: node --check lib/public-testnet-evidence.mjs
+      - run: node --check lib/public-testnet-bootstrap-evidence.mjs
       - run: node --check lib/public-testnet-release-candidate.mjs
       - run: node --check lib/solver-capability.mjs
       - run: node --check lib/solver-endpoint-transport.mjs
@@ -117,6 +118,8 @@ jobs:
       - run: node --check scripts/manage-public-testnet-campaign.mjs
       - run: node --check scripts/prepare-public-testnet-attestation.mjs
       - run: node --check scripts/verify-public-testnet-evidence.mjs
+      - run: node --check scripts/prepare-public-testnet-bootstrap-attestation.mjs
+      - run: node --check scripts/verify-public-testnet-bootstrap-evidence.mjs
       - run: node --check scripts/prepare-public-testnet-bootstrap-release-candidate.mjs
       - run: node --check scripts/prepare-public-testnet-release-candidate.mjs
       - run: node --check scripts/prepare-public-testnet-release-approval.mjs

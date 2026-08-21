@@ -31,6 +31,7 @@ The prototype assumes a business par value of **1 BIT = 100 sats**. This value i
 - Ordered production gates in [`docs/PRODUCTION_READINESS.md`](docs/PRODUCTION_READINESS.md)
 - Permissionless solver target in [`docs/PERMISSIONLESS_AUTOMATION.md`](docs/PERMISSIONLESS_AUTOMATION.md)
 - Signed multi-operator public-testnet campaign evidence in [`docs/PUBLIC_TESTNET_EVIDENCE.md`](docs/PUBLIC_TESTNET_EVIDENCE.md)
+- Short-lived signed bootstrap-operator roster with derived counts and exact deployment-provider matching in [`docs/PUBLIC_TESTNET_BOOTSTRAP_EVIDENCE.md`](docs/PUBLIC_TESTNET_BOOTSTRAP_EVIDENCE.md)
 - Evidence-derived tiny-bootstrap and campaign-qualified release preparation in [`docs/PUBLIC_TESTNET_RELEASE_CANDIDATES.md`](docs/PUBLIC_TESTNET_RELEASE_CANDIDATES.md)
 - Guarded five-role payload and live contract-wallet approval verification in [`docs/PUBLIC_TESTNET_RELEASE_APPROVALS.md`](docs/PUBLIC_TESTNET_RELEASE_APPROVALS.md)
 - Immutable public-testnet operator campaign snapshots via `npm run manage:testnet-campaign`
