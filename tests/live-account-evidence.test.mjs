@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 import { buildLiveAccountEvidence, liveAccountEvidencePolicy } from "../lib/live-account-evidence.mjs";
-import { inspectSessionCookie, runLiveAccountLifecycle } from "../lib/live-account-lifecycle.mjs";
+import {
+  extractSessionCookie,
+  inspectSessionCookie,
+  runLiveAccountLifecycle,
+} from "../lib/live-account-lifecycle.mjs";
 
 const SOURCE = {
   branch: "main",
@@ -121,10 +125,13 @@ test("fails closed on a missed check, source drift, deployment substitution, ext
 
 test("recognizes only the hardened host session cookie", () => {
   const token = "b".repeat(64);
+  const combined = `__Host-treeswap_session=${token}; Path=/; Expires=Sat, 22 Aug 2026 17:41:15 GMT; Max-Age=86400; Secure; HttpOnly; SameSite=strict, __cf_bm=edge-value; HttpOnly; SameSite=None; Secure; Path=/; Domain=chatgpt.site`;
   assert.equal(
     inspectSessionCookie(`__Host-treeswap_session=${token}; Path=/; Max-Age=86400; HttpOnly; Secure; SameSite=Strict`),
     `__Host-treeswap_session=${token}`,
   );
+  assert.equal(inspectSessionCookie(combined), `__Host-treeswap_session=${token}`);
+  assert.equal(extractSessionCookie(combined), `__Host-treeswap_session=${token}`);
   for (const header of [
     `treeswap_session=${token}; Path=/; Max-Age=86400; HttpOnly; Secure; SameSite=Strict`,
     `__Host-treeswap_session=${token}; Path=/; Max-Age=86400; Secure; SameSite=Strict`,
@@ -154,6 +161,22 @@ test("best-effort sign-out runs if a live check fails after session creation", a
   };
 
   await assert.rejects(() => runLiveAccountLifecycle({ request }), /injected observation failure/);
+  assert.equal(cleanupCalls, 1);
+});
+
+test("best-effort sign-out survives a cookie-attribute observation failure", async () => {
+  const endpoint = mockAccountEndpoint();
+  let cleanupCalls = 0;
+  const request = async (input) => {
+    if (input.method === "DELETE" && input.originHeader === liveAccountEvidencePolicy.origin) cleanupCalls += 1;
+    const response = await endpoint(input);
+    if (input.path === "/api/auth/verify" && response.status === 200) {
+      return { ...response, setCookie: response.setCookie.replace("; HttpOnly", "") };
+    }
+    return response;
+  };
+
+  await assert.rejects(() => runLiveAccountLifecycle({ request }), /attributes are not hardened/);
   assert.equal(cleanupCalls, 1);
 });
 
