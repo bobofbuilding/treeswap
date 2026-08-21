@@ -51,7 +51,7 @@ npm run verify:testnet-bootstrap-evidence -- \
 
 The summary contains no raw signatures or participant list and grants no authority. Candidate preparation must re-run this verification in-process; a copied summary or deserialized verification object fails provenance checks.
 
-7. Complete the separate [five-role independent-review ceremony](./INDEPENDENT_REVIEW_EVIDENCE.md), then prepare the tiny-limit candidate from the original signed deployment, bootstrap, and review inputs:
+7. Complete the separate [five-role independent-review ceremony](./INDEPENDENT_REVIEW_EVIDENCE.md) and [five-role operational-readiness ceremony](./OPERATIONAL_READINESS_EVIDENCE.md), then prepare the tiny-limit candidate from the original signed deployment, bootstrap, review, and operations inputs:
 
 ```sh
 npm run prepare:testnet-bootstrap-release-candidate -- \
@@ -69,10 +69,13 @@ npm run prepare:testnet-bootstrap-release-candidate -- \
   --review-record review-record.json \
   --review-policy review-policy.json \
   --review-attestations review-attestations.json \
+  --operations-record operations-record.json \
+  --operations-policy operations-policy.json \
+  --operations-attestations operations-attestations.json \
   --out bootstrap-release-candidate.json
 ```
 
-The release approval block and the entire candidate validity window must remain inside both the signed bootstrap-evidence interval and the signed independent-review interval. Candidate preparation commits the roster record, policy, participant set, and exact attestation set into signed release evidence for provider quorum, monitoring, solver operations, backup, incident, qualification, and findings. It derives the five report digests only from live review-verifier provenance; the release template cannot supply them.
+The release approval block and the entire candidate validity window must remain inside the signed bootstrap, independent-review, and operational-readiness intervals. Candidate preparation commits the roster record, policy, participant set, and exact attestation set into release evidence; it separately commits the operational record, policy, participant, drill, alert-channel, and attestation sets. It derives review, loss-allocation, support, incident, backup, monitoring, solver, provider, and qualification commitments only from live verifier provenance; the release template cannot supply them.
 
 ## Fail-closed cases
 

@@ -20,6 +20,9 @@ Both modes remain public-testnet-only. Release v2 rejects every mainnet environm
 - rejects an external reviewer signer that overlaps any deployment wallet, deployment-wallet owner, deployment-promotion attester, bootstrap/campaign operator, or release approver;
 - derives the release environment, chain, gate, source, manifest, operator counts, and policy digests instead of accepting them from an operator;
 - derives all five review digests from a live provenance-bound [independent review verification](./INDEPENDENT_REVIEW_EVIDENCE.md), rather than accepting hashes from the release template;
+- derives backup, monitoring, incident, provider, solver, qualification, loss-allocation, and support commitments from a live provenance-bound [operational readiness verification](./OPERATIONAL_READINESS_EVIDENCE.md), rather than accepting opaque support or loss hashes from the release template;
+- requires the operational Lightning operator and incident commander to match the release policy, the monitoring identity and signer to match one exact signed upstream monitor, every other operational signer to remain separate from upstream infrastructure operators, and every operational signer to remain separate from deployment and independent-review authorities;
+- requires exact alert-channel, upstream artifact, reconciliation, and campaign-drill agreement before operational evidence can enter a release;
 - commits to both the record and policy digest for postflight, promotion, and campaign evidence;
 - combines deployment and campaign provider-quorum evidence instead of allowing one to overwrite the other;
 - combines deployment review, deployment findings, campaign findings, and the signed five-reviewer record, policy, attestation set, and reconciled findings into one release commitment;
@@ -27,7 +30,7 @@ Both modes remain public-testnet-only. Release v2 rejects every mainnet environm
 - derives bootstrap counts from the complete signed operator roster and requires its EVM-provider identities and signers to match the deployment promotion exactly;
 - commits the bootstrap record, policy, participant set, and attestation set into the release's provider, monitoring, solver, backup, incident, qualification, and findings evidence;
 - requires independent monitor counts in addition to providers, Lightning observers, relays, solvers, alert channels, and multisig counts; and
-- refuses missing loss allocation, support policy, or a missing, stale, copied, incomplete, unresolved, or authority-overlapping review package.
+- refuses a missing, stale, copied, incomplete, mismatched, or authority-overlapping review or operational-readiness package.
 
 The output contains the exact release record, release policy, EIP-712 approval payload, upstream digest summary, and only false authority flags. It is written once with mode `0600`. It does not sign, broadcast, open the gate, move inventory, or activate funding.
 
@@ -35,16 +38,19 @@ The output contains the exact release record, release policy, EIP-712 approval p
 
 First complete the [signed bootstrap operator-evidence workflow](./PUBLIC_TESTNET_BOOTSTRAP_EVIDENCE.md). It requires at least two EVM providers, Lightning observers, monitors, relays, and solvers. Every operator signs the same source-, deployment-, artifact-, feature-, and time-bound EIP-712 record. Counts are derived from distinct operator identities and signers; they are not accepted from an unsigned file.
 
-Complete the [five-reviewer evidence ceremony](./INDEPENDENT_REVIEW_EVIDENCE.md), then prepare eight secret-free inputs:
+Complete the [five-reviewer evidence ceremony](./INDEPENDENT_REVIEW_EVIDENCE.md) and [five-role operational-readiness ceremony](./OPERATIONAL_READINESS_EVIDENCE.md), then prepare the secret-free inputs:
 
-- `record-template.json`: release ID/version, finalized approval block, prior release, loss-allocation and support digests, exact 3-owner/2-threshold multisig values, tiny limits, safe features, and validity window; release-record template v2 contains no operator-entered review digests;
+- `record-template.json`: release ID/version, finalized approval block, prior release, exact 3-owner/2-threshold multisig values, tiny limits, safe features, and validity window; release-record template v3 contains no operator-entered review, loss-allocation, or support digests;
 - `policy-template.json`: five release approvers, the same or tighter tiny-limit policy, maximum release lifetime, and maximum runtime-observation age; and
 - `bootstrap-record.json`: the exact operator roster, retained-evidence commitments, operational artifact digests, safe test-only features, and short validity interval;
 - `bootstrap-policy.json`: the exact source/deployment boundary, minimum counts, maximum one-hour freshness, and maximum one-day lifetime; and
 - `bootstrap-attestations.json`: exactly one canonical EIP-712 attestation from every listed operator;
 - `review-record.json`: the exact source, protocol, deployment, reviewers, reports, finding counts, and review interval;
 - `review-policy.json`: the maximum age, lifetime, and finding bound for that exact source and deployment; and
-- `review-attestations.json`: exactly one canonical EIP-712 attestation from each of the five review roles.
+- `review-attestations.json`: exactly one canonical EIP-712 attestation from each of the five review roles;
+- `operations-record.json`: exact operational roles, alert channels, artifacts, drills, source/deployment binding, and validity interval;
+- `operations-policy.json`: the immutable drill set and bounded age, duration, alert-channel, organization, and lifetime requirements; and
+- `operations-attestations.json`: exactly one canonical EIP-712 attestation from each of the five operational roles.
 
 Then independently re-verify the complete postflight-bound promotion and derive the candidate:
 
@@ -64,10 +70,13 @@ npm run prepare:testnet-bootstrap-release-candidate -- \
   --review-record review-record.json \
   --review-policy review-policy.json \
   --review-attestations review-attestations.json \
+  --operations-record operations-record.json \
+  --operations-policy operations-policy.json \
+  --operations-attestations operations-attestations.json \
   --out bootstrap-release-candidate.json
 ```
 
-The verifier rejects a stale or copied promotion, bootstrap, or review verification; provider identity/signer/count mismatch; non-canonical roster; shared operator, reviewer, organization, or signer; missing or replayed signature; open or unreconciled finding; accepted critical/high risk; Safe substitution; weak participant count; excessive bootstrap limit; unsafe feature; a candidate validity window outside the signed bootstrap or review interval; symlink; overwrite; oversized file; or unknown field.
+The verifier rejects a stale or copied promotion, bootstrap, review, or operational verification; provider identity/signer/count mismatch; non-canonical roster; shared or authority-overlapping signer; incomplete drill or alert set; changed upstream operational artifact; missing or replayed signature; open or unreconciled finding; accepted critical/high risk; Safe substitution; weak participant count; excessive bootstrap limit; unsafe feature; a candidate validity window outside any signed evidence interval; symlink; overwrite; oversized file; or unknown field.
 
 ## Campaign-qualified preparation
 
@@ -89,6 +98,9 @@ npm run prepare:testnet-release-candidate -- \
   --review-record review-record.json \
   --review-policy review-policy.json \
   --review-attestations review-attestations.json \
+  --operations-record operations-record.json \
+  --operations-policy operations-policy.json \
+  --operations-attestations operations-attestations.json \
   --out qualified-release-candidate.json
 ```
 
