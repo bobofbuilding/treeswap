@@ -73,6 +73,9 @@ const qualifiedEvidenceFields = [
   "deploymentPostflightRecordDigest",
   "deploymentPromotionPolicyDigest",
   "deploymentPromotionRecordDigest",
+  "independentReviewAttestationSetDigest",
+  "independentReviewPolicyDigest",
+  "independentReviewRecordDigest",
   "publicTestnetPolicyDigest",
   "publicTestnetRecordDigest",
 ];
@@ -180,8 +183,8 @@ function preparedCandidate(now = NOW, recordOverrides = {}) {
   const message = buildReleaseApprovalMessage(record, policy);
   const domain = releaseAuthorizationDomain(record);
   return {
-    schema: "treeswap.prepared-public-testnet-release-candidate.v1",
-    status: "upstream-evidence-verified-awaiting-five-role-release-approvals",
+    schema: "treeswap.prepared-public-testnet-release-candidate.v2",
+    status: "deployment-campaign-and-independent-review-evidence-verified-awaiting-five-role-release-approvals",
     scope: "release-preparation-only-no-signing-broadcast-gate-opening-or-funding-authorization",
     authorizations: { signing: false, broadcast: false, gateOpening: false, funding: false },
     recordDigest: message.recordDigest,

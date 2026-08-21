@@ -17,7 +17,13 @@ import {
   fixture as bootstrapFixture,
   sign as signBootstrapFixture,
 } from "./fixtures/verified-public-testnet-bootstrap.mjs";
+import {
+  createVerifiedIndependentReviewFixture,
+  fixture as reviewFixture,
+  sign as signReviewFixture,
+} from "./fixtures/verified-independent-review.mjs";
 import { verifyPublicTestnetBootstrapEvidence } from "../lib/public-testnet-bootstrap-evidence.mjs";
+import { verifyIndependentReviewEvidence } from "../lib/independent-review-evidence.mjs";
 import {
   buildPublicTestnetReleaseApproval,
   buildPublicTestnetReleaseCandidateSummary,
@@ -34,7 +40,7 @@ const ZERO = `0x${"00".repeat(32)}`;
 
 function recordTemplate(approvalBlockTimestamp = PROMOTION_NOW + 60) {
   return {
-    schema: "treeswap.public-testnet-release-record-template.v1",
+    schema: "treeswap.public-testnet-release-record-template.v2",
     releaseId: id("evidence-bound public testnet release").toLowerCase(),
     protocolVersion: "1.0.0-testnet.1",
     approvalBlockNumber: "1100",
@@ -44,13 +50,6 @@ function recordTemplate(approvalBlockTimestamp = PROMOTION_NOW + 60) {
     externalEvidenceDigests: {
       lossAllocation: id("reviewed loss allocation").toLowerCase(),
       supportPolicy: id("reviewed support policy").toLowerCase(),
-    },
-    reviewDigests: {
-      contracts: id("independent contract review").toLowerCase(),
-      coordinator: id("independent coordinator review").toLowerCase(),
-      identityPrivacy: id("independent identity privacy review").toLowerCase(),
-      lightning: id("independent lightning review").toLowerCase(),
-      operations: id("independent operations review").toLowerCase(),
     },
     multisig: { ownerCount: 3, threshold: 2 },
     limits: {
@@ -169,18 +168,24 @@ async function fixture() {
     deploymentManifestDigest: deployment.verification.record.manifestDigest,
     now: PROMOTION_NOW + 60,
   });
+  const review = await createVerifiedIndependentReviewFixture({
+    deployment,
+    finishedAt: PROMOTION_NOW + 20,
+    now: PROMOTION_NOW + 60,
+  });
   const candidate = preparePublicTestnetReleaseCandidate({
     recordTemplate: recordTemplate(),
     policyTemplate: policyTemplate(deployment.verification.manifest),
     deploymentPromotionVerification: deployment.verification,
+    independentReviewVerification: review.verification,
     publicTestnetVerification: campaign.verification,
   });
-  return { campaign, candidate, deployment };
+  return { campaign, candidate, deployment, review };
 }
 
-test("derives one exact release candidate from verified deployment and campaign evidence", async () => {
-  const { candidate } = await fixture();
-  assert.equal(candidate.status, "upstream-evidence-verified-awaiting-five-role-release-approvals");
+test("derives one exact release candidate from verified deployment, campaign, and independent-review evidence", async () => {
+  const { candidate, review } = await fixture();
+  assert.equal(candidate.status, "deployment-campaign-and-independent-review-evidence-verified-awaiting-five-role-release-approvals");
   assert.equal(candidate.scope.includes("no-signing"), true);
   assert.equal(candidate.record.counts.independentMonitors, 2);
   assert.equal(candidate.record.counts.multisigOwnerCount, 3);
@@ -189,6 +194,12 @@ test("derives one exact release candidate from verified deployment and campaign 
   assert.notEqual(candidate.record.evidenceDigests.publicTestnet, candidate.evidence.publicTestnetRecordDigest);
   assert.notEqual(candidate.record.evidenceDigests.providerQuorum, ZERO);
   assert.notEqual(candidate.record.evidenceDigests.findingsDisposition, ZERO);
+  assert.deepEqual(candidate.record.reviewDigests, review.verification.record.reports
+    && Object.fromEntries(Object.entries(review.verification.record.reports).map(([field, value]) => [
+      field,
+      value.reportDigest,
+    ])));
+  assert.equal(candidate.evidence.independentReviewRecordDigest, review.verification.recordDigest);
   assert.deepEqual(buildReleaseApprovalMessage(candidate.record, candidate.policy), candidate.approval.message);
   assert.equal(buildPublicTestnetReleaseApproval(candidate).value.recordDigest, candidate.recordDigest);
   assert.equal(
@@ -209,11 +220,17 @@ test("derives a distinct tiny-limit bootstrap candidate before campaign evidence
     preparedAt: PROMOTION_NOW,
     now: PROMOTION_NOW + 60,
   });
+  const review = await createVerifiedIndependentReviewFixture({
+    deployment,
+    finishedAt: PROMOTION_NOW + 20,
+    now: PROMOTION_NOW + 60,
+  });
   const candidate = preparePublicTestnetBootstrapReleaseCandidate({
     recordTemplate: bootstrapRecordTemplate(),
     policyTemplate: bootstrapPolicyTemplate(deployment.verification.manifest),
     bootstrapEvidenceVerification: bootstrap.verification,
     deploymentPromotionVerification: deployment.verification,
+    independentReviewVerification: review.verification,
   });
   assert.equal(candidate.record.fundingMode, "operator-testnet-bootstrap");
   assert.equal(candidate.record.evidenceDigests.publicTestnet, ZERO);
@@ -231,7 +248,7 @@ test("derives a distinct tiny-limit bootstrap candidate before campaign evidence
   assert.equal(buildPublicTestnetReleaseApproval(candidate).value.recordDigest, candidate.recordDigest);
   assert.equal(
     inspectPreparedPublicTestnetReleaseCandidate(structuredClone(candidate)).candidateSchema,
-    "treeswap.prepared-public-testnet-bootstrap-release-candidate.v1",
+    "treeswap.prepared-public-testnet-bootstrap-release-candidate.v2",
   );
 
   assert.throws(() => preparePublicTestnetBootstrapReleaseCandidate({
@@ -239,6 +256,7 @@ test("derives a distinct tiny-limit bootstrap candidate before campaign evidence
     policyTemplate: bootstrapPolicyTemplate(deployment.verification.manifest),
     bootstrapEvidenceVerification: structuredClone(bootstrap.verification),
     deploymentPromotionVerification: deployment.verification,
+    independentReviewVerification: review.verification,
   }), /bootstrap evidence provenance/);
 
   const substitutedInput = bootstrapFixture({ deployment, preparedAt: PROMOTION_NOW });
@@ -262,6 +280,7 @@ test("derives a distinct tiny-limit bootstrap candidate before campaign evidence
     policyTemplate: bootstrapPolicyTemplate(deployment.verification.manifest),
     bootstrapEvidenceVerification: substitutedBootstrap,
     deploymentPromotionVerification: deployment.verification,
+    independentReviewVerification: review.verification,
   }), /EVM providers do not exactly match/);
 
   const outsideEvidenceWindow = bootstrapRecordTemplate();
@@ -271,6 +290,7 @@ test("derives a distinct tiny-limit bootstrap candidate before campaign evidence
     policyTemplate: bootstrapPolicyTemplate(deployment.verification.manifest),
     bootstrapEvidenceVerification: bootstrap.verification,
     deploymentPromotionVerification: deployment.verification,
+    independentReviewVerification: review.verification,
   }), /validity is outside the signed operator-evidence interval/);
 
   const excessive = recordTemplate();
@@ -280,6 +300,7 @@ test("derives a distinct tiny-limit bootstrap candidate before campaign evidence
       policyTemplate: policyTemplate(deployment.verification.manifest),
       bootstrapEvidenceVerification: bootstrap.verification,
       deploymentPromotionVerification: deployment.verification,
+      independentReviewVerification: review.verification,
     }),
     /testnet-bootstrap maximum/,
   );
@@ -290,23 +311,59 @@ test("derives a distinct tiny-limit bootstrap candidate before campaign evidence
       policyTemplate: bootstrapPolicyTemplate(deployment.verification.manifest),
       bootstrapEvidenceVerification: bootstrap.verification,
       deploymentPromotionVerification: copied,
+      independentReviewVerification: review.verification,
     }),
     /provenance/,
+  );
+
+  const capturedReviewInput = reviewFixture({ deployment, finishedAt: PROMOTION_NOW + 20 });
+  const capturedReviewer = capturedReviewInput.record.participants[0];
+  const bootstrapOperator = bootstrap.candidate.record.participants.find(
+    (value) => value.role === "lightning-observer",
+  );
+  capturedReviewInput.wallets.delete(capturedReviewer.signer);
+  capturedReviewer.signer = bootstrapOperator.signer;
+  capturedReviewInput.wallets.set(
+    bootstrapOperator.signer,
+    bootstrap.candidate.wallets.get(bootstrapOperator.signer),
+  );
+  await signReviewFixture(capturedReviewInput);
+  const capturedReviewVerification = verifyIndependentReviewEvidence({
+    ...capturedReviewInput,
+    now: PROMOTION_NOW + 60,
+  });
+  assert.throws(
+    () => preparePublicTestnetBootstrapReleaseCandidate({
+      recordTemplate: bootstrapRecordTemplate(),
+      policyTemplate: bootstrapPolicyTemplate(deployment.verification.manifest),
+      bootstrapEvidenceVerification: bootstrap.verification,
+      deploymentPromotionVerification: deployment.verification,
+      independentReviewVerification: capturedReviewVerification,
+    }),
+    /reviewer signer overlaps/,
   );
 });
 
 test("requires live provenance and rejects copied or mismatched upstream evidence", async () => {
-  const { campaign, deployment } = await fixture();
+  const { campaign, deployment, review } = await fixture();
   const input = {
     recordTemplate: recordTemplate(),
     policyTemplate: policyTemplate(deployment.verification.manifest),
     deploymentPromotionVerification: deployment.verification,
+    independentReviewVerification: review.verification,
     publicTestnetVerification: campaign.verification,
   };
   assert.throws(
     () => preparePublicTestnetReleaseCandidate({
       ...input,
       deploymentPromotionVerification: structuredClone(deployment.verification),
+    }),
+    /provenance/,
+  );
+  assert.throws(
+    () => preparePublicTestnetReleaseCandidate({
+      ...input,
+      independentReviewVerification: structuredClone(review.verification),
     }),
     /provenance/,
   );
@@ -336,11 +393,12 @@ test("requires live provenance and rejects copied or mismatched upstream evidenc
   );
 });
 
-test("rejects stale ordering, incomplete external review, and deployment-wallet substitution", async () => {
-  const { campaign, deployment } = await fixture();
+test("rejects stale ordering, unsigned review templates, reviewer capture, and deployment-wallet substitution", async () => {
+  const { campaign, deployment, review } = await fixture();
   const base = {
     policyTemplate: policyTemplate(deployment.verification.manifest),
     deploymentPromotionVerification: deployment.verification,
+    independentReviewVerification: review.verification,
     publicTestnetVerification: campaign.verification,
   };
   assert.throws(
@@ -357,11 +415,11 @@ test("rejects stale ordering, incomplete external review, and deployment-wallet 
     }),
     /promotion expired/,
   );
-  const weakReview = recordTemplate();
-  weakReview.reviewDigests.operations = ZERO;
+  const unsignedReview = recordTemplate();
+  unsignedReview.schema = "treeswap.public-testnet-release-record-template.v1";
   assert.throws(
-    () => preparePublicTestnetReleaseCandidate({ ...base, recordTemplate: weakReview }),
-    /reviewDigests.operations.*nonzero/,
+    () => preparePublicTestnetReleaseCandidate({ ...base, recordTemplate: unsignedReview }),
+    /record template schema is invalid/,
   );
   const wrongMultisig = recordTemplate();
   wrongMultisig.multisig = { ownerCount: 4, threshold: 3 };
@@ -422,10 +480,73 @@ test("rejects stale ordering, incomplete external review, and deployment-wallet 
     }),
     /lightningOperator approver must use.*EIP-712/,
   );
+
+  const capturedReviewInput = reviewFixture({ deployment, finishedAt: PROMOTION_NOW + 20 });
+  const capturedReviewer = capturedReviewInput.record.participants[0];
+  capturedReviewInput.wallets.delete(capturedReviewer.signer);
+  const capturedWallet = new Wallet(`0x${"55".repeat(32)}`);
+  capturedReviewer.signer = capturedWallet.address;
+  capturedReviewInput.wallets.set(capturedWallet.address, capturedWallet);
+  await signReviewFixture(capturedReviewInput);
+  const capturedReviewVerification = verifyIndependentReviewEvidence({
+    ...capturedReviewInput,
+    now: PROMOTION_NOW + 60,
+  });
+  assert.throws(
+    () => preparePublicTestnetReleaseCandidate({
+      ...base,
+      recordTemplate: recordTemplate(),
+      independentReviewVerification: capturedReviewVerification,
+    }),
+    /reviewer signer overlaps/,
+  );
+
+  const capturedCampaignReviewInput = reviewFixture({ deployment, finishedAt: PROMOTION_NOW + 20 });
+  const capturedCampaignReviewer = capturedCampaignReviewInput.record.participants[0];
+  const campaignParticipant = campaign.candidate.record.participants[0];
+  capturedCampaignReviewInput.wallets.delete(capturedCampaignReviewer.signer);
+  capturedCampaignReviewer.signer = campaignParticipant.signer;
+  capturedCampaignReviewInput.wallets.set(
+    campaignParticipant.signer,
+    campaign.candidate.wallets.get(campaignParticipant.signer),
+  );
+  await signReviewFixture(capturedCampaignReviewInput);
+  const capturedCampaignReviewVerification = verifyIndependentReviewEvidence({
+    ...capturedCampaignReviewInput,
+    now: PROMOTION_NOW + 60,
+  });
+  assert.throws(
+    () => preparePublicTestnetReleaseCandidate({
+      ...base,
+      recordTemplate: recordTemplate(),
+      independentReviewVerification: capturedCampaignReviewVerification,
+    }),
+    /reviewer signer overlaps/,
+  );
+
+  const capturedDeploymentReviewInput = reviewFixture({ deployment, finishedAt: PROMOTION_NOW + 20 });
+  const capturedDeploymentReviewer = capturedDeploymentReviewInput.record.participants[0];
+  const deploymentApprover = deployment.candidate.approvers[0];
+  capturedDeploymentReviewInput.wallets.delete(capturedDeploymentReviewer.signer);
+  capturedDeploymentReviewer.signer = deploymentApprover.signer;
+  capturedDeploymentReviewInput.wallets.set(deploymentApprover.signer, deploymentApprover.wallet);
+  await signReviewFixture(capturedDeploymentReviewInput);
+  const capturedDeploymentReviewVerification = verifyIndependentReviewEvidence({
+    ...capturedDeploymentReviewInput,
+    now: PROMOTION_NOW + 60,
+  });
+  assert.throws(
+    () => preparePublicTestnetReleaseCandidate({
+      ...base,
+      recordTemplate: recordTemplate(),
+      independentReviewVerification: capturedDeploymentReviewVerification,
+    }),
+    /reviewer signer overlaps/,
+  );
 });
 
 test("operator CLI writes a private non-overwriting candidate without authority", async () => {
-  const { campaign, deployment } = await fixture();
+  const { campaign, deployment, review } = await fixture();
   const directory = await mkdtemp(join(tmpdir(), "treeswap-release-candidate-"));
   try {
     const values = {
@@ -440,6 +561,9 @@ test("operator CLI writes a private non-overwriting candidate without authority"
       campaignRecord: campaign.candidate.record,
       campaignPolicy: campaign.candidate.policy,
       campaignAttestations: campaign.candidate.attestations,
+      reviewRecord: review.candidate.record,
+      reviewPolicy: review.candidate.policy,
+      reviewAttestations: review.candidate.attestations,
     };
     const paths = {};
     for (const [name, value] of Object.entries(values)) {
@@ -460,6 +584,9 @@ test("operator CLI writes a private non-overwriting candidate without authority"
       "--campaign-record", paths.campaignRecord,
       "--campaign-policy", paths.campaignPolicy,
       "--campaign-attestations", paths.campaignAttestations,
+      "--review-record", paths.reviewRecord,
+      "--review-policy", paths.reviewPolicy,
+      "--review-attestations", paths.reviewAttestations,
       "--out", output,
     ];
     const result = JSON.parse(execFileSync(process.execPath, arguments_, { encoding: "utf8" }));
@@ -486,6 +613,11 @@ test("bootstrap operator CLI also writes only a private non-authorizing candidat
     preparedAt: PROMOTION_NOW,
     now: PROMOTION_NOW + 60,
   });
+  const review = await createVerifiedIndependentReviewFixture({
+    deployment,
+    finishedAt: PROMOTION_NOW + 20,
+    now: PROMOTION_NOW + 60,
+  });
   const directory = await mkdtemp(join(tmpdir(), "treeswap-bootstrap-release-candidate-"));
   try {
     const values = {
@@ -500,6 +632,9 @@ test("bootstrap operator CLI also writes only a private non-authorizing candidat
       promotionObservations: deployment.candidate.observations,
       promotionAttestations: deployment.attestations,
       postflightBundle: postflightBundle(deployment),
+      reviewRecord: review.candidate.record,
+      reviewPolicy: review.candidate.policy,
+      reviewAttestations: review.candidate.attestations,
     };
     const paths = {};
     for (const [name, value] of Object.entries(values)) {
@@ -520,6 +655,9 @@ test("bootstrap operator CLI also writes only a private non-authorizing candidat
       "--promotion-observations", paths.promotionObservations,
       "--promotion-attestations", paths.promotionAttestations,
       "--postflight-bundle", paths.postflightBundle,
+      "--review-record", paths.reviewRecord,
+      "--review-policy", paths.reviewPolicy,
+      "--review-attestations", paths.reviewAttestations,
       "--out", output,
     ], { encoding: "utf8" }));
     assert.equal(result.fundingAuthorization, false);

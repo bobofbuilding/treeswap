@@ -4,6 +4,7 @@ import { readBoundedJson, writeExclusiveJson } from "../lib/closed-testnet-deplo
 import { verifyDeploymentManifestPromotion } from "../lib/deployment-manifest-promotion.mjs";
 import { verifyDeploymentPromotionPostflightBundle } from "../lib/deployment-promotion-postflight-bundle.mjs";
 import { verifyPublicTestnetBootstrapEvidence } from "../lib/public-testnet-bootstrap-evidence.mjs";
+import { verifyIndependentReviewEvidence } from "../lib/independent-review-evidence.mjs";
 import {
   buildPublicTestnetReleaseCandidateSummary,
   preparePublicTestnetBootstrapReleaseCandidate,
@@ -22,8 +23,11 @@ const FLAGS = Object.freeze([
   "--promotion-policy",
   "--promotion-record",
   "--record-template",
+  "--review-attestations",
+  "--review-policy",
+  "--review-record",
 ]);
-const USAGE = "Usage: prepare-public-testnet-bootstrap-release-candidate --record-template record-template.json --policy-template policy-template.json --bootstrap-record bootstrap-record.json --bootstrap-policy bootstrap-policy.json --bootstrap-attestations bootstrap-attestations.json --promotion-record promotion-record.json --promotion-policy promotion-policy.json --deployment-policy deployment-policy.json --promotion-observations promotion-observations.json --promotion-attestations promotion-attestations.json --postflight-bundle postflight-bundle.json --out bootstrap-release-candidate.json";
+const USAGE = "Usage: prepare-public-testnet-bootstrap-release-candidate --record-template record-template.json --policy-template policy-template.json --bootstrap-record bootstrap-record.json --bootstrap-policy bootstrap-policy.json --bootstrap-attestations bootstrap-attestations.json --promotion-record promotion-record.json --promotion-policy promotion-policy.json --deployment-policy deployment-policy.json --promotion-observations promotion-observations.json --promotion-attestations promotion-attestations.json --postflight-bundle postflight-bundle.json --review-record review-record.json --review-policy review-policy.json --review-attestations review-attestations.json --out bootstrap-release-candidate.json";
 
 function argumentsFromCommandLine(values) {
   if (values.length !== FLAGS.length * 2) throw new Error(USAGE);
@@ -40,7 +44,7 @@ function argumentsFromCommandLine(values) {
 const args = argumentsFromCommandLine(process.argv.slice(2));
 const [recordTemplate, policyTemplate, bootstrapRecord, bootstrapPolicy, bootstrapAttestations,
   promotionRecord, promotionPolicy, deploymentPolicy, promotionObservations, promotionAttestations,
-  postflightBundle] = await Promise.all([
+  postflightBundle, reviewRecord, reviewPolicy, reviewAttestations] = await Promise.all([
   readBoundedJson(args["--record-template"], "bootstrap release record template"),
   readBoundedJson(args["--policy-template"], "bootstrap release policy template"),
   readBoundedJson(args["--bootstrap-record"], "bootstrap evidence record"),
@@ -52,6 +56,9 @@ const [recordTemplate, policyTemplate, bootstrapRecord, bootstrapPolicy, bootstr
   readBoundedJson(args["--promotion-observations"], "deployment promotion observations"),
   readBoundedJson(args["--promotion-attestations"], "deployment promotion attestations"),
   readBoundedJson(args["--postflight-bundle"], "deployment postflight bundle"),
+  readBoundedJson(args["--review-record"], "independent review record"),
+  readBoundedJson(args["--review-policy"], "independent review policy"),
+  readBoundedJson(args["--review-attestations"], "independent review attestations"),
 ]);
 const postflightVerification = verifyDeploymentPromotionPostflightBundle({
   bundle: postflightBundle,
@@ -73,11 +80,18 @@ const bootstrapEvidenceVerification = verifyPublicTestnetBootstrapEvidence({
   attestations: bootstrapAttestations,
   now: recordTemplate.approvalBlockTimestamp,
 });
+const independentReviewVerification = verifyIndependentReviewEvidence({
+  record: reviewRecord,
+  policy: reviewPolicy,
+  attestations: reviewAttestations,
+  now: recordTemplate.approvalBlockTimestamp,
+});
 const candidate = preparePublicTestnetBootstrapReleaseCandidate({
   recordTemplate,
   policyTemplate,
   bootstrapEvidenceVerification,
   deploymentPromotionVerification,
+  independentReviewVerification,
 });
 if (Buffer.byteLength(JSON.stringify(candidate)) > 1_000_000) {
   throw new Error("public-testnet bootstrap release candidate exceeds 1 MB");

@@ -4,11 +4,11 @@ Status: TreeSwap can prepare each of five exact release-signing payloads and ver
 
 ## Safety boundary
 
-A JSON candidate loaded from disk can prove only internal consistency: its release record, policy, record digest, policy digest, and EIP-712 payload agree. Deserialization cannot preserve the module-private provenance created when TreeSwap originally verified deployment and campaign evidence.
+A JSON candidate loaded from disk can prove only internal consistency: its release record, policy, record digest, policy digest, and EIP-712 payload agree. Deserialization cannot preserve the module-private provenance created when TreeSwap originally verified deployment, bootstrap or campaign, and five-reviewer evidence.
 
 Every signer must therefore:
 
-1. start from the original postflight, promotion, and bootstrap or campaign inputs;
+1. start from the original postflight, promotion, bootstrap or campaign, and signed independent-review inputs;
 2. independently rerun the appropriate candidate-preparation command from a clean reviewed checkout;
 3. compare the release ID, record digest, and policy digest with the other four roles over a separate authenticated channel; and
 4. inspect the exact chain, gate, approval block, validity window, funding mode, limits, reserves, evidence digests, review digests, and feature exclusions before signing.
@@ -25,7 +25,7 @@ npm run prepare:testnet-release-approval -- \
   --role securityReviewer
 ```
 
-The command accepts only the two known public-testnet candidate schemas. It rebuilds the canonical message and typed digest, requires exact false authority flags, rejects unknown fields or digest/domain/type mutation, and refuses an expired candidate. It selects the signer and signature kind from the signed policy; the operator cannot override them on the command line. All five roles should compare the same typed digest as well as the record and policy digests.
+The command accepts only the two v2 public-testnet candidate kinds: tiny bootstrap and campaign-qualified. Candidate v1 is deliberately rejected because it accepted operator-entered review hashes. The command rebuilds the canonical message and typed digest, requires exact false authority flags, rejects unknown fields or digest/domain/type mutation, and refuses an expired candidate. It selects the signer and signature kind from the signed policy; the operator cannot override them on the command line. All five roles should compare the same typed digest as well as the record and policy digests.
 
 Controller and guardian must remain ERC-1271 contract-wallet signers with the exact reviewed runtime hashes. Lightning operator, security reviewer, and incident commander must remain their distinct policy-pinned EIP-712 identities. The output is an unsigned payload only. It never reads a private key or requests a wallet signature.
 

@@ -4,6 +4,7 @@ import { readBoundedJson, writeExclusiveJson } from "../lib/closed-testnet-deplo
 import { verifyDeploymentManifestPromotion } from "../lib/deployment-manifest-promotion.mjs";
 import { verifyDeploymentPromotionPostflightBundle } from "../lib/deployment-promotion-postflight-bundle.mjs";
 import { verifyPublicTestnetCampaign } from "../lib/public-testnet-evidence.mjs";
+import { verifyIndependentReviewEvidence } from "../lib/independent-review-evidence.mjs";
 import {
   buildPublicTestnetReleaseCandidateSummary,
   preparePublicTestnetReleaseCandidate,
@@ -22,8 +23,11 @@ const FLAGS = Object.freeze([
   "--promotion-policy",
   "--promotion-record",
   "--record-template",
+  "--review-attestations",
+  "--review-policy",
+  "--review-record",
 ]);
-const USAGE = "Usage: prepare-public-testnet-release-candidate --record-template record-template.json --policy-template policy-template.json --promotion-record promotion-record.json --promotion-policy promotion-policy.json --deployment-policy deployment-policy.json --promotion-observations promotion-observations.json --promotion-attestations promotion-attestations.json --postflight-bundle postflight-bundle.json --campaign-record campaign-record.json --campaign-policy campaign-policy.json --campaign-attestations campaign-attestations.json --out release-candidate.json";
+const USAGE = "Usage: prepare-public-testnet-release-candidate --record-template record-template.json --policy-template policy-template.json --promotion-record promotion-record.json --promotion-policy promotion-policy.json --deployment-policy deployment-policy.json --promotion-observations promotion-observations.json --promotion-attestations promotion-attestations.json --postflight-bundle postflight-bundle.json --campaign-record campaign-record.json --campaign-policy campaign-policy.json --campaign-attestations campaign-attestations.json --review-record review-record.json --review-policy review-policy.json --review-attestations review-attestations.json --out release-candidate.json";
 
 function argumentsFromCommandLine(values) {
   if (values.length !== FLAGS.length * 2) throw new Error(USAGE);
@@ -40,7 +44,7 @@ function argumentsFromCommandLine(values) {
 const args = argumentsFromCommandLine(process.argv.slice(2));
 const [recordTemplate, policyTemplate, promotionRecord, promotionPolicy, deploymentPolicy,
   promotionObservations, promotionAttestations, postflightBundle, campaignRecord, campaignPolicy,
-  campaignAttestations] = await Promise.all([
+  campaignAttestations, reviewRecord, reviewPolicy, reviewAttestations] = await Promise.all([
   readBoundedJson(args["--record-template"], "release record template"),
   readBoundedJson(args["--policy-template"], "release policy template"),
   readBoundedJson(args["--promotion-record"], "deployment promotion record"),
@@ -52,6 +56,9 @@ const [recordTemplate, policyTemplate, promotionRecord, promotionPolicy, deploym
   readBoundedJson(args["--campaign-record"], "public-testnet campaign record"),
   readBoundedJson(args["--campaign-policy"], "public-testnet campaign policy"),
   readBoundedJson(args["--campaign-attestations"], "public-testnet campaign attestations"),
+  readBoundedJson(args["--review-record"], "independent review record"),
+  readBoundedJson(args["--review-policy"], "independent review policy"),
+  readBoundedJson(args["--review-attestations"], "independent review attestations"),
 ]);
 const verificationTime = recordTemplate.approvalBlockTimestamp;
 const postflightVerification = verifyDeploymentPromotionPostflightBundle({
@@ -74,10 +81,17 @@ const publicTestnetVerification = verifyPublicTestnetCampaign({
   attestations: campaignAttestations,
   now: verificationTime,
 });
+const independentReviewVerification = verifyIndependentReviewEvidence({
+  record: reviewRecord,
+  policy: reviewPolicy,
+  attestations: reviewAttestations,
+  now: verificationTime,
+});
 const candidate = preparePublicTestnetReleaseCandidate({
   recordTemplate,
   policyTemplate,
   deploymentPromotionVerification,
+  independentReviewVerification,
   publicTestnetVerification,
 });
 if (Buffer.byteLength(JSON.stringify(candidate)) > 1_000_000) {

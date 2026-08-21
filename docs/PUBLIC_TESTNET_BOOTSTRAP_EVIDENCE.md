@@ -51,7 +51,7 @@ npm run verify:testnet-bootstrap-evidence -- \
 
 The summary contains no raw signatures or participant list and grants no authority. Candidate preparation must re-run this verification in-process; a copied summary or deserialized verification object fails provenance checks.
 
-7. Prepare the tiny-limit candidate from the original signed deployment and bootstrap inputs:
+7. Complete the separate [five-role independent-review ceremony](./INDEPENDENT_REVIEW_EVIDENCE.md), then prepare the tiny-limit candidate from the original signed deployment, bootstrap, and review inputs:
 
 ```sh
 npm run prepare:testnet-bootstrap-release-candidate -- \
@@ -66,18 +66,21 @@ npm run prepare:testnet-bootstrap-release-candidate -- \
   --promotion-observations promotion-observations.json \
   --promotion-attestations promotion-attestations.json \
   --postflight-bundle postflight-bundle.json \
+  --review-record review-record.json \
+  --review-policy review-policy.json \
+  --review-attestations review-attestations.json \
   --out bootstrap-release-candidate.json
 ```
 
-The release approval block and the entire candidate validity window must remain inside the signed bootstrap-evidence interval. Candidate preparation commits the roster record, policy, participant set, and exact attestation set into signed release evidence for provider quorum, monitoring, solver operations, backup, incident, qualification, and findings.
+The release approval block and the entire candidate validity window must remain inside both the signed bootstrap-evidence interval and the signed independent-review interval. Candidate preparation commits the roster record, policy, participant set, and exact attestation set into signed release evidence for provider quorum, monitoring, solver operations, backup, incident, qualification, and findings. It derives the five report digests only from live review-verifier provenance; the release template cannot supply them.
 
 ## Fail-closed cases
 
-Preparation fails on an unknown field, wrong schema or chain, source/manifest/gate mismatch, unsafe feature, zero artifact, shared or duplicated identity, signer or evidence digest, non-canonical order, weak count, stale/future/expired evidence, excessive lifetime, missing or substituted attestation, changed record or policy, wrong signature, copied verification, deployment-provider mismatch, secret-bearing field, endpoint material, oversized input, symlink, or output overwrite.
+Preparation fails on an unknown field, wrong schema or chain, source/manifest/gate mismatch, unsafe feature, zero artifact, shared or duplicated operator or reviewer identity, signer, organization, or evidence digest, non-canonical order, weak count, open or unreconciled review finding, accepted critical/high risk, stale/future/expired evidence, excessive lifetime, missing or substituted attestation, changed record or policy, wrong signature, copied verification, deployment-provider mismatch, reviewer overlap with a deployment or release authority, secret-bearing field, endpoint material, oversized input, symlink, or output overwrite.
 
 ## Remaining external boundary
 
-Ten distinct commitments and ten valid signatures do not prove ten independent organizations. A single party can control many keys, sign false evidence, or commit to nonexistent infrastructure. EIP-712 proves which listed key approved the exact bytes; it does not prove the evidence behind a digest is truthful.
+Distinct operator and reviewer commitments and valid signatures do not prove independent organizations. A single party can control many keys, sign false evidence, or commit to nonexistent infrastructure. EIP-712 proves which listed key approved the exact bytes; it does not prove the evidence behind a digest is truthful.
 
 Before any operator-owned test inventory is exposed, independent reviewers must inspect the retained artifacts, verify organizational and infrastructure separation, test service identities and secret scopes, witness backup/restore and alert delivery, and confirm that the provider roster represents independently operated backends. Five release roles must then independently reproduce the entire candidate and complete the separate release ceremony. Funded operation remains closed until those external facts exist and live activation re-verifies them in-process.
 

@@ -6,7 +6,7 @@ Status: TreeSwap can prepare two exact, non-authorizing public-testnet release c
 
 A seven-day multi-solver campaign cannot be required before any testnet execution is possible. It is also unsafe to let a pre-campaign bootstrap record silently become the ordinary testnet release. Release v2 therefore has two distinct funding modes:
 
-1. `operator-testnet-bootstrap` permits only operator-owned public-testnet inventory under hard code-level ceilings of 500 sats per swap, 1,000 sats in flight, 5,000 sats per epoch, 10,000 sats per day, 50 sats routing fee, and 250 basis points price band. It may omit the not-yet-existent campaign digest, but it still requires the exact signed deployment promotion, an independently signed bootstrap roster with two operators in every critical role, two alert channels, all operational evidence, all five review digests, loss allocation, support policy, and five-role release approval.
+1. `operator-testnet-bootstrap` permits only operator-owned public-testnet inventory under hard code-level ceilings of 500 sats per swap, 1,000 sats in flight, 5,000 sats per epoch, 10,000 sats per day, 50 sats routing fee, and 250 basis points price band. It may omit the not-yet-existent campaign digest, but it still requires the exact signed deployment promotion, an independently signed bootstrap roster with two operators in every critical role, two alert channels, all operational evidence, a five-reviewer signed review package, loss allocation, support policy, and five-role release approval.
 2. `operator-testnet` is the campaign-qualified mode. It requires the complete signed seven-day campaign and derives its release record from both the fresh deployment promotion and campaign verification. It cannot reuse the bootstrap release or omit campaign evidence. Code-level ceilings remain 5,000 sats per swap, 10,000 sats in flight, 50,000 sats per epoch, 100,000 sats per day, 100 sats routing fee, and 500 basis points price band; signed policy may only tighten them.
 
 Both modes remain public-testnet-only. Release v2 rejects every mainnet environment and funding mode.
@@ -15,17 +15,19 @@ Both modes remain public-testnet-only. Release v2 rejects every mainnet environm
 
 `lib/public-testnet-release-candidate.mjs` removes the manual merge between deployment and campaign evidence. It accepts only live module-private verifications; copied JSON verification claims fail. It then:
 
-- requires the source commit, chain, gate, deployment manifest, EVM provider count, campaign timing, promotion lifetime, both release-authorizing wallet identities and code hashes, and all three Safe owner/threshold observations to agree;
+- requires the source commit, protocol version, chain, gate, deployment manifest, EVM provider count, campaign timing, review interval, promotion lifetime, both release-authorizing wallet identities and code hashes, and all three Safe owner/threshold observations to agree;
 - rejects a Lightning operator, security reviewer, or incident commander that is also an owner of any controller, guardian, or fee-recipient wallet;
+- rejects an external reviewer signer that overlaps any deployment wallet, deployment-wallet owner, deployment-promotion attester, bootstrap/campaign operator, or release approver;
 - derives the release environment, chain, gate, source, manifest, operator counts, and policy digests instead of accepting them from an operator;
+- derives all five review digests from a live provenance-bound [independent review verification](./INDEPENDENT_REVIEW_EVIDENCE.md), rather than accepting hashes from the release template;
 - commits to both the record and policy digest for postflight, promotion, and campaign evidence;
 - combines deployment and campaign provider-quorum evidence instead of allowing one to overwrite the other;
-- combines deployment review, deployment findings, and campaign findings into one release commitment;
+- combines deployment review, deployment findings, campaign findings, and the signed five-reviewer record, policy, attestation set, and reconciled findings into one release commitment;
 - binds the exact campaign EVM-provider identities into the ERC-1271 provider-set digest;
 - derives bootstrap counts from the complete signed operator roster and requires its EVM-provider identities and signers to match the deployment promotion exactly;
 - commits the bootstrap record, policy, participant set, and attestation set into the release's provider, monitoring, solver, backup, incident, qualification, and findings evidence;
 - requires independent monitor counts in addition to providers, Lightning observers, relays, solvers, alert channels, and multisig counts; and
-- refuses missing loss allocation, support policy, or any contract, Lightning, coordinator, identity/privacy, or operations review digest.
+- refuses missing loss allocation, support policy, or a missing, stale, copied, incomplete, unresolved, or authority-overlapping review package.
 
 The output contains the exact release record, release policy, EIP-712 approval payload, upstream digest summary, and only false authority flags. It is written once with mode `0600`. It does not sign, broadcast, open the gate, move inventory, or activate funding.
 
@@ -33,13 +35,16 @@ The output contains the exact release record, release policy, EIP-712 approval p
 
 First complete the [signed bootstrap operator-evidence workflow](./PUBLIC_TESTNET_BOOTSTRAP_EVIDENCE.md). It requires at least two EVM providers, Lightning observers, monitors, relays, and solvers. Every operator signs the same source-, deployment-, artifact-, feature-, and time-bound EIP-712 record. Counts are derived from distinct operator identities and signers; they are not accepted from an unsigned file.
 
-Then prepare five secret-free inputs:
+Complete the [five-reviewer evidence ceremony](./INDEPENDENT_REVIEW_EVIDENCE.md), then prepare eight secret-free inputs:
 
-- `record-template.json`: release ID/version, finalized approval block, prior release, loss-allocation and support digests, all five review digests, exact 3-owner/2-threshold multisig values, tiny limits, safe features, and validity window;
+- `record-template.json`: release ID/version, finalized approval block, prior release, loss-allocation and support digests, exact 3-owner/2-threshold multisig values, tiny limits, safe features, and validity window; release-record template v2 contains no operator-entered review digests;
 - `policy-template.json`: five release approvers, the same or tighter tiny-limit policy, maximum release lifetime, and maximum runtime-observation age; and
 - `bootstrap-record.json`: the exact operator roster, retained-evidence commitments, operational artifact digests, safe test-only features, and short validity interval;
 - `bootstrap-policy.json`: the exact source/deployment boundary, minimum counts, maximum one-hour freshness, and maximum one-day lifetime; and
-- `bootstrap-attestations.json`: exactly one canonical EIP-712 attestation from every listed operator.
+- `bootstrap-attestations.json`: exactly one canonical EIP-712 attestation from every listed operator;
+- `review-record.json`: the exact source, protocol, deployment, reviewers, reports, finding counts, and review interval;
+- `review-policy.json`: the maximum age, lifetime, and finding bound for that exact source and deployment; and
+- `review-attestations.json`: exactly one canonical EIP-712 attestation from each of the five review roles.
 
 Then independently re-verify the complete postflight-bound promotion and derive the candidate:
 
@@ -56,10 +61,13 @@ npm run prepare:testnet-bootstrap-release-candidate -- \
   --promotion-observations promotion-observations.json \
   --promotion-attestations promotion-attestations.json \
   --postflight-bundle postflight-bundle.json \
+  --review-record review-record.json \
+  --review-policy review-policy.json \
+  --review-attestations review-attestations.json \
   --out bootstrap-release-candidate.json
 ```
 
-The verifier rejects a stale or copied promotion or bootstrap verification, provider identity/signer/count mismatch, non-canonical roster, shared operator or signer, missing or replayed signature, Safe substitution, zero review or operations digest, weak participant count, excessive bootstrap limit, unsafe feature, a candidate validity window outside the signed bootstrap interval, symlink, overwrite, oversized file, or unknown field.
+The verifier rejects a stale or copied promotion, bootstrap, or review verification; provider identity/signer/count mismatch; non-canonical roster; shared operator, reviewer, organization, or signer; missing or replayed signature; open or unreconciled finding; accepted critical/high risk; Safe substitution; weak participant count; excessive bootstrap limit; unsafe feature; a candidate validity window outside the signed bootstrap or review interval; symlink; overwrite; oversized file; or unknown field.
 
 ## Campaign-qualified preparation
 
@@ -78,6 +86,9 @@ npm run prepare:testnet-release-candidate -- \
   --campaign-record campaign.json \
   --campaign-policy campaign-policy.json \
   --campaign-attestations campaign-attestations.json \
+  --review-record review-record.json \
+  --review-policy review-policy.json \
+  --review-attestations review-attestations.json \
   --out qualified-release-candidate.json
 ```
 
@@ -87,4 +98,4 @@ The next step is the guarded [public-testnet release approval ceremony](./PUBLIC
 
 ## Remaining external boundary
 
-Cryptographic agreement does not prove organizational independence, hardware custody, reviewer competence, artifact truth, incident performance, or alert delivery. The bootstrap must use deployed Sepolia contracts, production Safe implementations, hardware-backed owners, genuinely independent providers and operators, retained evidence, and real external review. The qualified candidate additionally requires the real seven-day campaign. Funding stays disabled until the approvals are reverified with live providers inside the same trusted process that evaluates a fresh release-bound reconciled runtime snapshot. The standalone approval receipt deliberately cannot activate that process.
+Cryptographic agreement does not prove organizational independence, hardware custody, reviewer competence, artifact truth, incident performance, or alert delivery. The bootstrap must use deployed Sepolia contracts, production Safe implementations, hardware-backed owners, genuinely independent providers, operators, and reviewers, retained complete reports and dispositions, and real external review. The qualified candidate additionally requires the real seven-day campaign. Funding stays disabled until the approvals are reverified with live providers inside the same trusted process that evaluates a fresh release-bound reconciled runtime snapshot. The standalone approval receipt deliberately cannot activate that process.
