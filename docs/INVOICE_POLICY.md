@@ -1,6 +1,6 @@
 # TreeSwap invoice and payment-hash policy
 
-Status: executable decoded-invoice policy plus a sealed cross-escrow onchain payment-hash registry. A live LND decoder and regtest campaign remain deployment gates.
+Status: executable decoded-invoice policy, sealed cross-escrow onchain payment-hash registry, and live standard/hold LND regtest campaigns pass. Deployed adapter isolation and independent review remain deployment gates.
 
 ## One invoice, one intent, one full fill
 

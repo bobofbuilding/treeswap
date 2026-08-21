@@ -29,14 +29,14 @@ Reviewed surfaces:
 | TS-H05 | BIT-only signed capped fee accounting implemented | Pin deployed collector and caps |
 | TS-H06 | Public pool/shares/yield/rewards/partial fills disabled | Live solver reconciliation and failure drills |
 | TS-H07 | Least-privilege isolated regtest adapters, signed actions, solver-node possession proof, durable replay and chain-progress state, stateless fail-closed initialization, production-duration timing, credential and real TLS rotation/rollback, lost-response coordinator recovery, and secret-free audit implemented | Deployed isolation/monitoring, independent review |
-| TS-H08 | Full-fill invoice policy and sealed shared hash registry implemented | Live LND decoding and regtest integration |
+| TS-H08 | Full-fill invoice policy, sealed shared hash registry, and live standard/hold LND regtest integration implemented | Deployed adapter isolation and independent review |
 | TS-H09 | Finality authorization, dispatch-time revalidation, exact EVM claim outbox, mandatory two-provider read-only agreement, local finality/reorg/replacement/rotation campaigns, and the credentialed pinned-live-BIT combined fork implemented | Public-testnet repetition through independent providers |
 | TS-M01 | Maker rewards excluded from v1 | None |
 | TS-M02 | Fill/reward incentives excluded from v1 | None |
 | TS-M03 | RFQ quotas, cancellation, work bounds, and local atomic capacity admission implemented | Deployed distributed enforcement |
 | TS-M04 | Signed routing cap, short-lived three-key solver binding, authenticated endpoint challenge/response, and fresh independently observed directional capacity boundary implemented | Deployed endpoint/readers, reconciliation, and routing telemetry |
 | TS-M05 | Preimage relays cannot redirect either payout | Independent review |
-| TS-M06 | Full BOLT 11 field and invoice-digest validation implemented | Isolated live decoder integration |
+| TS-M06 | Full BOLT 11 field and invoice-digest validation plus isolated live standard/hold decoder integration implemented | Deployed adapter integration and independent review |
 | TS-M07 | Canonical identifiers, text-only rendering, safe logs, and response headers implemented | Production header/log verification |
 | TS-M08 | Blind pricing, selected-solver disclosure, redaction, and deletion policy implemented | Storage-layer deletion evidence |
 | TS-M09 | Immutable escrows, constrained gate, sealed registry, strict deployment policy, finalized topology observer, provider/reviewer-signed manifest promotion, five-role signed release authorization, and same-process two-party-reconciled live activation implemented | Deployed role-separated multisigs and hardware owners, independently operated providers/reviewers/runtime attesters, persistent activation coordinator, continuous event monitoring, and external alert delivery |
@@ -183,7 +183,7 @@ TreeSwap charges the protocol fee only in BIT wei in both directions and never a
 
 A Lightning pool is not an ERC-20 vault: channel balances, in-flight HTLCs, force closes, reserves, and node-key compromise affect solvency. Public LPs can also be selected against when par is stale.
 
-TreeSwap v1 does not accept public LP funds or create a pooled claim. `V1_CAPABILITIES` keeps public deposits, LP shares, promised yield, rewards, partial fills, public permissionless execution, and web funding disabled. The Earn tab is retained as a calculator for solver operators and now states that it performs no deposit and offers no LP share, APY, or yield. Each vault deposit remains owned and withdrawable only by that solver, while accepted liabilities reduce its own available balance. Lightning stays on that solver's node under a separate budget. Live reconciliation, force-close, restart, and insolvency tests remain required. Any third-party deposit or yield product requires a new contract, custody/economic/legal review, and explicit capability change; it is not an extension of this v1 vault.
+TreeSwap v1 does not accept public LP funds or create a pooled claim. `V1_CAPABILITIES` keeps public deposits, LP shares, promised yield, rewards, partial fills, public permissionless execution, and web funding disabled. The Earn tab is retained as a calculator for solver operators and now states that it performs no deposit and offers no LP share, APY, or yield. Each vault deposit remains owned and withdrawable only by that solver, while accepted liabilities reduce its own available balance. Lightning stays on that solver's node under a separate budget. Isolated reconciliation, force-close, restart, and directional-exhaustion campaigns pass; deployed multi-operator reconciliation and insolvency drills remain required. Any third-party deposit or yield product requires a new contract, custody/economic/legal review, and explicit capability change; it is not an extension of this v1 vault.
 
 ### TS-H07 — Lightning adapter or macaroon compromise
 
@@ -197,9 +197,9 @@ For BIT → Lightning, a successful signed tracking lookup now returns the exact
 
 ### TS-H08 — Partial-fill hash reuse
 
-**Status:** Full-fill-only invoice policy, sealed cross-direction onchain payment-hash registry, and exact live LND regtest decode implemented; standard-invoice and failure campaigns remain deployment gates
+**Status:** Full-fill-only invoice policy, sealed cross-direction onchain payment-hash registry, exact live standard/hold LND regtest decoding, and invoice failure campaigns implemented; deployed isolation and independent review remain deployment gates
 
-A Lightning invoice is not a divisible onchain order. TreeSwap v1 now rejects partial and child intents rather than attempting to divide one invoice. `validateFullFillInvoice` accepts one exact, amount-bearing mainnet BOLT 11 invoice and rejects AMP, keysend, amountless invoices, BOLT 12, unsupported required features, duplicate singleton tags, and mismatched invoice kind. Basic MPP is allowed only as internal delivery of the single exact invoice total, never as separate TreeSwap fills. `TreeSwapPaymentHashRegistry` is configured with exactly the two reviewed direction contracts and irreversibly sealed; opening either direction consumes the hash globally, so the opposite escrow cannot reuse it. [`INVOICE_POLICY.md`](INVOICE_POLICY.md) defines the boundary. Live LND decoding and regtest integration remain required.
+A Lightning invoice is not a divisible onchain order. TreeSwap v1 now rejects partial and child intents rather than attempting to divide one invoice. `validateFullFillInvoice` accepts one exact, amount-bearing mainnet BOLT 11 invoice and rejects AMP, keysend, amountless invoices, BOLT 12, unsupported required features, duplicate singleton tags, and mismatched invoice kind. Basic MPP is allowed only as internal delivery of the single exact invoice total, never as separate TreeSwap fills. `TreeSwapPaymentHashRegistry` is configured with exactly the two reviewed direction contracts and irreversibly sealed; opening either direction consumes the hash globally, so the opposite escrow cannot reuse it. Live standard and hold invoices pass the isolated LND regtest adapter and coordinator paths. [`INVOICE_POLICY.md`](INVOICE_POLICY.md) defines the boundary. Deployed adapter isolation and independent review remain required.
 
 ### TS-H09 — Reorg and payment authorization
 
@@ -245,9 +245,9 @@ Anyone, including an unrelated mempool bot, may relay a valid preimage, but both
 
 ### TS-M06 — Invoice substitution and malformed invoice data
 
-**Status:** Full decoded BOLT 11 field validation and exact invoice-digest binding implemented; live LND decoder integration remains a deployment gate
+**Status:** Full decoded BOLT 11 field validation, exact invoice-digest binding, and isolated live standard/hold LND decoder integration implemented; deployed adapter integration and independent review remain deployment gates
 
-`validateFullFillInvoice` requires a successful BOLT 11 checksum/signature decode and validates the exact mainnet network, invoice digest, payment hash, whole-satoshi amount, payee, nonzero payment secret, expiry, final CLTV, required features, route-hint bound, singleton tags, and direction-specific hold/standard kind. Amountless, ambiguous, mutated, duplicate-tag, stale, and unsupported invoices fail closed. Both EIP-712 quote shapes bind `invoiceDigest` and `paymentHash`, and the isolated Lightning adapter rechecks those fields with LND before an RPC. The exact hold-invoice path passes regtest; the standard-invoice and malformed-live-input matrix remains required.
+`validateFullFillInvoice` requires a successful BOLT 11 checksum/signature decode and validates the exact mainnet network, invoice digest, payment hash, whole-satoshi amount, payee, nonzero payment secret, expiry, final CLTV, required features, route-hint bound, singleton tags, and direction-specific hold/standard kind. Amountless, ambiguous, mutated, duplicate-tag, stale, and unsupported invoices fail closed. Both EIP-712 quote shapes bind `invoiceDigest` and `paymentHash`, and the isolated Lightning adapter rechecks those fields with LND before an RPC. Exact standard and hold paths, routing and amount rejection, terminal no-route behavior, duplicate isolation, expiry, wrong/late preimage, cancel, accepted-state restart, and both lost-response paths pass regtest. Deployed adapter identities and independent review remain required.
 
 ### TS-M07 — Data and UI injection
 
@@ -329,8 +329,8 @@ A production escrow test suite should prove at least:
 - Stateful fuzzing of every escrow transition and signature field. **Complete for both local escrows: six invariants, 256 × 64-call campaigns per property, plus all-field digest tests.**
 - Claim/refund transactions in the same block and around every timeout boundary. **Deterministic and contract boundary harness complete.**
 - Preimage copied from the mempool by an unrelated account. **Complete: unrelated relayers receive no BIT in either direction.**
-- Ethereum reorg after escrow creation and after claim. **Authorization rejects an orphaned escrow; fork fault injection remains.**
-- Bitcoin block delay, LND restart, held HTLC timeout, and force-close. **Policy harness complete; regtest fault injection remains.**
+- Ethereum reorg after escrow creation and after claim. **Controlled local and pinned-live-BIT fork fault injection is complete; genuine public-testnet finality through independent providers remains.**
+- Bitcoin block delay, LND restart, held HTLC timeout, and force-close. **Full-duration and rapid-block regtest fault injection is complete; deployed multi-operator repetition remains.**
 - Replayed intent on another chain, escrow address, protocol version, and nonce. **Complete in local contract tests.**
 - Replayed or mutated SIWE domain, URI, nonce, chain, issued time, and expiry. **Complete in the EOA policy harness.**
 - Cross-origin session mutation, expired session use, notification access from a different wallet, and an absent or partial durable schema. **Complete in policy and worker-boundary tests; a credentialed owner-only lifecycle now covers live atomicity, while deployed access review, monitoring, backup/restore, and purge evidence remain launch gates.**
