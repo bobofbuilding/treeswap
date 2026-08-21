@@ -1,6 +1,6 @@
 # Live account evidence
 
-Status: passed on owner-only Sites version 10 at published source `c693c02b2f469701827608aa4161fd5afc664afe`; no funding authority.
+Status: passed on owner-only Sites version 11 at published source `e23f5a6d635f1cc33930b24f1f1748f8c46eab9f`; no funding authority.
 
 TreeSwap keeps the public Vercel presentation account-disabled. Its private Sites deployment is the only current live account surface and is restricted to the project owner while authentication controls are qualified.
 
@@ -48,12 +48,12 @@ These remain release blockers in the [launch checklist](./LAUNCH_CHECKLIST.md).
 
 ## Retained checkpoint
 
-The version 10 run passed all 13 exact checks. Its ignored mode-`0600` record independently reconstructs to:
+The version 11 run passed all 13 exact checks. Its ignored mode-`0600` record independently reconstructs to:
 
 ```text
-0x3460e8aca79798e2dc4e54fbc44abb93f00b34153914ca5581d6af99ff414ead
+0xb21f0a51522d966d6b58c916373ccc06c1bb059b6b1252aecaf996588c51ac00
 ```
 
 The Sites control plane separately reported custom access with exactly one owner, no allowed groups, and no external visitors. That observation is operator evidence, not an independent access-policy attestation. The public Vercel presentation returned the exact disabled account capability and no session.
 
-An earlier version 9 attempt produced no evidence because the observer conservatively treated Cloudflare's separately scoped edge cookie, combined into one HTTP header, as part of the TreeSwap cookie. The corrected observer isolates the TreeSwap cookie, retains cleanup material before attribute inspection, and has regression tests for both the combined-header behavior and failure cleanup.
+An earlier version 9 attempt produced no evidence because the observer conservatively treated Cloudflare's separately scoped edge cookie, combined into one HTTP header, as part of the TreeSwap cookie. The corrected observer isolates the TreeSwap cookie, retains cleanup material before attribute inspection, and has regression tests for both the combined-header behavior and failure cleanup. Bounded expired-record deletion is qualified separately in [Account maintenance evidence](./ACCOUNT_MAINTENANCE_EVIDENCE.md).

@@ -1,6 +1,6 @@
 # Account maintenance evidence
 
-Status: bounded owner-only D1 maintenance and a secret-free live evidence runner are executable; the first retained live purge checkpoint is still required. This grants no funding authority.
+Status: passed for an expired nonce on owner-only Sites version 12 at published source `b63ca78870628fa2a1bd5ef0c33fb979863ae95d`; continuous scheduling and independently aged session and notification evidence remain required. This grants no funding authority.
 
 ## Maintenance boundary
 
@@ -28,7 +28,7 @@ The non-overwriting mode-`0600` evidence record contains only exact source/deplo
 
 ## What remains open
 
-Even a passing first run does not prove:
+The passing first run does not prove:
 
 - continuous scheduled execution or alerting;
 - deletion of an independently aged 24-hour session;
@@ -39,3 +39,13 @@ Even a passing first run does not prove:
 - independent authentication and privacy review.
 
 Those items remain launch blockers in the [launch checklist](./LAUNCH_CHECKLIST.md).
+
+## Retained checkpoint
+
+The version 12 exercise ran from `2026-08-21T19:16:58.564Z` through `2026-08-21T19:27:18.972Z` and passed all nine exact checks. It observed a real expired-nonce deletion, preserved the active session, rejected a foreign origin, and rejected the deleted session after sign-out. Its ignored mode-`0600` record independently reconstructs to:
+
+```text
+0x1b5a81b5a28755ea559f3d5f76b28270209b3425af2cc8fb9cafe0be2c45800a
+```
+
+The Sites control plane immediately before deployment reported custom access with exactly one owner, no groups, and no external visitors. That is operator evidence, not the required independent access-policy attestation. The public Vercel deployment separately returned the exact disabled account capability, no session, no email delivery, and a `403` maintenance-origin rejection.
