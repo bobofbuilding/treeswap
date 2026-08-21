@@ -2735,6 +2735,13 @@ smoke_cross_chain_deadline() {
     echo "cross-chain evidence exposed a payment correlation secret" >&2
     return 1
   fi
+  if [[ "$CROSS_CHAIN_DEADLINE_TOKEN_MODE" == "live-bit" && -n "${CROSS_CHAIN_DEADLINE_EVIDENCE_PATH:-}" ]]; then
+    printf '%s\n' "$evidence" | node "$LAB_DIR/../../scripts/write-live-bit-cross-chain-deadline-evidence.mjs" \
+      "$CROSS_CHAIN_DEADLINE_EVIDENCE_PATH" >/dev/null
+  elif [[ "$CROSS_CHAIN_DEADLINE_TOKEN_MODE" != "live-bit" && -n "${CROSS_CHAIN_DEADLINE_EVIDENCE_PATH:-}" ]]; then
+    echo "mock cross-chain evidence cannot use the live-BIT evidence path" >&2
+    return 1
+  fi
   hold_hash=""
   unset hold_preimage hold_request hold_payment_envelope open_input final_input
   trap - EXIT

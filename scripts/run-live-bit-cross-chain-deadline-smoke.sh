@@ -9,6 +9,16 @@ smoke_log=$(mktemp)
 smoke_state_dir=$(mktemp -d)
 smoke_state_path="$smoke_state_dir/state.json"
 anvil_pid=""
+evidence_path=""
+
+if (( $# != 0 )); then
+  if (( $# != 2 )) || [[ "$1" != "--out-name" ]] ||
+    [[ ! "$2" =~ ^[a-z0-9][a-z0-9._-]{0,100}\.json$ ]]; then
+    echo "Usage: bash scripts/run-live-bit-cross-chain-deadline-smoke.sh [--out-name evidence.json]" >&2
+    exit 1
+  fi
+  evidence_path="$project_root/outputs/$2"
+fi
 
 cleanup() {
   if [[ -n "$anvil_pid" ]]; then
@@ -36,6 +46,17 @@ fi
 if [[ -z "${MAINNET_RPC_URL:-}" ]]; then
   echo "MAINNET_RPC_URL is required" >&2
   exit 1
+fi
+if [[ -n "$evidence_path" ]]; then
+  if [[ ! -d "$project_root/outputs" || -L "$project_root/outputs" ]]; then
+    echo "live-BIT evidence outputs parent must be a real directory" >&2
+    exit 1
+  fi
+  chmod 0700 "$project_root/outputs"
+  if [[ -e "$evidence_path" || -L "$evidence_path" ]]; then
+    echo "live-BIT evidence output already exists" >&2
+    exit 1
+  fi
 fi
 
 forge build --quiet
@@ -66,4 +87,9 @@ CROSS_CHAIN_DEADLINE_MNEMONIC="$smoke_mnemonic" \
 CROSS_CHAIN_DEADLINE_STATE_PATH="$smoke_state_path" \
 CROSS_CHAIN_DEADLINE_ANVIL_VERSION="$(anvil --version | head -n 1)" \
 CROSS_CHAIN_DEADLINE_TOKEN_MODE="live-bit" \
+CROSS_CHAIN_DEADLINE_EVIDENCE_PATH="$evidence_path" \
 bash infra/regtest/lab.sh cross-chain-deadline-smoke
+
+if [[ -n "$evidence_path" ]]; then
+  echo "Durable live-BIT cross-chain deadline evidence: outputs/$(basename "$evidence_path")"
+fi
