@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { chmod, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, lstat, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 import {
   buildCrossChainDeadlineEvidence,
   crossChainDeadlineSchemas,
@@ -13,6 +14,7 @@ import {
   liveBitCrossChainDeadlinePolicy,
   liveBitCrossChainDeadlineSchemas,
 } from "../lib/live-bit-cross-chain-deadline-evidence.mjs";
+import { coordinatorCommitmentDigest } from "../lib/coordinator-store.mjs";
 import { deriveSettlementSchedule } from "../lib/settlement-policy.mjs";
 
 const NOW = 2_000_000_000;
@@ -293,9 +295,97 @@ test("credentialed live-BIT runner is pinned, private, and never falls back to m
   assert.match(runner, /--fork-block-number 25788856/);
   assert.match(runner, /--host 127\.0\.0\.1/);
   assert.match(runner, /CROSS_CHAIN_DEADLINE_TOKEN_MODE="live-bit"/);
+  assert.match(runner, /CROSS_CHAIN_DEADLINE_EVIDENCE_PATH="\$evidence_path"/);
+  assert.match(runner, /--out-name/);
   assert.match(runner, /chmod 0700/);
   assert.doesNotMatch(runner, /echo[^\n]*\$MAINNET_RPC_URL|printf[^\n]*\$MAINNET_RPC_URL/);
   assert.doesNotMatch(runner, /TOKEN_MODE="mock"/);
+});
+
+test("durable live-BIT evidence is exclusive, private, digest-bound, and correlation-free", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "treeswap-live-bit-evidence-test-"));
+  await chmod(directory, 0o700);
+  const target = join(directory, "live-bit-evidence.json");
+  const writer = fileURLToPath(new URL("../scripts/write-live-bit-cross-chain-deadline-evidence.mjs", import.meta.url));
+  try {
+    const evidence = buildLiveBitCrossChainDeadlineEvidence(liveBitFixture());
+    const first = spawnSync(process.execPath, [writer, target], {
+      cwd: new URL("..", import.meta.url),
+      input: `${JSON.stringify(evidence)}\n`,
+      encoding: "utf8",
+    });
+    assert.equal(first.status, 0, first.stderr);
+    assert.equal(JSON.parse(first.stdout).evidenceDigest, evidence.evidenceDigest);
+    assert.deepEqual(JSON.parse(await readFile(target, "utf8")), evidence);
+    assert.equal((await lstat(target)).mode & 0o777, 0o600);
+
+    const second = spawnSync(process.execPath, [writer, target], {
+      cwd: new URL("..", import.meta.url),
+      input: `${JSON.stringify(evidence)}\n`,
+      encoding: "utf8",
+    });
+    assert.notEqual(second.status, 0);
+    assert.match(second.stderr, /exist/i);
+
+    const linkedTarget = join(directory, "linked-target.json");
+    await symlink(target, linkedTarget);
+    const linkedTargetResult = spawnSync(process.execPath, [writer, linkedTarget], {
+      cwd: new URL("..", import.meta.url),
+      input: `${JSON.stringify(evidence)}\n`,
+      encoding: "utf8",
+    });
+    assert.notEqual(linkedTargetResult.status, 0);
+    assert.match(linkedTargetResult.stderr, /exist|loop/i);
+    assert.deepEqual(JSON.parse(await readFile(target, "utf8")), evidence);
+
+    const linkedParent = join(directory, "linked-parent");
+    await symlink(directory, linkedParent);
+    const linkedParentResult = spawnSync(process.execPath, [writer, join(linkedParent, "linked-parent.json")], {
+      cwd: new URL("..", import.meta.url),
+      input: `${JSON.stringify(evidence)}\n`,
+      encoding: "utf8",
+    });
+    assert.notEqual(linkedParentResult.status, 0);
+    assert.match(linkedParentResult.stderr, /private real directory/);
+
+    for (const mutate of [
+      (value) => { value.evidenceDigest = `0x${"ff".repeat(32)}`; },
+      (value) => { value.rpcUrl = "https://example.invalid"; },
+      (value) => { value.paymentHash = `0x${"11".repeat(32)}`; },
+      (value) => { value.limitations.fundingAuthorization = true; },
+    ]) {
+      const invalid = structuredClone(evidence);
+      mutate(invalid);
+      const invalidTarget = join(directory, `invalid-${Math.random().toString(16).slice(2)}.json`);
+      const result = spawnSync(process.execPath, [writer, invalidTarget], {
+        cwd: new URL("..", import.meta.url),
+        input: `${JSON.stringify(invalid)}\n`,
+        encoding: "utf8",
+      });
+      assert.notEqual(result.status, 0);
+      await assert.rejects(readFile(invalidTarget), /ENOENT/);
+    }
+
+    const forged = structuredClone(evidence);
+    forged.deadlineEvidence.directions.lightningToBit.boundaryHeight -= 1;
+    const nestedCommitment = { ...forged.deadlineEvidence };
+    delete nestedCommitment.evidenceDigest;
+    forged.deadlineEvidence.evidenceDigest = coordinatorCommitmentDigest(nestedCommitment);
+    const outerCommitment = { ...forged };
+    delete outerCommitment.evidenceDigest;
+    forged.evidenceDigest = coordinatorCommitmentDigest(outerCommitment);
+    const forgedTarget = join(directory, "forged.json");
+    const forgedResult = spawnSync(process.execPath, [writer, forgedTarget], {
+      cwd: new URL("..", import.meta.url),
+      input: `${JSON.stringify(forged)}\n`,
+      encoding: "utf8",
+    });
+    assert.notEqual(forgedResult.status, 0);
+    assert.match(forgedResult.stderr, /unsafe/);
+    await assert.rejects(readFile(forgedTarget), /ENOENT/);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 function smokeEnvironment(statePath, mnemonic = "test test test test test test test test test test test junk") {

@@ -10,6 +10,12 @@ The normal `test:cross-chain-deadlines` campaign combines actual TreeSwap escrow
 MAINNET_RPC_URL=<authorized-archive-endpoint> npm run test:live-bit-cross-chain-deadlines
 ```
 
+To retain the successful secret-free record, supply one safe filename. The writer exclusively creates the file under the private `outputs/` directory, refuses an existing target or symlink, verifies both evidence digests and the exact no-funding limitations, syncs it, and requires mode `0600`:
+
+```sh
+MAINNET_RPC_URL=<authorized-archive-endpoint> npm run test:live-bit-cross-chain-deadlines -- --out-name live-bit-cross-chain-deadline-<source>.json
+```
+
 The endpoint is passed only to the ephemeral Anvil process and is never written to state or evidence. The runner refuses a dirty worktree, any branch other than `main`, a commit different from locally known `origin/main`, a missing endpoint, a non-loopback execution endpoint, or any mnemonic other than Anvil's public test mnemonic. Temporary state is created under a mode-`0700` directory, the state file is mode `0600`, and cleanup deletes it.
 
 ## Exact fork boundary
@@ -41,6 +47,6 @@ Both directions use the same policy as the credential-free deadline campaign:
 
 ## Evidence boundary
 
-Successful execution emits `treeswap.live-bit-cross-chain-deadline-evidence.v1` with scope `pinned-live-bit-fork-local-lnd-no-funding-authorization`. It contains the clean published source commit, exact live-BIT provenance, and the independently rebuilt deadline evidence. It omits the archive endpoint, invoices, payment hashes, invoice digests, preimages, and unrestricted URLs.
+Successful execution emits `treeswap.live-bit-cross-chain-deadline-evidence.v1` with scope `pinned-live-bit-fork-local-lnd-no-funding-authorization`. It contains the clean published source commit, exact live-BIT provenance, and the independently rebuilt deadline evidence. It omits the archive endpoint, invoices, payment hashes, invoice digests, preimages, and unrestricted URLs. Durable output is optional so the normal qualification remains ephemeral; when requested, persistence occurs only after the privacy scan and exact-schema checks pass.
 
 The schema explicitly records that the EVM provider is one local fork, EVM finality is simulated, public testnet and independent providers are absent, production infrastructure is absent, and funding authorization is false. A passing result can close only the pinned live-BIT-fork timing sub-gate. Public-testnet finality, independently operated providers and solvers, monitoring, incident drills, reviews, multisigs, and the signed release record remain mandatory.

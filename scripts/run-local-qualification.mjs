@@ -67,6 +67,7 @@ const configurationFiles = [
   "scripts/run-deployment-rehearsal-smoke.sh",
   "scripts/run-cross-chain-deadline-smoke.sh",
   "scripts/run-live-bit-cross-chain-deadline-smoke.sh",
+  "scripts/write-live-bit-cross-chain-deadline-evidence.mjs",
   "scripts/run-live-bit-reorg-smoke.sh",
   "scripts/run-local-qualification.mjs",
   "scripts/run-live-account-evidence.mjs",
