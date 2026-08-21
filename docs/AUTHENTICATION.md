@@ -12,4 +12,6 @@ Contract-wallet SIWE remains unsupported until chain-aware EIP-1271 verification
 
 The credentialed `npm run qualify:live-account` exercise is fixed to the owner-only Sites origin and exact clean published `main`. It creates an unfunded, in-memory EOA, then proves the deployed capability, one-use nonce, hardened cookie, persistence, prior-session invalidation, serialized concurrent rotation, cross-origin sign-out rejection, server-side sign-out, and absence of an email record. The retained JSON contains no wallet, nonce, message, signature, cookie, authorization token, email, or funding capability; it is written once with mode `0600`. See [Live account evidence](./LIVE_ACCOUNT_EVIDENCE.md).
 
+Owner-only Sites version 10 passed that complete lifecycle at published source `c693c02b2f469701827608aa4161fd5afc664afe`. The retained record independently reconstructs to `0x3460e8aca79798e2dc4e54fbc44abb93f00b34153914ca5581d6af99ff414ead`.
+
 This exercise does not prove D1 access is independently governed, continuous database monitoring, backup/restore, scheduled expired-record purge, or independent identity/privacy review. Those remain mandatory before account data is accepted in a funded release.
