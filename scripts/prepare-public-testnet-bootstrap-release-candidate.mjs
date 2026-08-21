@@ -6,6 +6,7 @@ import { verifyDeploymentPromotionPostflightBundle } from "../lib/deployment-pro
 import { verifyPublicTestnetBootstrapEvidence } from "../lib/public-testnet-bootstrap-evidence.mjs";
 import { verifyIndependentReviewEvidence } from "../lib/independent-review-evidence.mjs";
 import { verifyOperationalReadinessEvidence } from "../lib/operational-readiness-evidence.mjs";
+import { verifyServiceIsolationEvidence } from "../lib/service-isolation-evidence.mjs";
 import {
   buildPublicTestnetReleaseCandidateSummary,
   preparePublicTestnetBootstrapReleaseCandidate,
@@ -16,6 +17,9 @@ const FLAGS = Object.freeze([
   "--bootstrap-policy",
   "--bootstrap-record",
   "--deployment-policy",
+  "--isolation-attestations",
+  "--isolation-policy",
+  "--isolation-record",
   "--out",
   "--operations-attestations",
   "--operations-policy",
@@ -31,7 +35,7 @@ const FLAGS = Object.freeze([
   "--review-policy",
   "--review-record",
 ]);
-const USAGE = "Usage: prepare-public-testnet-bootstrap-release-candidate --record-template record-template.json --policy-template policy-template.json --bootstrap-record bootstrap-record.json --bootstrap-policy bootstrap-policy.json --bootstrap-attestations bootstrap-attestations.json --promotion-record promotion-record.json --promotion-policy promotion-policy.json --deployment-policy deployment-policy.json --promotion-observations promotion-observations.json --promotion-attestations promotion-attestations.json --postflight-bundle postflight-bundle.json --review-record review-record.json --review-policy review-policy.json --review-attestations review-attestations.json --operations-record operations-record.json --operations-policy operations-policy.json --operations-attestations operations-attestations.json --out bootstrap-release-candidate.json";
+const USAGE = "Usage: prepare-public-testnet-bootstrap-release-candidate --record-template record-template.json --policy-template policy-template.json --bootstrap-record bootstrap-record.json --bootstrap-policy bootstrap-policy.json --bootstrap-attestations bootstrap-attestations.json --promotion-record promotion-record.json --promotion-policy promotion-policy.json --deployment-policy deployment-policy.json --promotion-observations promotion-observations.json --promotion-attestations promotion-attestations.json --postflight-bundle postflight-bundle.json --review-record review-record.json --review-policy review-policy.json --review-attestations review-attestations.json --isolation-record isolation-record.json --isolation-policy isolation-policy.json --isolation-attestations isolation-attestations.json --operations-record operations-record.json --operations-policy operations-policy.json --operations-attestations operations-attestations.json --out bootstrap-release-candidate.json";
 
 function argumentsFromCommandLine(values) {
   if (values.length !== FLAGS.length * 2) throw new Error(USAGE);
@@ -49,7 +53,8 @@ const args = argumentsFromCommandLine(process.argv.slice(2));
 const [recordTemplate, policyTemplate, bootstrapRecord, bootstrapPolicy, bootstrapAttestations,
   promotionRecord, promotionPolicy, deploymentPolicy, promotionObservations, promotionAttestations,
   postflightBundle, reviewRecord, reviewPolicy, reviewAttestations, operationsRecord,
-  operationsPolicy, operationsAttestations] = await Promise.all([
+  operationsPolicy, operationsAttestations, isolationRecord, isolationPolicy,
+  isolationAttestations] = await Promise.all([
   readBoundedJson(args["--record-template"], "bootstrap release record template"),
   readBoundedJson(args["--policy-template"], "bootstrap release policy template"),
   readBoundedJson(args["--bootstrap-record"], "bootstrap evidence record"),
@@ -67,6 +72,9 @@ const [recordTemplate, policyTemplate, bootstrapRecord, bootstrapPolicy, bootstr
   readBoundedJson(args["--operations-record"], "operational readiness record"),
   readBoundedJson(args["--operations-policy"], "operational readiness policy"),
   readBoundedJson(args["--operations-attestations"], "operational readiness attestations"),
+  readBoundedJson(args["--isolation-record"], "service isolation record"),
+  readBoundedJson(args["--isolation-policy"], "service isolation policy"),
+  readBoundedJson(args["--isolation-attestations"], "service isolation attestations"),
 ]);
 const postflightVerification = verifyDeploymentPromotionPostflightBundle({
   bundle: postflightBundle,
@@ -94,10 +102,17 @@ const independentReviewVerification = verifyIndependentReviewEvidence({
   attestations: reviewAttestations,
   now: recordTemplate.approvalBlockTimestamp,
 });
+const serviceIsolationVerification = verifyServiceIsolationEvidence({
+  record: isolationRecord,
+  policy: isolationPolicy,
+  attestations: isolationAttestations,
+  now: recordTemplate.approvalBlockTimestamp,
+});
 const operationalReadinessVerification = verifyOperationalReadinessEvidence({
   record: operationsRecord,
   policy: operationsPolicy,
   attestations: operationsAttestations,
+  serviceIsolationVerification,
   now: recordTemplate.approvalBlockTimestamp,
 });
 const candidate = preparePublicTestnetBootstrapReleaseCandidate({

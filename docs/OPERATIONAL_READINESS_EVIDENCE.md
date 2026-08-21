@@ -1,6 +1,6 @@
 # Operational readiness evidence
 
-Status: strict local evidence schema, five-role EIP-712 attestation ceremony, verifier, operator CLIs, and release-candidate binding implemented. No production operators, alert channels, deployment, drill results, support service, or funding authority are supplied by the repository.
+Status: strict local evidence schema, five-role EIP-712 attestation ceremony, verifier, operator CLIs, verified service-isolation dependency, and release-candidate binding implemented. No production operators, isolated deployment, alert channels, drill results, support service, or funding authority are supplied by the repository.
 
 ## Purpose
 
@@ -28,6 +28,7 @@ The record contains distinct nonzero commitments for:
 - privacy retention and deletion;
 - provider quorum;
 - zero-liability reconciliation;
+- the verified service-isolation release binding;
 - solver operations;
 - support and escalation policy; and
 - the exact test-qualification artifact.
@@ -44,6 +45,9 @@ Each participant independently reproduces the record and policy, then prepares i
 npm run prepare:operational-readiness-attestation -- \
   --record operations-record.json \
   --policy operations-policy.json \
+  --isolation-record isolation-record.json \
+  --isolation-policy isolation-policy.json \
+  --isolation-attestations isolation-attestations.json \
   --role monitoring-operator \
   --operator-id 0x...
 ```
@@ -54,16 +58,21 @@ The command does not access a key or sign. Collect one signature per exact parti
 npm run verify:operational-readiness-evidence -- \
   --record operations-record.json \
   --policy operations-policy.json \
-  --attestations operations-attestations.json
+  --attestations operations-attestations.json \
+  --isolation-record isolation-record.json \
+  --isolation-policy isolation-policy.json \
+  --isolation-attestations isolation-attestations.json
 ```
 
-Input files must satisfy the common bounded regular-file reader. The verifier rejects unknown fields, secrets, unrestricted endpoints, invoices, payment data, duplicated roles or evidence, weak alert routing, incomplete drills, future/stale evidence, participant substitution, signature replay, or a changed record or policy.
+Input files must satisfy the common bounded regular-file reader. Before any operational payload is prepared, the verifier requires live, same-process [service-isolation evidence](./SERVICE_ISOLATION_EVIDENCE.md) provenance; matches its source, chain, gate, protocol, deployment, and validity interval; and requires the exact derived isolation digest in the operational record. The verifier rejects copied provenance, unknown fields, secrets, unrestricted endpoints, invoices, payment data, duplicated roles or evidence, weak alert routing, incomplete drills, future/stale evidence, participant substitution, signature replay, or a changed record or policy.
 
 ## Release binding
 
-Both public-testnet release-candidate commands require `--operations-record`, `--operations-policy`, and `--operations-attestations`. Candidate preparation re-verifies the package in the same process and requires:
+Both public-testnet release-candidate commands require `--operations-record`, `--operations-policy`, `--operations-attestations`, `--isolation-record`, `--isolation-policy`, and `--isolation-attestations`. Candidate preparation re-verifies both packages in the same process and requires:
 
 - exact source, protocol, chain, gate, deployment manifest, funding mode, and release-time agreement;
+- an exact provenance-bound service-isolation digest whose validity covers the complete operational and release interval;
+- the isolation Lightning operator to match the operational/release Lightning identity, the isolation security reviewer to match the release security reviewer, and the isolation infrastructure operator to remain separate from operational, deployment, review, and release authorities;
 - the operational Lightning operator and incident commander to match their release-policy identities;
 - the monitoring identity and signer to be one exact signed upstream monitor operator, while every other operational signer remains separate from upstream infrastructure operators;
 - no operational signer overlap with deployment wallets, deployment-promotion signers, or independent reviewers;
@@ -72,7 +81,7 @@ Both public-testnet release-candidate commands require `--operations-record`, `-
 - exact campaign reconciliation and per-drill evidence agreement for the campaign-qualified path; and
 - release validity wholly inside the operational evidence interval.
 
-The former release-record template v2 and prepared candidate v2 schemas are rejected. Template v3 no longer accepts operator-entered loss-allocation or support-policy hashes. Candidate v3 derives those commitments and every operational release digest only from live verifier provenance.
+Operational-readiness v1 is rejected. The former release-record template v2 and prepared candidate v2 schemas are rejected. Template v3 no longer accepts operator-entered loss-allocation, support-policy, or service-isolation hashes. Candidate v3 derives those commitments and every operational release digest only from live verifier provenance.
 
 ## Authority boundary
 

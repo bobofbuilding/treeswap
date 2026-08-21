@@ -15,6 +15,7 @@ import {
 } from "../lib/operational-readiness-evidence.mjs";
 import { createVerifiedDeploymentPromotionFixture } from "./fixtures/verified-deployment-promotion.mjs";
 import { createVerifiedPublicTestnetBootstrapFixture } from "./fixtures/verified-public-testnet-bootstrap.mjs";
+import { createVerifiedServiceIsolationFixture } from "./fixtures/verified-service-isolation.mjs";
 import {
   createVerifiedOperationalReadinessFixture,
   fixture,
@@ -30,14 +31,20 @@ async function bootstrapFixture() {
     preparedAt: PREPARED_AT - 100,
     now: PREPARED_AT,
   });
-  return { deployment, upstream };
+  const serviceIsolation = await createVerifiedServiceIsolationFixture({
+    deployment,
+    preparedAt: PREPARED_AT,
+    now: PREPARED_AT,
+  });
+  return { deployment, serviceIsolation, upstream };
 }
 
 async function validFixture(overrides = {}) {
-  const { deployment, upstream } = await bootstrapFixture();
+  const { deployment, serviceIsolation, upstream } = await bootstrapFixture();
   return createVerifiedOperationalReadinessFixture({
     deployment,
     upstream,
+    serviceIsolation,
     fundingMode: "operator-testnet-bootstrap",
     preparedAt: PREPARED_AT,
     now: PREPARED_AT + 60,
@@ -61,11 +68,35 @@ test("verifies five signed operational roles and derives complete release eviden
   );
 });
 
-test("requires the exact drill set, passed status, bounded time, observers, and distinct evidence", async () => {
-  const { deployment, upstream } = await bootstrapFixture();
+test("requires live matching service-isolation provenance for the complete operational interval", async () => {
+  const { deployment, serviceIsolation, upstream } = await bootstrapFixture();
   const fresh = () => fixture({
     deployment,
     upstream,
+    serviceIsolation,
+    fundingMode: "operator-testnet-bootstrap",
+    preparedAt: PREPARED_AT,
+  });
+
+  const copied = fresh();
+  copied.serviceIsolationVerification = structuredClone(copied.serviceIsolationVerification);
+  assert.throws(() => prepareOperationalReadinessEvidenceCandidate(copied), /provenance/);
+
+  const substituted = fresh();
+  substituted.record.artifacts.serviceIsolation = id("substituted isolation evidence").toLowerCase();
+  assert.throws(() => prepareOperationalReadinessEvidenceCandidate(substituted), /does not match verified provenance/);
+
+  const overlong = fresh();
+  overlong.record.validUntil += 1;
+  assert.throws(() => prepareOperationalReadinessEvidenceCandidate(overlong), /outside the verified service isolation interval/);
+});
+
+test("requires the exact drill set, passed status, bounded time, observers, and distinct evidence", async () => {
+  const { deployment, serviceIsolation, upstream } = await bootstrapFixture();
+  const fresh = () => fixture({
+    deployment,
+    upstream,
+    serviceIsolation,
     fundingMode: "operator-testnet-bootstrap",
     preparedAt: PREPARED_AT,
   });
@@ -90,10 +121,11 @@ test("requires the exact drill set, passed status, bounded time, observers, and 
 });
 
 test("rejects weak role separation, alert routing, schema drift, and secret-bearing evidence", async () => {
-  const { deployment, upstream } = await bootstrapFixture();
+  const { deployment, serviceIsolation, upstream } = await bootstrapFixture();
   const fresh = () => fixture({
     deployment,
     upstream,
+    serviceIsolation,
     fundingMode: "operator-testnet-bootstrap",
     preparedAt: PREPARED_AT,
   });
@@ -133,10 +165,11 @@ test("rejects weak role separation, alert routing, schema drift, and secret-bear
 });
 
 test("rejects missing, substituted, replayed, stale, future, and mutated attestations", async () => {
-  const { deployment, upstream } = await bootstrapFixture();
+  const { deployment, serviceIsolation, upstream } = await bootstrapFixture();
   const input = await sign(fixture({
     deployment,
     upstream,
+    serviceIsolation,
     fundingMode: "operator-testnet-bootstrap",
     preparedAt: PREPARED_AT,
   }));
@@ -160,16 +193,17 @@ test("rejects missing, substituted, replayed, stale, future, and mutated attesta
   assert.throws(() => verifyOperationalReadinessEvidence({ ...input, now: PREPARED_AT - 1 }), /future/);
   assert.throws(() => verifyOperationalReadinessEvidence({ ...input, now: input.record.validUntil + 1 }), /expired/);
 
-  const mutated = structuredClone(input);
+  const mutated = { ...input, record: structuredClone(input.record) };
   mutated.record.artifacts.supportPolicy = id("substituted support policy").toLowerCase();
   assert.throws(() => verifyOperationalReadinessEvidence({ ...mutated, now: PREPARED_AT + 60 }), /signature is invalid/);
 });
 
 test("typed payload is restricted to one exact operational participant", async () => {
-  const { deployment, upstream } = await bootstrapFixture();
+  const { deployment, serviceIsolation, upstream } = await bootstrapFixture();
   const input = fixture({
     deployment,
     upstream,
+    serviceIsolation,
     fundingMode: "operator-testnet-bootstrap",
     preparedAt: PREPARED_AT,
   });
@@ -191,9 +225,15 @@ test("typed payload is restricted to one exact operational participant", async (
 test("operator preparation and verification CLIs expose no signing or funding authority", async () => {
   const { deployment, upstream } = await bootstrapFixture();
   const cliPreparedAt = Math.floor(Date.now() / 1_000) - 30;
+  const serviceIsolation = await createVerifiedServiceIsolationFixture({
+    deployment,
+    preparedAt: cliPreparedAt,
+    now: cliPreparedAt,
+  });
   const input = await sign(fixture({
     deployment,
     upstream,
+    serviceIsolation,
     fundingMode: "operator-testnet-bootstrap",
     preparedAt: cliPreparedAt,
   }));
@@ -202,16 +242,25 @@ test("operator preparation and verification CLIs expose no signing or funding au
     const recordPath = join(directory, "record.json");
     const policyPath = join(directory, "policy.json");
     const attestationsPath = join(directory, "attestations.json");
+    const isolationRecordPath = join(directory, "isolation-record.json");
+    const isolationPolicyPath = join(directory, "isolation-policy.json");
+    const isolationAttestationsPath = join(directory, "isolation-attestations.json");
     await Promise.all([
       writeFile(recordPath, JSON.stringify(input.record)),
       writeFile(policyPath, JSON.stringify(input.policy)),
       writeFile(attestationsPath, JSON.stringify(input.attestations)),
+      writeFile(isolationRecordPath, JSON.stringify(serviceIsolation.candidate.record)),
+      writeFile(isolationPolicyPath, JSON.stringify(serviceIsolation.candidate.policy)),
+      writeFile(isolationAttestationsPath, JSON.stringify(serviceIsolation.candidate.attestations)),
     ]);
     const participant = input.record.participants[0];
     const payload = JSON.parse(execFileSync(process.execPath, [
       "scripts/prepare-operational-readiness-attestation.mjs",
       "--record", recordPath,
       "--policy", policyPath,
+      "--isolation-record", isolationRecordPath,
+      "--isolation-policy", isolationPolicyPath,
+      "--isolation-attestations", isolationAttestationsPath,
       "--role", participant.role,
       "--operator-id", participant.operatorId,
     ], { encoding: "utf8" }));
@@ -224,6 +273,9 @@ test("operator preparation and verification CLIs expose no signing or funding au
       "--record", recordPath,
       "--policy", policyPath,
       "--attestations", attestationsPath,
+      "--isolation-record", isolationRecordPath,
+      "--isolation-policy", isolationPolicyPath,
+      "--isolation-attestations", isolationAttestationsPath,
     ], { encoding: "utf8" }));
     assert.equal(summary.drillCount, REQUIRED_OPERATIONAL_DRILLS.length);
     assert.equal(summary.authorizations.funding, false);

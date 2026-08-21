@@ -27,6 +27,7 @@ import {
   fixture as operationsFixture,
   sign as signOperationsFixture,
 } from "./fixtures/verified-operational-readiness.mjs";
+import { createVerifiedServiceIsolationFixture } from "./fixtures/verified-service-isolation.mjs";
 import { verifyPublicTestnetBootstrapEvidence } from "../lib/public-testnet-bootstrap-evidence.mjs";
 import { verifyIndependentReviewEvidence } from "../lib/independent-review-evidence.mjs";
 import { verifyOperationalReadinessEvidence } from "../lib/operational-readiness-evidence.mjs";
@@ -442,6 +443,7 @@ async function fixture() {
     now: PROMOTION_NOW + 60,
     lightningOperatorWallet: LIGHTNING_OPERATOR,
     incidentCommanderWallet: INCIDENT_COMMANDER,
+    securityReviewerWallet: SECURITY_REVIEWER,
     monitoringOperatorWallet: campaign.candidate.wallets.get(monitor.signer),
   });
   const candidate = preparePublicTestnetReleaseCandidate({
@@ -628,6 +630,7 @@ test("derives a distinct tiny-limit bootstrap candidate before campaign evidence
     now: PROMOTION_NOW + 60,
     lightningOperatorWallet: LIGHTNING_OPERATOR,
     incidentCommanderWallet: INCIDENT_COMMANDER,
+    securityReviewerWallet: SECURITY_REVIEWER,
     monitoringOperatorWallet: bootstrap.candidate.wallets.get(monitor.signer),
   });
   const candidate = preparePublicTestnetBootstrapReleaseCandidate({
@@ -827,10 +830,12 @@ test("requires exact operational roles, alert channels, drills, artifacts, and r
   const rawOperations = (overrides = {}) => operationsFixture({
     deployment,
     upstream: campaign,
+    serviceIsolation: operations.serviceIsolation,
     fundingMode: "operator-testnet",
     preparedAt: PROMOTION_NOW + 30,
     lightningOperatorWallet: LIGHTNING_OPERATOR,
     incidentCommanderWallet: INCIDENT_COMMANDER,
+    securityReviewerWallet: SECURITY_REVIEWER,
     monitoringOperatorWallet: campaign.candidate.wallets.get(monitor.signer),
     ...overrides,
   });
@@ -872,12 +877,52 @@ test("requires exact operational roles, alert channels, drills, artifacts, and r
     now: PROMOTION_NOW + 60,
     lightningOperatorWallet: LIGHTNING_OPERATOR,
     incidentCommanderWallet: INCIDENT_COMMANDER,
+    securityReviewerWallet: SECURITY_REVIEWER,
     monitoringOperatorWallet: Wallet.createRandom(),
   });
   assert.throws(() => preparePublicTestnetReleaseCandidate({
     ...base,
     operationalReadinessVerification: wrongMonitor.verification,
   }), /not an exact signed upstream monitor/);
+
+  const wrongIsolationReviewer = await createVerifiedOperationalReadinessFixture({
+    deployment,
+    upstream: campaign,
+    fundingMode: "operator-testnet",
+    preparedAt: PROMOTION_NOW + 30,
+    now: PROMOTION_NOW + 60,
+    lightningOperatorWallet: LIGHTNING_OPERATOR,
+    incidentCommanderWallet: INCIDENT_COMMANDER,
+    monitoringOperatorWallet: campaign.candidate.wallets.get(monitor.signer),
+    securityReviewerWallet: Wallet.createRandom(),
+  });
+  assert.throws(() => preparePublicTestnetReleaseCandidate({
+    ...base,
+    operationalReadinessVerification: wrongIsolationReviewer.verification,
+  }), /service-isolation security reviewer/);
+
+  const wrongIsolationLightning = await createVerifiedServiceIsolationFixture({
+    deployment,
+    preparedAt: PROMOTION_NOW + 30,
+    now: PROMOTION_NOW + 60,
+    lightningOperatorWallet: Wallet.createRandom(),
+    securityReviewerWallet: SECURITY_REVIEWER,
+  });
+  const wrongIsolationLightningOperations = await createVerifiedOperationalReadinessFixture({
+    deployment,
+    upstream: campaign,
+    serviceIsolation: wrongIsolationLightning,
+    fundingMode: "operator-testnet",
+    preparedAt: PROMOTION_NOW + 30,
+    now: PROMOTION_NOW + 60,
+    lightningOperatorWallet: LIGHTNING_OPERATOR,
+    incidentCommanderWallet: INCIDENT_COMMANDER,
+    monitoringOperatorWallet: campaign.candidate.wallets.get(monitor.signer),
+  });
+  assert.throws(() => preparePublicTestnetReleaseCandidate({
+    ...base,
+    operationalReadinessVerification: wrongIsolationLightningOperations.verification,
+  }), /service-isolation Lightning operator/);
 
   const capturedInfrastructure = rawOperations();
   const backupOperator = capturedInfrastructure.record.participants.find(
@@ -1086,6 +1131,9 @@ test("operator CLI writes a private non-overwriting candidate without authority"
       operationsRecord: operations.candidate.record,
       operationsPolicy: operations.candidate.policy,
       operationsAttestations: operations.candidate.attestations,
+      isolationRecord: operations.serviceIsolation.candidate.record,
+      isolationPolicy: operations.serviceIsolation.candidate.policy,
+      isolationAttestations: operations.serviceIsolation.candidate.attestations,
     };
     const paths = {};
     for (const [name, value] of Object.entries(values)) {
@@ -1112,6 +1160,9 @@ test("operator CLI writes a private non-overwriting candidate without authority"
       "--operations-record", paths.operationsRecord,
       "--operations-policy", paths.operationsPolicy,
       "--operations-attestations", paths.operationsAttestations,
+      "--isolation-record", paths.isolationRecord,
+      "--isolation-policy", paths.isolationPolicy,
+      "--isolation-attestations", paths.isolationAttestations,
       "--out", output,
     ];
     const result = JSON.parse(execFileSync(process.execPath, arguments_, { encoding: "utf8" }));
@@ -1152,6 +1203,7 @@ test("bootstrap operator CLI also writes only a private non-authorizing candidat
     now: PROMOTION_NOW + 60,
     lightningOperatorWallet: LIGHTNING_OPERATOR,
     incidentCommanderWallet: INCIDENT_COMMANDER,
+    securityReviewerWallet: SECURITY_REVIEWER,
     monitoringOperatorWallet: bootstrap.candidate.wallets.get(monitor.signer),
   });
   const directory = await mkdtemp(join(tmpdir(), "treeswap-bootstrap-release-candidate-"));
@@ -1174,6 +1226,9 @@ test("bootstrap operator CLI also writes only a private non-authorizing candidat
       operationsRecord: operations.candidate.record,
       operationsPolicy: operations.candidate.policy,
       operationsAttestations: operations.candidate.attestations,
+      isolationRecord: operations.serviceIsolation.candidate.record,
+      isolationPolicy: operations.serviceIsolation.candidate.policy,
+      isolationAttestations: operations.serviceIsolation.candidate.attestations,
     };
     const paths = {};
     for (const [name, value] of Object.entries(values)) {
@@ -1200,6 +1255,9 @@ test("bootstrap operator CLI also writes only a private non-authorizing candidat
       "--operations-record", paths.operationsRecord,
       "--operations-policy", paths.operationsPolicy,
       "--operations-attestations", paths.operationsAttestations,
+      "--isolation-record", paths.isolationRecord,
+      "--isolation-policy", paths.isolationPolicy,
+      "--isolation-attestations", paths.isolationAttestations,
       "--out", output,
     ], { encoding: "utf8" }));
     assert.equal(result.fundingAuthorization, false);
