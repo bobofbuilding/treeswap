@@ -1,4 +1,4 @@
-import { and, eq, gt, lt } from "drizzle-orm";
+import { and, eq, gt, lte } from "drizzle-orm";
 import type { ReadonlyRequestCookies } from "next/dist/server/web/spec-extension/adapters/request-cookies";
 import { getDb } from "@/db";
 import { authSessions, notificationPreferences } from "@/db/schema";
@@ -95,19 +95,27 @@ export async function getCurrentSession(cookies: ReadonlyRequestCookies): Promis
   if (!token || !/^[0-9a-f]{64}$/.test(token)) return null;
 
   const db = getDb();
-  await db.delete(notificationPreferences).where(lt(notificationPreferences.retentionExpiresAt, new Date().toISOString()));
+  const observedAt = new Date();
+  const observedAtIso = observedAt.toISOString();
   const [session] = await db
     .select()
     .from(authSessions)
     .where(
       and(
         eq(authSessions.tokenHash, await sha256Hex(token)),
-        gt(authSessions.expiresAt, new Date().toISOString()),
+        gt(authSessions.expiresAt, observedAtIso),
       ),
     )
     .limit(1);
 
-  if (!session || !isActiveMainnetSession(session, new Date())) return null;
+  if (!session || !isActiveMainnetSession(session, observedAt)) return null;
+
+  await db.delete(notificationPreferences).where(
+    and(
+      eq(notificationPreferences.walletAddress, session.walletAddress),
+      lte(notificationPreferences.retentionExpiresAt, observedAtIso),
+    ),
+  );
 
   const [preferences] = await db
     .select()
