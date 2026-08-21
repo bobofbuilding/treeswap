@@ -1,6 +1,6 @@
 # Pinned live-BIT cross-chain deadline evidence
 
-Status: credentialed runner and fail-closed evidence verifier implemented. No result is recorded for the current source checkpoint because this environment has no authorized archive RPC. The production-readiness deadline gate remains open.
+Status: the credentialed runner and fail-closed evidence verifier passed on clean published `main` commit `9ba7d89a8b555f749c2a0f9a450effff340d6833`. The pinned-live-BIT-fork timing sub-gate is complete. Public-testnet finality and independently operated infrastructure remain open, so funded operation is still blocked.
 
 ## Purpose
 
@@ -50,3 +50,9 @@ Both directions use the same policy as the credential-free deadline campaign:
 Successful execution emits `treeswap.live-bit-cross-chain-deadline-evidence.v1` with scope `pinned-live-bit-fork-local-lnd-no-funding-authorization`. It contains the clean published source commit, exact live-BIT provenance, and the independently rebuilt deadline evidence. It omits the archive endpoint, invoices, payment hashes, invoice digests, preimages, and unrestricted URLs. Durable output is optional so the normal qualification remains ephemeral; when requested, persistence occurs only after the privacy scan and exact-schema checks pass.
 
 The schema explicitly records that the EVM provider is one local fork, EVM finality is simulated, public testnet and independent providers are absent, production infrastructure is absent, and funding authorization is false. A passing result can close only the pinned live-BIT-fork timing sub-gate. Public-testnet finality, independently operated providers and solvers, monitoring, incident drills, reviews, multisigs, and the signed release record remain mandatory.
+
+## Recorded checkpoint
+
+Clean published source `9ba7d89a8b555f749c2a0f9a450effff340d6833` passed the complete credentialed sequence against the exact pinned BIT boundary and live LND regtest in both directions. BIT to Lightning paid only after twelve simulated EVM confirmations and then claimed before refund. Lightning to BIT reached the stricter observed 24-block safety boundary, rejected settlement, released the payer, and preserved exact claim/refund mutual exclusion. The retained outer evidence digest is `0xb9711ca69dcdad37f41de2ca2bd321534f0404bebd8d6facf89ad2f9f8cad70c`; its nested deadline digest is `0xe2c2efc01ae1f8e04f9765e21e1069ff9f071e87b5fea3e313e3d5816bd10f8e`.
+
+The mode-`0600` ignored artifact was independently re-read through the production evidence verifier. Both digests, the policy digest, pinned proxy and implementation identity, direction timings, confirmation count, boundary heights, exact limitations, and privacy exclusions reproduced. It contains no archive endpoint, invoice, payment hash, invoice digest, preimage, unrestricted URL, key, macaroon, seed, or email. It explicitly records one local fork provider, simulated EVM finality, no public testnet, no independent providers, no production infrastructure, and no funding authorization.
