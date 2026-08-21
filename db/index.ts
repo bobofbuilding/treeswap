@@ -1,6 +1,15 @@
 import { env } from "cloudflare:workers";
 import { drizzle } from "drizzle-orm/d1";
+import { inspectAccountStorage, requireAccountCapability } from "@/lib/account-capability.mjs";
 import * as schema from "./schema";
+
+export async function getAccountCapability() {
+  return inspectAccountStorage(env.DB);
+}
+
+export async function requireAccountStorage() {
+  return requireAccountCapability(await getAccountCapability());
+}
 
 export function getDb() {
   if (!env.DB) {

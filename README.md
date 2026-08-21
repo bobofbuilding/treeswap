@@ -52,7 +52,9 @@ The bridge interface remains a swap simulation: it does not lock BIT, pay a swap
 
 Sign-In with Ethereum is an account login only. Its plaintext signature is never accepted as permission for a BIT transfer or Lightning payment.
 
-Email preferences are attached to the signed-in wallet account, never included in the SIWE message or an onchain intent, and can be detached at any time. Unverified records expire after 24 hours and outbound delivery is hard-disabled in this build.
+Accounts are enabled only when the deployment proves that its durable nonce, session, and notification tables exist. A deployment without that exact storage capability disables sign-in before requesting a wallet signature.
+
+Email preferences are attached to the signed-in wallet account, never included in the SIWE message or an onchain intent, and can be detached at any time. Unverified records become ineligible after 24 hours and are purged when account storage is next accessed; outbound delivery is hard-disabled in this build.
 
 ## Security status
 

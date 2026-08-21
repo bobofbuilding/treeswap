@@ -536,7 +536,7 @@ export default function Home() {
                 <div className="checkout-warning">
                   Prototype preview only. A live flow must verify the invoice checksum, signature, expiry, network, amount, and payment hash before locking funds.
                 </div>
-                <p className="checkout-account-note">Want a copy? Sign in from the account menu to attach an email for invoice notices or transaction receipts.</p>
+                <p className="checkout-account-note">Email delivery is disabled during the prototype.</p>
                 <button
                   type="button"
                   className="primary-action"

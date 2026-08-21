@@ -1,5 +1,5 @@
 import { lt } from "drizzle-orm";
-import { getDb } from "@/db";
+import { getDb, requireAccountStorage } from "@/db";
 import { siweNonces } from "@/db/schema";
 import {
   noStoreJson,
@@ -12,6 +12,7 @@ import {
 export async function GET(request: Request) {
   try {
     const { domain, origin } = requestIdentity(request);
+    await requireAccountStorage();
     const db = getDb();
     const now = new Date();
     const expiresAt = new Date(now.getTime() + SIWE_MESSAGE_TTL_SECONDS * 1_000);

@@ -20,6 +20,13 @@ type Session = {
   notifications: NotificationPreferences | null;
 };
 
+type AccountCapability = {
+  schema: "treeswap.account-capability.v1";
+  enabled: boolean;
+  durableStorage: boolean;
+  emailDeliveryEnabled: false;
+};
+
 function shortAddress(address: string) {
   return `${address.slice(0, 6)}…${address.slice(-4)}`;
 }
@@ -34,7 +41,7 @@ export default function WalletAccount() {
   const [open, setOpen] = useState(false);
   const [session, setSession] = useState<Session | null>(null);
   const [loadingSession, setLoadingSession] = useState(true);
-  const [accountReady, setAccountReady] = useState(true);
+  const [accountReady, setAccountReady] = useState(false);
   const [working, setWorking] = useState(false);
   const [email, setEmail] = useState("");
   const [invoiceEmails, setInvoiceEmails] = useState(true);
@@ -54,8 +61,15 @@ export default function WalletAccount() {
   useEffect(() => {
     let active = true;
     fetch("/api/auth/session", { cache: "no-store" })
-      .then((response) => readJson<{ session: Session | null }>(response))
-      .then(({ session: nextSession }) => {
+      .then((response) => readJson<{ account: AccountCapability; session: Session | null }>(response))
+      .then(({ account, session: nextSession }) => {
+        if (!active) return;
+        setAccountReady(
+          account.schema === "treeswap.account-capability.v1"
+          && account.enabled === true
+          && account.durableStorage === true
+          && account.emailDeliveryEnabled === false,
+        );
         if (active) applySession(nextSession);
       })
       .catch(() => setAccountReady(false))
@@ -199,10 +213,10 @@ export default function WalletAccount() {
         type="button"
         className="account-button"
         onClick={() => setOpen(true)}
-        disabled={!accountReady}
-        title={accountReady ? "Open TreeSwap account" : "Account storage is unavailable on this preview"}
+        disabled={loadingSession || !accountReady}
+        title={accountReady ? "Open TreeSwap account" : "Accounts require durable storage on this deployment"}
       >
-        <span /> {loadingSession ? "Account" : !accountReady ? "Account preview" : session ? shortAddress(session.walletAddress) : "Sign in"}
+        <span /> {loadingSession ? "Account" : !accountReady ? "Accounts off" : session ? shortAddress(session.walletAddress) : "Sign in"}
       </button>
 
       {open && (
@@ -265,7 +279,7 @@ export default function WalletAccount() {
                     <span><strong>Transaction receipts</strong><small>BIT reservation, claim, or refund</small></span>
                     <input type="checkbox" checked={receiptEmails} onChange={(event) => setReceiptEmails(event.target.checked)} />
                   </label>
-                  <p className="privacy-note">Email stays offchain and can be detached at any time. Delivery is disabled, and an unverified address is automatically deleted after 24 hours.</p>
+                  <p className="privacy-note">Email stays offchain and can be detached at any time. Delivery is disabled. An unverified address expires after 24 hours and is purged when account storage is next accessed.</p>
                   <button type="button" className="primary-action" onClick={saveNotifications} disabled={working}>
                     {working ? "Saving…" : session.notifications ? "Update email preferences" : "Attach email"} <span>→</span>
                   </button>

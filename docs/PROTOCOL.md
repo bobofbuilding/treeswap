@@ -151,7 +151,9 @@ TreeSwap uses EIP-4361 Sign-In with Ethereum only for an offchain account sessio
 
 The server issues a random 128-bit, ten-minute nonce bound to an allowlisted request origin, exact domain and URI. Verification requires Ethereum mainnet, the exact no-transaction statement, matching message times, a valid wallet signature, and an unused nonce. A successful sign-in replaces prior sessions for the wallet and creates an opaque 24-hour session in a `Secure`, `HttpOnly`, `SameSite=Strict`, host-only cookie; only its hash is stored server-side.
 
-An authenticated user may separately attach one email and choose invoice notices, transaction receipts, or both. The email is stored offchain, omitted from wallet signatures and intents, detachable immediately, and automatically expires after 24 hours while unverified. Outbound delivery is hard-disabled. Enabling it requires ownership verification, enforced unsubscribe, rate limits, minimal retention, access auditing, and authenticated sender configuration.
+The account surface is deployment-gated. It is advertised only after the bound durable database proves that every required nonce, session, and notification table exists. A missing, partial, malformed, or unavailable binding returns an explicit disabled capability and rejects nonce creation before a wallet signature is requested.
+
+An authenticated user may separately attach one email and choose invoice notices, transaction receipts, or both. The email is stored offchain, omitted from wallet signatures and intents, detachable immediately, and becomes ineligible after 24 hours while unverified; it is purged when account storage is next accessed. Outbound delivery is hard-disabled. Enabling it requires ownership verification, enforced unsubscribe, rate limits, minimal retention, access auditing, and authenticated sender configuration.
 
 SIWE currently supports externally owned accounts. Contract-wallet authentication requires an EIP-1271-capable verifier and an Ethereum provider before it can be advertised.
 

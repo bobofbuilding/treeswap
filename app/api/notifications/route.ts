@@ -1,6 +1,6 @@
 import { eq } from "drizzle-orm";
 import { cookies } from "next/headers";
-import { getDb } from "@/db";
+import { getDb, requireAccountStorage } from "@/db";
 import { notificationPreferences } from "@/db/schema";
 import { isValidNotificationEmail, normalizeNotificationEmail } from "@/lib/account.mjs";
 import { NOTIFICATION_DELIVERY_ENABLED, pendingEmailExpiresAt } from "@/lib/notification-policy.mjs";
@@ -21,6 +21,7 @@ export async function PUT(request: Request) {
   if (!sameOrigin(request)) return noStoreJson({ error: "Cross-origin preference update rejected." }, { status: 403 });
 
   try {
+    await requireAccountStorage();
     const session = await getCurrentSession(await cookies());
     if (!session) return noStoreJson({ error: "Sign in with Ethereum first." }, { status: 401 });
 
@@ -84,6 +85,7 @@ export async function DELETE(request: Request) {
   if (!sameOrigin(request)) return noStoreJson({ error: "Cross-origin preference update rejected." }, { status: 403 });
 
   try {
+    await requireAccountStorage();
     const session = await getCurrentSession(await cookies());
     if (!session) return noStoreJson({ error: "Sign in with Ethereum first." }, { status: 401 });
 

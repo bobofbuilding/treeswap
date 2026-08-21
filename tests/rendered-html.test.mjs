@@ -25,6 +25,24 @@ async function render() {
   );
 }
 
+async function requestWorker(path, init = {}) {
+  const workerUrl = new URL("../dist/server/index.js", import.meta.url);
+  workerUrl.searchParams.set("test", `${process.pid}-${Date.now()}-${Math.random()}`);
+  const { default: worker } = await import(workerUrl.href);
+  return worker.fetch(
+    new Request(`http://localhost${path}`, init),
+    {
+      ASSETS: {
+        fetch: async () => new Response("Not found", { status: 404 }),
+      },
+    },
+    {
+      waitUntil() {},
+      passThroughOnException() {},
+    },
+  );
+}
+
 test("server-renders the TreeSwap prototype", async () => {
   const response = await render();
   assert.equal(response.status, 200);
@@ -52,6 +70,25 @@ test("server-renders the TreeSwap prototype", async () => {
   assert.match(html, /href="(?:https:\/\/treeswap\.vercel\.app)?\/favicon\.png"/i);
   assert.match(html, /href="(?:https:\/\/treeswap\.vercel\.app)?\/apple-touch-icon\.png"/i);
   assert.doesNotMatch(html, /codex-preview|react-loading-skeleton|Your site is taking shape/i);
+});
+
+test("disables accounts before any wallet signature when durable storage is absent", async () => {
+  const sessionResponse = await requestWorker("/api/auth/session");
+  assert.equal(sessionResponse.status, 200);
+  assert.match(sessionResponse.headers.get("cache-control") ?? "", /no-store/);
+  assert.deepEqual(await sessionResponse.json(), {
+    account: {
+      schema: "treeswap.account-capability.v1",
+      enabled: false,
+      durableStorage: false,
+      emailDeliveryEnabled: false,
+    },
+    session: null,
+  });
+
+  const nonceResponse = await requestWorker("/api/auth/nonce");
+  assert.equal(nonceResponse.status, 503);
+  assert.deepEqual(await nonceResponse.json(), { error: "Accounts are unavailable on this deployment." });
 });
 
 test("keeps swaps non-production and direct sends explicitly wallet-authorized", async () => {
@@ -105,7 +142,13 @@ test("keeps swaps non-production and direct sends explicitly wallet-authorized",
   assert.match(account, /Sign in with Ethereum/);
   assert.match(account, /Attach email/);
   assert.match(account, /Delivery is disabled/i);
-  assert.match(account, /automatically deleted after 24 hours/i);
+  assert.match(account, /expires after 24 hours/i);
+  assert.match(account, /purged when account storage is next accessed/i);
+  assert.match(account, /accountReady, setAccountReady\] = useState\(false\)/);
+  assert.match(account, /Accounts off/);
+  assert.match(account, /account\.durableStorage === true/);
+  assert.match(page, /Email delivery is disabled during the prototype/);
+  assert.match(authServer, /Accounts are unavailable on this deployment/);
   assert.match(sendPanel, /DIRECT SEND · REAL FUNDS/);
   assert.match(sendPanel, /Send from your wallet/);
   assert.match(sendPanel, /Direct sends are irreversible/);
