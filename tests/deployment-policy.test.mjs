@@ -106,6 +106,14 @@ const manifest = {
     decimals: 18,
     symbol: "BIT",
   },
+  accounting: {
+    vaultTotalAvailableWei: "0",
+    vaultTotalLockedWei: "0",
+    vaultAccountedBalanceWei: "0",
+    vaultBitBalanceWei: "0",
+    userEscrowTotalLockedWei: "0",
+    userEscrowBitBalanceWei: "0",
+  },
 };
 
 test("approves only a reviewed, pinned, immutable, role-separated deployment", () => {
@@ -202,4 +210,28 @@ test("rejects coercible or malformed numeric and escrow-set fields without throw
     policyResult.reasons.join("; "),
     /deployment-chain policy|fee-cap policy|price-deviation policy/,
   );
+});
+
+test("rejects pre-funded deployments, hidden liabilities, and accounting divergence", () => {
+  for (const [mutate, expected] of [
+    [(value) => { value.accounting.vaultTotalAvailableWei = "1"; }, /reconcile|zero BIT inventory/],
+    [(value) => {
+      value.accounting.vaultTotalAvailableWei = "1";
+      value.accounting.vaultAccountedBalanceWei = "1";
+      value.accounting.vaultBitBalanceWei = "1";
+    }, /zero BIT inventory/],
+    [(value) => {
+      value.accounting.userEscrowTotalLockedWei = "1";
+      value.accounting.userEscrowBitBalanceWei = "1";
+    }, /zero BIT inventory/],
+    [(value) => { value.accounting.vaultBitBalanceWei = "1"; }, /does not match accounted inventory|zero BIT inventory/],
+    [(value) => { value.accounting.userEscrowBitBalanceWei = "1"; }, /does not match locked liabilities|zero BIT inventory/],
+    [(value) => { value.accounting.vaultTotalLockedWei = "01"; }, /canonical uint256/],
+  ]) {
+    const broken = structuredClone(manifest);
+    mutate(broken);
+    const result = validateDeploymentManifest(broken, policy);
+    assert.equal(result.approved, false);
+    assert.match(result.reasons.join("; "), expected);
+  }
 });

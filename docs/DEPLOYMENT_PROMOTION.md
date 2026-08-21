@@ -1,6 +1,6 @@
 # Signed deployment-manifest promotion
 
-Status: the repository can now verify promotion of matching finalized deployment observations into candidate reviewed-manifest evidence. No independent provider, reviewer, deployed public-testnet contract, Safe, hardware signer, or funding authorization is included.
+Status: the repository can verify promotion of matching finalized deployment observations into candidate reviewed-manifest evidence. Observation schema `treeswap.deployment-observation.v2` additionally binds the raw BIT balances and contract accounting at that same canonical block. No independent provider, reviewer, deployed public-testnet contract, Safe, hardware signer, or funding authorization is included.
 
 ## Purpose
 
@@ -15,14 +15,37 @@ An RPC observation is not a reviewed deployment manifest. A label such as “pro
 - observations no more than one hour old when promoted and a promotion valid for no more than one day; and
 - distinct provider signers plus exactly one distinct contract reviewer and one distinct operations reviewer.
 
-The verifier rechecks every observation rather than trusting a comparison result. All providers must report the identical source, chain, finalized block, canonical EIP-1898 anchor, manifest, and manifest digest. It then applies the strict deployment policy to the observed closed gate, role-separated contract wallets, sealed two-escrow registry, immutable escrows, BIT proxy and implementation, EIP-1967 slot, bytecode hashes, fee and price limits, and reference price.
+The verifier rechecks every observation rather than trusting a comparison result. All providers must report the identical source, chain, finalized block, canonical EIP-1898 anchor, manifest, and manifest digest. It then applies the strict deployment policy to the observed closed gate, role-separated contract wallets, sealed two-escrow registry, immutable escrows, BIT proxy and implementation, EIP-1967 slot, bytecode hashes, fee and price limits, reference price, and exact zero-balance postconditions. The vault's `totalAvailable`, `totalLocked`, `accountedBalance`, and raw BIT balance must all reconcile and equal zero. The user escrow's `totalLocked` and raw BIT balance must reconcile and equal zero. A consistent but pre-funded deployment is still rejected.
 
 The aggregate review-bundle digest must be the exact `independentReviewDigest` in both the observed manifest and deployment policy. Any changed review artifact, observation, policy, code hash, signer, validity window, or block invalidates every approval.
 
 ## Promotion ceremony
 
 1. Freeze the reviewed source commit and exact deployment policy. Complete and retain the six review artifacts; only their nonzero digests enter the promotion record.
-2. Observe the same canonical finalized deployment block through at least two independently operated authenticated providers. Do not treat two endpoints backed by one operator or execution backend as independent.
+2. Create one public, secret-free `treeswap.deployment-observation-input.v1` file containing exactly `schema`, `reviewedBuildCommit`, `independentReviewDigest`, and `addresses`. `addresses` contains the exact `bitProxy`, `controller`, `feeCollector`, `gate`, `guardian`, `paymentHashRegistry`, `userEscrow`, and `vault` addresses from the reviewed deployment package. Observe the latest finalized block through provider one:
+
+```sh
+ETHEREUM_RPC_URL=<authenticated-secret> \
+ETHEREUM_RPC_PROVIDER_LABEL=<operator-label> \
+ETHEREUM_RPC_PROVIDER_IDENTITY=<public-bytes32-identity-commitment> \
+npm run observe:deployment-manifest -- \
+  --input deployment-observation-input.json \
+  --out provider-1.json
+```
+
+Provider two must be independently operated and must observe the exact first finalized block:
+
+```sh
+ETHEREUM_RPC_URL=<second-authenticated-secret> \
+ETHEREUM_RPC_PROVIDER_LABEL=<second-operator-label> \
+ETHEREUM_RPC_PROVIDER_IDENTITY=<second-public-bytes32-identity-commitment> \
+npm run observe:deployment-manifest -- \
+  --input deployment-observation-input.json \
+  --block <provider-1-finalized-block-number> \
+  --out provider-2.json
+```
+
+RPC URLs are accepted only through the environment and never written to evidence. Outputs are non-overwriting mode-`0600` files. Do not treat two endpoints backed by one operator or execution backend as independent.
 3. Assemble the canonical record, policy, deployment policy, and ordered observation set. The deployment must still be closed and the payment-hash registry must already be irreversibly sealed to the two exact escrows.
 4. Each listed provider operator and reviewer independently prepares the exact EIP-712 payload:
 
@@ -53,7 +76,7 @@ The verifier returns the exact record and policy digests, a privacy-safe summary
 
 ## Fail-closed boundary
 
-Unknown fields, an unreviewed status change, one provider, duplicate identities, shared signer identities, missing reviewer roles, noncanonical ordering, disagreement, stale or future observations, an unfinalized or noncanonical anchor, the wrong EIP-1967 slot, topology or code drift, an unsealed registry, an open gate, a review mismatch, replayed signatures, expired promotion, secret-bearing fields, endpoints, invoices, and private-key material all fail closed. Input files used by the CLIs must be regular non-symlink JSON files no larger than 1 MB.
+Unknown fields, a legacy observation schema, an unreviewed status change, one provider, duplicate identities, shared signer identities, missing reviewer roles, noncanonical ordering, disagreement, stale or future observations, an unfinalized or noncanonical anchor, the wrong EIP-1967 slot, topology or code drift, an unsealed registry, an open gate, nonzero or unreconciled escrow balances, a review mismatch, replayed signatures, expired promotion, secret-bearing fields, endpoints, invoices, and private-key material all fail closed. Input files used by the CLIs must be regular non-symlink JSON files no larger than 1 MB.
 
 Module-private provenance protects the derived release mapping. A copied or reconstructed verification object cannot create candidate evidence. The mapping is explicitly scoped `candidate-release-evidence-no-funding-authorization`; it cannot open the gate, fund a solver, sign a release, or promote itself into production.
 

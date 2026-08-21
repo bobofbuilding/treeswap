@@ -72,6 +72,7 @@ const configurationFiles = [
   "scripts/prepare-closed-testnet-deployment.mjs",
   "scripts/verify-closed-testnet-deployment.mjs",
   "scripts/observe-closed-testnet-deployment-preflight.mjs",
+  "scripts/observe-deployment-manifest.mjs",
   "scripts/prepare-closed-testnet-deployment-preflight-record.mjs",
   "scripts/prepare-closed-testnet-deployment-preflight-approval.mjs",
   "scripts/verify-closed-testnet-deployment-preflight.mjs",

@@ -1,7 +1,11 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 import { id, keccak256, toUtf8Bytes } from "ethers";
-import { compareDeploymentObservations } from "../lib/deployment-observer.mjs";
+import {
+  assertDeploymentObservationIsSecretFree,
+  compareDeploymentObservations,
+  deploymentObservationValueDigest,
+} from "../lib/deployment-observer.mjs";
 
 function canonical(value) {
   if (Array.isArray(value)) return value.map(canonical);
@@ -22,7 +26,7 @@ function observation(providerLabel, providerIdentity) {
     paymentHashRegistry: { sealed: true },
   };
   return {
-    schema: "treeswap.deployment-observation.v1",
+    schema: "treeswap.deployment-observation.v2",
     evidenceStatus: "unreviewed-rpc-observation",
     observedAt: "2026-08-20T09:00:00.000Z",
     providerLabel,
@@ -63,4 +67,23 @@ test("rejects an unfinalized, noncanonical, or self-inconsistent observation", (
   const result = compareDeploymentObservations(first, second);
   assert.equal(result.eligible, false);
   assert.match(result.reasons.join("; "), /not canonically anchored|did not prove|digest is invalid/);
+});
+
+test("v2 observation digest is deterministic and evidence rejects endpoint or secret material", () => {
+  const value = observation("provider-a", id("provider-a").toLowerCase());
+  assert.match(deploymentObservationValueDigest(value), /^0x[0-9a-f]{64}$/);
+  assert.equal(deploymentObservationValueDigest(structuredClone(value)), deploymentObservationValueDigest(value));
+  assert.equal(assertDeploymentObservationIsSecretFree(value), true);
+  assert.throws(
+    () => assertDeploymentObservationIsSecretFree({ ...value, providerLabel: "https://private-rpc.invalid" }),
+    /secret or endpoint/,
+  );
+  assert.throws(
+    () => assertDeploymentObservationIsSecretFree({ ...value, privateKey: "never" }),
+    /forbidden field/,
+  );
+  const legacy = structuredClone(value);
+  legacy.schema = "treeswap.deployment-observation.v1";
+  assert.equal(compareDeploymentObservations(legacy, value).eligible, false);
+  assert.match(compareDeploymentObservations(legacy, value).reasons.join("; "), /schema is unsupported/);
 });

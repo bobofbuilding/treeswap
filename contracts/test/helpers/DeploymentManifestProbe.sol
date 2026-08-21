@@ -46,6 +46,7 @@ contract DeploymentManifestBitImplementation {
     uint8 public decimals;
     bool public paused;
     bool private initialized;
+    mapping(address account => uint256 amount) public balanceOf;
 
     function initialize() external {
         if (initialized) revert AlreadyInitialized();
@@ -55,6 +56,11 @@ contract DeploymentManifestBitImplementation {
 
     function symbol() external pure returns (string memory) {
         return "BIT";
+    }
+
+    /// @dev Test-only hook for proving finalized deployment observations reject unexpected inventory.
+    function setBalanceForTest(address account, uint256 amount) external {
+        balanceOf[account] = amount;
     }
 }
 

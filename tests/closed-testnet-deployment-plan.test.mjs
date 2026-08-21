@@ -126,6 +126,9 @@ test("builds one deterministic Sepolia plan with exact CREATE addresses and hash
   assert.deepEqual(plan.requiredPostconditions.registeredEscrows, [vaultAddress, userEscrowAddress]);
   assert.equal(plan.requiredPostconditions.gateClosed, true);
   assert.equal(plan.requiredPostconditions.registrySealed, true);
+  assert.equal(plan.requiredPostconditions.vaultAccountedBalanceWei, "0");
+  assert.equal(plan.requiredPostconditions.vaultBitBalanceWei, "0");
+  assert.equal(plan.requiredPostconditions.userEscrowBitBalanceWei, "0");
   assert.equal(plan.requiredPostconditions.fundingAuthorization, false);
   assert.equal(plan.requiredPreflight.deployerHasNoRuntimeCode, true);
   assert.equal(plan.requiredPreflight.deploymentTargetsEmpty, true);

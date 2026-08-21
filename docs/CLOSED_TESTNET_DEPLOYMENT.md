@@ -125,7 +125,10 @@ After separately authorized Safe/deployer execution, the existing finalized depl
 - the gate is closed and has no pending open;
 - the registry is sealed to exactly the vault and user escrow;
 - the role wallets, constructor immutables, BIT boundary, risk limits, and fee recipient match; and
-- vault available inventory, vault locked inventory, user-escrow liabilities, and every unreconciled liability are zero.
+- vault available inventory, locked inventory, accounted balance, and raw BIT balance all reconcile and equal zero; and
+- user-escrow locked liabilities and raw BIT balance reconcile and equal zero.
+
+Use the credential-safe `npm run observe:deployment-manifest` workflow in [Signed deployment-manifest promotion](./DEPLOYMENT_PROMOTION.md). The v2 observation binds all six accounting fields to the same EIP-1898 finalized state anchor as code, topology, roles, and BIT configuration. A pre-funded deployment is ineligible even when its internal accounting is consistent.
 
 Only then can the seven-day public-testnet campaign begin. Opening the gate or adding test inventory requires the separate signed release boundary. This file and its CLIs never grant that permission.
 

@@ -101,6 +101,7 @@ jobs:
       - run: node --check scripts/prepare-closed-testnet-deployment.mjs
       - run: node --check scripts/verify-closed-testnet-deployment.mjs
       - run: node --check scripts/observe-closed-testnet-deployment-preflight.mjs
+      - run: node --check scripts/observe-deployment-manifest.mjs
       - run: node --check scripts/prepare-closed-testnet-deployment-preflight-record.mjs
       - run: node --check scripts/prepare-closed-testnet-deployment-preflight-approval.mjs
       - run: node --check scripts/verify-closed-testnet-deployment-preflight.mjs

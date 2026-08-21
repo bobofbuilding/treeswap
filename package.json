@@ -15,6 +15,7 @@
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next",
     "db:generate": "drizzle-kit generate",
     "observe:bit": "node scripts/observe-bit-deployment.mjs",
+    "observe:deployment-manifest": "node scripts/observe-deployment-manifest.mjs",
     "compare:bit": "node scripts/compare-bit-observations.mjs",
     "test:fork": "bash scripts/run-mainnet-fork.sh",
     "test:coordinator-evm": "bash scripts/run-coordinator-evm-smoke.sh",

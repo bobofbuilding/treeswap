@@ -76,7 +76,7 @@ MAINNET_RPC_URL=<secret> npm run test:live-bit-reorg
 ## Production work still required
 
 - Repeat the passing EVM outbox/reorg campaigns on public testnet using two independently operated authenticated providers and genuine finality transitions
-- Independently rebuild and review the closed Sepolia plan, deploy its exact transactions through hardware-backed operators, and prove every postcondition before test inventory
+- Independently rebuild and review the closed Sepolia plan, deploy its exact transactions through hardware-backed operators, and capture matching finalized v2 manifests proving reconciled zero balances before test inventory
 - Deploy and qualify the bounded solver daemon, continuous safety monitor, backup/restore drills, redundant guardian delivery, and external alert routing
 - Deploy the implemented solver endpoint, private-packet, and capacity-reader protocols plus independent quote-delivery paths
 - Bridge-escrow wallet integration with exact intent authorization and explicit approval boundaries

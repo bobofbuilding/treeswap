@@ -293,9 +293,49 @@ try {
   assert.equal(await vault.totalAvailable(), 0n);
   assert.equal(await vault.totalLocked(), 0n);
   assert.equal(await userEscrow.totalLocked(), 0n);
+  assert.deepEqual(manifest.accounting, {
+    vaultTotalAvailableWei: "0",
+    vaultTotalLockedWei: "0",
+    vaultAccountedBalanceWei: "0",
+    vaultBitBalanceWei: "0",
+    userEscrowTotalLockedWei: "0",
+    userEscrowBitBalanceWei: "0",
+  });
+
+  const bitControl = new Contract(await bitProxy.getAddress(), bitImplementationArtifact.abi, wallets[0]);
+  const unexpectedInventoryReceipt = await (await bitControl.setBalanceForTest(await vault.getAddress(), 1n)).wait();
+  await waitForFinality(provider, unexpectedInventoryReceipt.blockNumber);
+  const unexpectedInventoryObservation = await observeDeploymentManifest({
+    ...observationInput,
+    rpcCall: createJsonRpcClient(RPC_URL),
+    providerLabel: "local-anvil-primary",
+    providerIdentity: id("treeswap-deployment-rehearsal:primary").toLowerCase(),
+    targetBlockNumber: unexpectedInventoryReceipt.blockNumber,
+    observedAt: new Date("2026-08-20T09:01:00.000Z"),
+  });
+  const unexpectedInventoryResult = validateDeploymentManifest(unexpectedInventoryObservation.manifest, localPolicy);
+  assert.equal(unexpectedInventoryResult.approved, false);
+  assert.match(
+    unexpectedInventoryResult.reasons.join("; "),
+    /vault BIT balance does not match accounted inventory|zero BIT inventory and liabilities/,
+  );
+  const restoredReceipt = await (await bitControl.setBalanceForTest(await vault.getAddress(), 0n)).wait();
+  await waitForFinality(provider, restoredReceipt.blockNumber);
+  const restoredObservation = await observeDeploymentManifest({
+    ...observationInput,
+    rpcCall: createJsonRpcClient(RPC_URL),
+    providerLabel: "local-anvil-primary",
+    providerIdentity: id("treeswap-deployment-rehearsal:primary").toLowerCase(),
+    targetBlockNumber: restoredReceipt.blockNumber,
+    observedAt: new Date("2026-08-20T09:02:00.000Z"),
+  });
+  assert.deepEqual(validateDeploymentManifest(restoredObservation.manifest, localPolicy), {
+    approved: true,
+    reasons: [],
+  });
 
   const evidence = Object.freeze({
-    schema: "treeswap.deployment-rehearsal-smoke.v1",
+    schema: "treeswap.deployment-rehearsal-smoke.v2",
     chainId: String(CHAIN_ID),
     executionClient: ANVIL_VERSION,
     actualTreeSwapGateRegistryAndEscrows: true,
@@ -320,6 +360,9 @@ try {
     tokenBoundary: "test-only-eip1967-bit-probe",
     solverInventoryWei: "0",
     userLiabilitiesWei: "0",
+    finalizedZeroBalanceManifest: true,
+    unexpectedFinalizedInventoryRejected: true,
+    finalizedZeroBalanceRestored: true,
     fundingAuthorization: false,
   });
   process.stdout.write(`${JSON.stringify({ ...evidence, evidenceDigest: coordinatorCommitmentDigest(evidence) })}\n`);

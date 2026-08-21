@@ -122,6 +122,14 @@ function manifest(reviews = reviewArtifacts()) {
       decimals: 18,
       symbol: "BIT",
     },
+    accounting: {
+      vaultTotalAvailableWei: "0",
+      vaultTotalLockedWei: "0",
+      vaultAccountedBalanceWei: "0",
+      vaultBitBalanceWei: "0",
+      userEscrowTotalLockedWei: "0",
+      userEscrowBitBalanceWei: "0",
+    },
   };
 }
 
@@ -153,7 +161,7 @@ function deploymentPolicy(value = manifest()) {
 
 function observation(providerLabel, providerIdentity, value = manifest(), observedAt = NOW - 120) {
   return {
-    schema: "treeswap.deployment-observation.v1",
+    schema: "treeswap.deployment-observation.v2",
     evidenceStatus: "unreviewed-rpc-observation",
     observedAt: new Date(observedAt * 1_000).toISOString(),
     providerLabel,
@@ -305,10 +313,31 @@ test("review bundle, deployment policy, implementation slot, topology, and code 
     (candidate) => { candidate.observations[0].manifest.bit.implementationSlot = id("wrong slot").toLowerCase(); },
     (candidate) => { candidate.observations[0].manifest.paymentHashRegistry.sealed = false; },
     (candidate) => { candidate.observations[0].manifest.gate.codeHash = id("wrong code").toLowerCase(); },
+    (candidate) => { candidate.observations[0].manifest.accounting.vaultBitBalanceWei = "1"; },
   ]) {
     const candidate = fixture();
     mutate(candidate);
     await assert.rejects(() => attestations(candidate), /review|policy digest|implementation slot|disagree|manifest digest|approved/);
+  }
+});
+
+test("promotion rejects nonzero, missing, malformed, or provider-disputed accounting", async () => {
+  for (const mutate of [
+    (candidate) => {
+      candidate.observations[0].manifest.accounting.vaultTotalAvailableWei = "1";
+      candidate.observations[0].manifest.accounting.vaultAccountedBalanceWei = "1";
+      candidate.observations[0].manifest.accounting.vaultBitBalanceWei = "1";
+    },
+    (candidate) => { delete candidate.observations[0].manifest.accounting.vaultBitBalanceWei; },
+    (candidate) => { candidate.observations[0].manifest.accounting.userEscrowTotalLockedWei = "01"; },
+    (candidate) => { candidate.observations[1].manifest.accounting.userEscrowBitBalanceWei = "1"; },
+  ]) {
+    const candidate = fixture();
+    mutate(candidate);
+    await assert.rejects(
+      () => attestations(candidate),
+      /accounting|inventory|liabilities|disagree|manifest digest|fields are not exact|canonical uint256/,
+    );
   }
 });
 
