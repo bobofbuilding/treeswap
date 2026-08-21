@@ -70,6 +70,8 @@
     "verify:independent-review-evidence": "node scripts/verify-independent-review-evidence.mjs",
     "prepare:operational-readiness-attestation": "node scripts/prepare-operational-readiness-attestation.mjs",
     "verify:operational-readiness-evidence": "node scripts/verify-operational-readiness-evidence.mjs",
+    "prepare:service-isolation-attestation": "node scripts/prepare-service-isolation-attestation.mjs",
+    "verify:service-isolation-evidence": "node scripts/verify-service-isolation-evidence.mjs",
     "prepare:testnet-bootstrap-release-candidate": "node scripts/prepare-public-testnet-bootstrap-release-candidate.mjs",
     "prepare:testnet-release-candidate": "node scripts/prepare-public-testnet-release-candidate.mjs",
     "prepare:testnet-release-approval": "node scripts/prepare-public-testnet-release-approval.mjs",

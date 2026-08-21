@@ -5,6 +5,8 @@ import {
   buildOperationalReadinessAttestationMessage,
   verifyOperationalReadinessEvidence,
 } from "../../lib/operational-readiness-evidence.mjs";
+import { buildServiceIsolationReleaseEvidence } from "../../lib/service-isolation-evidence.mjs";
+import { createVerifiedServiceIsolationFixture } from "./verified-service-isolation.mjs";
 
 export function canonical(values, selector) {
   return [...values].sort((left, right) => selector(left).localeCompare(selector(right)));
@@ -21,14 +23,16 @@ export function fixture({
   deployment,
   upstream,
   fundingMode,
+  serviceIsolation,
   protocolVersion = "1.0.0-testnet.1",
   preparedAt,
   lightningOperatorWallet,
   incidentCommanderWallet,
   monitoringOperatorWallet,
 }) {
-  if (!deployment?.verification || !upstream?.candidate || !Number.isSafeInteger(preparedAt)) {
-    throw new TypeError("verified deployment, upstream evidence, and preparedAt are required");
+  if (!deployment?.verification || !upstream?.candidate || !serviceIsolation?.verification
+      || !Number.isSafeInteger(preparedAt)) {
+    throw new TypeError("verified deployment, upstream evidence, service isolation, and preparedAt are required");
   }
   const options = { lightningOperatorWallet, incidentCommanderWallet, monitoringOperatorWallet };
   const wallets = new Map();
@@ -59,6 +63,8 @@ export function fixture({
         privacyRetention: id("operational privacy and deletion evidence").toLowerCase(),
         providerQuorum: upstream.candidate.record.artifacts.providerQuorum,
         reconciliation: upstream.candidate.record.reconciliation.reconciliationDigest,
+        serviceIsolation: serviceIsolation.releaseEvidence?.evidenceDigest
+          ?? buildServiceIsolationReleaseEvidence(serviceIsolation.verification).evidenceDigest,
         solverOperations: upstream.candidate.record.artifacts.solverOperations,
         supportPolicy: id("operational support and escalation policy").toLowerCase(),
         testQualification: upstream.candidate.record.artifacts.testQualification,
@@ -72,6 +78,8 @@ export function fixture({
         privacyRetention: id("bootstrap operational privacy and deletion evidence").toLowerCase(),
         providerQuorum: upstream.candidate.record.artifacts.providerQuorum,
         reconciliation: id("bootstrap operational zero-liability reconciliation").toLowerCase(),
+        serviceIsolation: serviceIsolation.releaseEvidence?.evidenceDigest
+          ?? buildServiceIsolationReleaseEvidence(serviceIsolation.verification).evidenceDigest,
         solverOperations: upstream.candidate.record.artifacts.solverOperations,
         supportPolicy: id("bootstrap operational support and escalation policy").toLowerCase(),
         testQualification: upstream.candidate.record.artifacts.testQualification,
@@ -82,7 +90,7 @@ export function fixture({
       : [],
   );
   const record = {
-    schema: "treeswap.operational-readiness-evidence.v1",
+    schema: "treeswap.operational-readiness-evidence.v2",
     operationsId: id(`operational readiness:${fundingMode}:${preparedAt}`).toLowerCase(),
     environment: "public-testnet",
     fundingMode,
@@ -112,7 +120,7 @@ export function fixture({
     }),
   };
   const policy = {
-    schema: "treeswap.operational-readiness-evidence-policy.v1",
+    schema: "treeswap.operational-readiness-evidence-policy.v2",
     environment: record.environment,
     fundingMode: record.fundingMode,
     chainId: record.chainId,
@@ -128,7 +136,13 @@ export function fixture({
     minimumOrganizations: 2,
     requiredDrills: [...REQUIRED_OPERATIONAL_DRILLS],
   };
-  return { attestations: [], policy, record, wallets };
+  return {
+    attestations: [],
+    policy,
+    record,
+    wallets,
+    serviceIsolationVerification: serviceIsolation.verification,
+  };
 }
 
 export async function sign(value) {
@@ -137,6 +151,7 @@ export async function sign(value) {
     const typed = buildOperationalReadinessAttestationMessage({
       record: value.record,
       policy: value.policy,
+      serviceIsolationVerification: value.serviceIsolationVerification,
       role: participant.role,
       operatorId: participant.operatorId,
     });
@@ -153,10 +168,18 @@ export async function sign(value) {
 }
 
 export async function createVerifiedOperationalReadinessFixture(options) {
-  const candidate = await sign(fixture(options));
+  const serviceIsolation = options.serviceIsolation ?? await createVerifiedServiceIsolationFixture({
+    deployment: options.deployment,
+    protocolVersion: options.protocolVersion,
+    preparedAt: options.preparedAt,
+    now: options.now,
+    lightningOperatorWallet: options.lightningOperatorWallet,
+    securityReviewerWallet: options.securityReviewerWallet,
+  });
+  const candidate = await sign(fixture({ ...options, serviceIsolation }));
   const verification = verifyOperationalReadinessEvidence({
     ...candidate,
     now: options.now ?? candidate.record.preparedAt + 60,
   });
-  return Object.freeze({ candidate, verification });
+  return Object.freeze({ candidate, verification, serviceIsolation });
 }

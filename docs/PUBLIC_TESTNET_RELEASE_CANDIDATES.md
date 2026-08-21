@@ -20,7 +20,7 @@ Both modes remain public-testnet-only. Release v2 rejects every mainnet environm
 - rejects an external reviewer signer that overlaps any deployment wallet, deployment-wallet owner, deployment-promotion attester, bootstrap/campaign operator, or release approver;
 - derives the release environment, chain, gate, source, manifest, operator counts, and policy digests instead of accepting them from an operator;
 - derives all five review digests from a live provenance-bound [independent review verification](./INDEPENDENT_REVIEW_EVIDENCE.md), rather than accepting hashes from the release template;
-- derives backup, monitoring, incident, provider, solver, qualification, loss-allocation, and support commitments from a live provenance-bound [operational readiness verification](./OPERATIONAL_READINESS_EVIDENCE.md), rather than accepting opaque support or loss hashes from the release template;
+- derives backup, monitoring, incident, provider, solver, qualification, service-isolation, loss-allocation, and support commitments from live provenance-bound [service-isolation](./SERVICE_ISOLATION_EVIDENCE.md) and [operational readiness](./OPERATIONAL_READINESS_EVIDENCE.md) verification, rather than accepting opaque infrastructure, support, or loss hashes from the release template;
 - requires the operational Lightning operator and incident commander to match the release policy, the monitoring identity and signer to match one exact signed upstream monitor, every other operational signer to remain separate from upstream infrastructure operators, and every operational signer to remain separate from deployment and independent-review authorities;
 - requires exact alert-channel, upstream artifact, reconciliation, and campaign-drill agreement before operational evidence can enter a release;
 - commits to both the record and policy digest for postflight, promotion, and campaign evidence;
@@ -38,7 +38,7 @@ The output contains the exact release record, release policy, EIP-712 approval p
 
 First complete the [signed bootstrap operator-evidence workflow](./PUBLIC_TESTNET_BOOTSTRAP_EVIDENCE.md). It requires at least two EVM providers, Lightning observers, monitors, relays, and solvers. Every operator signs the same source-, deployment-, artifact-, feature-, and time-bound EIP-712 record. Counts are derived from distinct operator identities and signers; they are not accepted from an unsigned file.
 
-Complete the [five-reviewer evidence ceremony](./INDEPENDENT_REVIEW_EVIDENCE.md) and [five-role operational-readiness ceremony](./OPERATIONAL_READINESS_EVIDENCE.md), then prepare the secret-free inputs:
+Complete the [five-reviewer evidence ceremony](./INDEPENDENT_REVIEW_EVIDENCE.md), [three-role service-isolation ceremony](./SERVICE_ISOLATION_EVIDENCE.md), and [five-role operational-readiness ceremony](./OPERATIONAL_READINESS_EVIDENCE.md), then prepare the secret-free inputs:
 
 - `record-template.json`: release ID/version, finalized approval block, prior release, exact 3-owner/2-threshold multisig values, tiny limits, safe features, and validity window; release-record template v3 contains no operator-entered review, loss-allocation, or support digests;
 - `policy-template.json`: five release approvers, the same or tighter tiny-limit policy, maximum release lifetime, and maximum runtime-observation age; and
@@ -48,6 +48,9 @@ Complete the [five-reviewer evidence ceremony](./INDEPENDENT_REVIEW_EVIDENCE.md)
 - `review-record.json`: the exact source, protocol, deployment, reviewers, reports, finding counts, and review interval;
 - `review-policy.json`: the maximum age, lifetime, and finding bound for that exact source and deployment; and
 - `review-attestations.json`: exactly one canonical EIP-712 attestation from each of the five review roles;
+- `isolation-record.json`: the exact twelve-service inventory, trust-domain, network, credential-scope, deployment-evidence, and validity commitments;
+- `isolation-policy.json`: the exact service set and bounded evidence, credential, organization, and lifetime requirements;
+- `isolation-attestations.json`: exactly one canonical EIP-712 attestation from each of the infrastructure, Lightning, and security roles;
 - `operations-record.json`: exact operational roles, alert channels, artifacts, drills, source/deployment binding, and validity interval;
 - `operations-policy.json`: the immutable drill set and bounded age, duration, alert-channel, organization, and lifetime requirements; and
 - `operations-attestations.json`: exactly one canonical EIP-712 attestation from each of the five operational roles.
@@ -70,6 +73,9 @@ npm run prepare:testnet-bootstrap-release-candidate -- \
   --review-record review-record.json \
   --review-policy review-policy.json \
   --review-attestations review-attestations.json \
+  --isolation-record isolation-record.json \
+  --isolation-policy isolation-policy.json \
+  --isolation-attestations isolation-attestations.json \
   --operations-record operations-record.json \
   --operations-policy operations-policy.json \
   --operations-attestations operations-attestations.json \
@@ -98,6 +104,9 @@ npm run prepare:testnet-release-candidate -- \
   --review-record review-record.json \
   --review-policy review-policy.json \
   --review-attestations review-attestations.json \
+  --isolation-record isolation-record.json \
+  --isolation-policy isolation-policy.json \
+  --isolation-attestations isolation-attestations.json \
   --operations-record operations-record.json \
   --operations-policy operations-policy.json \
   --operations-attestations operations-attestations.json \
