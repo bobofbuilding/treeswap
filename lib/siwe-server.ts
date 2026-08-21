@@ -65,15 +65,22 @@ export async function createSession(walletAddress: string, chainId: number): Pro
   const tokenHash = await sha256Hex(token);
   const now = new Date();
   const expiresAt = new Date(now.getTime() + SESSION_DURATION_SECONDS * 1_000);
+  const normalizedWalletAddress = walletAddress.toLowerCase();
+  const db = getDb();
 
-  await getDb().delete(authSessions).where(eq(authSessions.walletAddress, walletAddress.toLowerCase()));
-  await getDb().insert(authSessions).values({
-    tokenHash,
-    walletAddress: walletAddress.toLowerCase(),
-    chainId,
-    createdAt: now.toISOString(),
-    expiresAt: expiresAt.toISOString(),
-  });
+  // D1 batches are transactional. Keeping invalidation and insertion in one
+  // batch means concurrent sign-ins serialize and only the last session for a
+  // wallet remains valid.
+  await db.batch([
+    db.delete(authSessions).where(eq(authSessions.walletAddress, normalizedWalletAddress)),
+    db.insert(authSessions).values({
+      tokenHash,
+      walletAddress: normalizedWalletAddress,
+      chainId,
+      createdAt: now.toISOString(),
+      expiresAt: expiresAt.toISOString(),
+    }),
+  ]);
 
   return token;
 }

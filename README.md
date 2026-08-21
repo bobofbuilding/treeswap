@@ -13,6 +13,7 @@ The prototype assumes a business par value of **1 BIT = 100 sats**. This value i
 - Hash-locked settlement walkthrough
 - Two-sided solver inventory planner for Lightning and BIT
 - EIP-4361 Sign-In with Ethereum using one-time server nonces and opaque sessions
+- Secret-free owner-only live D1 authentication qualification in [`docs/LIVE_ACCOUNT_EVIDENCE.md`](docs/LIVE_ACCOUNT_EVIDENCE.md)
 - Optional offchain email preferences for invoice notices and transaction receipts
 - Non-custodial direct sends: standard BIT transfers on Ethereum mainnet and exact BOLT 11 payments through a Lightning wallet
 - Immutable, direction-separated BIT escrow prototypes with signed quotes, beneficiary binding, price and exposure caps, ordered deadlines, and Foundry tests
