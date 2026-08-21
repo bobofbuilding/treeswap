@@ -79,6 +79,7 @@ jobs:
       - run: node --check lib/public-testnet-evidence.mjs
       - run: node --check lib/public-testnet-bootstrap-evidence.mjs
       - run: node --check lib/independent-review-evidence.mjs
+      - run: node --check lib/operational-readiness-evidence.mjs
       - run: node --check lib/public-testnet-release-candidate.mjs
       - run: node --check lib/solver-capability.mjs
       - run: node --check lib/solver-endpoint-transport.mjs
@@ -123,6 +124,8 @@ jobs:
       - run: node --check scripts/verify-public-testnet-bootstrap-evidence.mjs
       - run: node --check scripts/prepare-independent-review-attestation.mjs
       - run: node --check scripts/verify-independent-review-evidence.mjs
+      - run: node --check scripts/prepare-operational-readiness-attestation.mjs
+      - run: node --check scripts/verify-operational-readiness-evidence.mjs
       - run: node --check scripts/prepare-public-testnet-bootstrap-release-candidate.mjs
       - run: node --check scripts/prepare-public-testnet-release-candidate.mjs
       - run: node --check scripts/prepare-public-testnet-release-approval.mjs

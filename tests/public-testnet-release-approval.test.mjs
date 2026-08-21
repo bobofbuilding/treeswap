@@ -76,6 +76,9 @@ const qualifiedEvidenceFields = [
   "independentReviewAttestationSetDigest",
   "independentReviewPolicyDigest",
   "independentReviewRecordDigest",
+  "operationalReadinessAttestationSetDigest",
+  "operationalReadinessPolicyDigest",
+  "operationalReadinessRecordDigest",
   "publicTestnetPolicyDigest",
   "publicTestnetRecordDigest",
 ];
@@ -183,8 +186,8 @@ function preparedCandidate(now = NOW, recordOverrides = {}) {
   const message = buildReleaseApprovalMessage(record, policy);
   const domain = releaseAuthorizationDomain(record);
   return {
-    schema: "treeswap.prepared-public-testnet-release-candidate.v2",
-    status: "deployment-campaign-and-independent-review-evidence-verified-awaiting-five-role-release-approvals",
+    schema: "treeswap.prepared-public-testnet-release-candidate.v3",
+    status: "deployment-campaign-review-and-operations-evidence-verified-awaiting-five-role-release-approvals",
     scope: "release-preparation-only-no-signing-broadcast-gate-opening-or-funding-authorization",
     authorizations: { signing: false, broadcast: false, gateOpening: false, funding: false },
     recordDigest: message.recordDigest,
@@ -334,6 +337,10 @@ test("rejects candidate artifact mutation and authority smuggling", () => {
   const extra = structuredClone(candidate);
   extra.activate = true;
   assert.throws(() => inspectPreparedPublicTestnetReleaseCandidate(extra), /fields are not exact/);
+
+  const legacy = structuredClone(candidate);
+  legacy.schema = "treeswap.prepared-public-testnet-release-candidate.v2";
+  assert.throws(() => inspectPreparedPublicTestnetReleaseCandidate(legacy), /schema is invalid/);
 
   const wrongMode = structuredClone(candidate);
   wrongMode.record.fundingMode = "operator-testnet-bootstrap";

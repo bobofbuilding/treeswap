@@ -61,10 +61,10 @@ Both bootstrap and campaign-qualified candidate preparation re-run this verifier
 - derives all five release `reviewDigests` from verified reports instead of a template;
 - commits the review record, policy, attestation set, and complete findings accounting into release finding evidence;
 - requires source, protocol version, chain, gate, and deployment manifest to match promotion evidence exactly;
-- rejects a reviewer signer that is also a deployment wallet, deployment-wallet owner, deployment-promotion attester, bootstrap/campaign operator, or release approver; and
+- rejects a reviewer signer that is also a deployment wallet, deployment-wallet owner, deployment-promotion attester, bootstrap/campaign operator, signed operational-readiness role, or release approver; and
 - rejects copied verification JSON because module-private verifier provenance does not survive serialization.
 
-Release-candidate schema v2 is the only accepted candidate artifact. The earlier candidate schema and release-record template v1 are intentionally rejected because they accepted unsigned review hashes.
+Release-candidate schema v3 is the only accepted candidate artifact. Candidate v1/template v1 are rejected because they accepted unsigned review hashes; candidate v2/template v2 are rejected because they lacked the separate provenance-bound operational-readiness package.
 
 ## Remaining external boundary
 

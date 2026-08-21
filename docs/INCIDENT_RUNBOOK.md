@@ -1,6 +1,6 @@
 # Incident runbook
 
-Status: response sequence and local actual-gate halt path defined and tested; live roles, independent collectors, alert integrations, and incident drills remain required.
+Status: response sequence, local actual-gate halt path, and five-role signed drill-evidence boundary defined and tested; live roles, independent collectors, alert integrations, retained artifacts, and witnessed incident drills remain required.
 
 ## First principle
 
@@ -23,6 +23,7 @@ Protect exits before availability. Halt only new RFQs, firm quotes, reservations
 2. The coordinator stops creating new invoices and payment authorizations; the adapter rejects new value-moving RPCs.
 3. Operators preserve logs without invoices, macaroons, preimages, email, or unnecessary addresses and record finalized chain/node snapshots.
 4. For the public-testnet campaign, every baseline incident receives its own nonzero evidence digest, bounded timestamps, and at least two retained observer-operator commitments. The complete record remains invalid until the gate is closed, exits were shown to remain available, and final reconciliation reports zero unexplained liabilities. See [Public-testnet campaign evidence](./PUBLIC_TESTNET_EVIDENCE.md).
+   Before release preparation, the separate [operational-readiness evidence](./OPERATIONAL_READINESS_EVIDENCE.md) package must reconcile those drill digests, identify one primary and at least two retained observers for every required incident, and receive all five operational-role signatures.
 5. Existing safe claims, refunds, and solver withdrawals continue. Operators publish any BIT-level pause that prevents an exit and monitor until recovery.
 6. Reconcile every solver's available BIT, locked BIT, Lightning budget, in-flight HTLCs, terminal swaps, and fees. Treat an unexplained difference as loss until resolved.
 7. Rotate or revoke the affected credential/root-key ID, session secret, signer, RPC endpoint, or TLS pin. Do not reuse a suspected secret.
