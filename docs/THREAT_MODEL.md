@@ -275,7 +275,7 @@ Both escrows are immutable, non-upgradeable, have constructor-fixed fee collecto
 
 ### TS-M10 — SIWE replay, phishing, or session theft
 
-**Status:** Resolved for EOA account metadata and fail-closed deployment capability; owner-only live-store qualification is executable, while durable-store operations and independent identity/privacy review remain launch gates
+**Status:** Resolved for EOA account metadata and fail-closed deployment capability; owner-only D1 lifecycle and concurrent rotation pass live, while durable-store operations and independent identity/privacy review remain launch gates
 
 A generic wallet signature, reusable nonce, mismatched domain, or readable session token can let an attacker impersonate a wallet account. The current account surface cannot move funds, but notification data and any later private swap history still require protection.
 
