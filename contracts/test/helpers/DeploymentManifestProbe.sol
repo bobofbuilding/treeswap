@@ -7,6 +7,9 @@ contract DeploymentManifestWalletProbe {
     error Unauthorized();
     error ExecutionFailed();
 
+    event ExecutionSuccess(bytes32 txHash, uint256 payment);
+    event ExecutionFailure(bytes32 txHash, uint256 payment);
+
     address[] private owners;
     mapping(address owner => bool approved) private isOwner;
     uint256 private immutable threshold;
@@ -36,6 +39,30 @@ contract DeploymentManifestWalletProbe {
         (bool success, bytes memory returned) = target.call(data);
         if (!success) revert ExecutionFailed();
         return returned;
+    }
+
+    /// @dev Standard Safe-compatible surface for receipt-reconstruction tests only.
+    ///      It deliberately has neither production threshold enforcement nor a Safe nonce.
+    function execTransaction(
+        address target,
+        uint256 value,
+        bytes calldata data,
+        uint8 operation,
+        uint256,
+        uint256,
+        uint256 gasPrice,
+        address gasToken,
+        address payable refundReceiver,
+        bytes calldata
+    ) external returns (bool success) {
+        if (!isOwner[msg.sender]) revert Unauthorized();
+        if (operation != 0 || gasPrice != 0 || gasToken != address(0) || refundReceiver != address(0)) {
+            revert InvalidConfiguration();
+        }
+        bytes32 transactionDigest = keccak256(abi.encode(target, value, data, operation));
+        (success,) = target.call{value: value}(data);
+        if (success) emit ExecutionSuccess(transactionDigest, 0);
+        else emit ExecutionFailure(transactionDigest, 0);
     }
 }
 

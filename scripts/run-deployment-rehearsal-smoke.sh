@@ -20,7 +20,7 @@ trap cleanup EXIT
 
 cd "$project_root"
 forge build --quiet
-anvil --host 127.0.0.1 --port "$rehearsal_port" --chain-id 31337 --mnemonic "$rehearsal_mnemonic" \
+anvil --host 127.0.0.1 --port "$rehearsal_port" --chain-id 11155111 --mnemonic "$rehearsal_mnemonic" \
   --block-time 1 --slots-in-an-epoch 2 --silent >"$rehearsal_log" 2>&1 &
 rehearsal_pid=$!
 

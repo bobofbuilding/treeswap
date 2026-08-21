@@ -14,6 +14,20 @@ import {
 } from "ethers";
 import { BIT_MAINNET_CONTRACT, createJsonRpcClient } from "../../lib/bit-deployment-observer.mjs";
 import { buildClosedTestnetDeploymentPlan } from "../../lib/closed-testnet-deployment-plan.mjs";
+import { observeClosedTestnetDeploymentPreflight } from "../../lib/closed-testnet-deployment-preflight-observer.mjs";
+import {
+  buildClosedTestnetDeploymentPreflightApprovalMessage,
+  buildClosedTestnetDeploymentPreflightRecord,
+  verifyClosedTestnetDeploymentPreflight,
+} from "../../lib/closed-testnet-deployment-preflight.mjs";
+import { observeClosedTestnetDeploymentPostflight } from "../../lib/closed-testnet-deployment-postflight-observer.mjs";
+import {
+  buildClosedTestnetDeploymentPostflightApprovalMessage,
+  buildClosedTestnetDeploymentPostflightRecord,
+  closedTestnetDeploymentPostflightValueDigest,
+  normalizeClosedTestnetDeploymentPostflightContext,
+  verifyClosedTestnetDeploymentPostflight,
+} from "../../lib/closed-testnet-deployment-postflight.mjs";
 import { coordinatorCommitmentDigest } from "../../lib/coordinator-store.mjs";
 import {
   compareDeploymentObservations,
@@ -26,7 +40,7 @@ const MNEMONIC = process.env.DEPLOYMENT_REHEARSAL_MNEMONIC;
 const SOURCE_COMMIT = String(process.env.DEPLOYMENT_REHEARSAL_SOURCE_COMMIT ?? "");
 const PROXY_PORT = Number(process.env.DEPLOYMENT_REHEARSAL_PROXY_PORT);
 const ANVIL_VERSION = String(process.env.DEPLOYMENT_REHEARSAL_ANVIL_VERSION ?? "");
-const CHAIN_ID = 31_337n;
+const CHAIN_ID = 11_155_111n;
 const NO_REVIEW_DIGEST = id("treeswap-deployment-rehearsal:no-independent-review").toLowerCase();
 const MAINNET_BIT_IMPLEMENTATION = "0xa27b118c0770939295f052aE1b003366E5eF806F";
 
@@ -110,7 +124,7 @@ const [walletArtifact, bitImplementationArtifact, bitProxyArtifact, gateArtifact
 ]);
 
 const provider = new JsonRpcProvider(RPC_URL, CHAIN_ID, { staticNetwork: true });
-const wallets = Array.from({ length: 9 }, (_, index) => (
+const wallets = Array.from({ length: 13 }, (_, index) => (
   HDNodeWallet.fromPhrase(MNEMONIC, undefined, `m/44'/60'/0'/0/${index}`).connect(provider)
 ));
 const deployer = new NonceManager(wallets[0]);
@@ -144,7 +158,7 @@ try {
   const startingNonce = await provider.getTransactionCount(wallets[0].address, "pending");
   const deploymentInput = {
     schema: "treeswap.closed-testnet-deployment-input.v1",
-    environment: "local-rehearsal",
+    environment: "public-testnet",
     chainId: String(CHAIN_ID),
     reviewedBuildCommit: SOURCE_COMMIT,
     independentReviewDigest: NO_REVIEW_DIGEST,
@@ -156,7 +170,7 @@ try {
       feeCollector: await roleInput(feeCollector, wallets.slice(6, 9).map((item) => item.address)),
     },
     bit: {
-      tokenBoundary: "test-only-eip1967-bit-probe",
+      tokenBoundary: "reviewed-public-testnet-bit-proxy",
       proxyAddress: await bitProxy.getAddress(),
       implementationAddress: await bitImplementation.getAddress(),
       proxyCodeHash: await runtimeCodeHash(bitProxy),
@@ -179,6 +193,98 @@ try {
     },
   });
   assert.equal(deploymentPlan.deploymentTransactions.length, 4);
+
+  const proxyUrl = `http://127.0.0.1:${PROXY_PORT}/`;
+  proxy = await startLoopbackProxy(RPC_URL, PROXY_PORT);
+  const providerEntries = [
+    {
+      id: id("treeswap-deployment-rehearsal:primary").toLowerCase(),
+      label: "local-anvil-primary",
+      rpcUrl: RPC_URL,
+      wallet: wallets[10],
+    },
+    {
+      id: id("treeswap-deployment-rehearsal:proxy").toLowerCase(),
+      label: "local-anvil-proxy",
+      rpcUrl: proxyUrl,
+      wallet: wallets[11],
+    },
+  ].sort((left, right) => left.id.localeCompare(right.id));
+  const operationsApprover = {
+    id: id("treeswap-deployment-rehearsal:operations-reviewer").toLowerCase(),
+    wallet: wallets[9],
+  };
+  const preflightApprovers = [
+    { role: "operations-reviewer", approverId: operationsApprover.id, wallet: operationsApprover.wallet },
+    ...providerEntries.map((entry) => ({ role: "provider", approverId: entry.id, wallet: entry.wallet })),
+  ].sort((left, right) => `${left.role}:${left.approverId}`.localeCompare(`${right.role}:${right.approverId}`));
+  const preflightPolicy = {
+    schema: "treeswap.closed-testnet-deployment-preflight-policy.v1",
+    environment: "public-testnet",
+    chainId: deploymentPlan.network.chainId,
+    verifyingContract: deploymentPlan.deploymentTransactions[0].expectedContractAddress,
+    reviewedBuildCommit: deploymentPlan.source.reviewedBuildCommit,
+    independentReviewDigest: deploymentPlan.source.independentReviewDigest,
+    inputDigest: deploymentPlan.inputDigest,
+    planDigest: deploymentPlan.planDigest,
+    minimumProviderCount: 2,
+    maximumObservationAgeSeconds: 300,
+    maximumBlockAgeSeconds: 300,
+    maximumPreflightLifetimeSeconds: 600,
+    approvers: preflightApprovers.map((entry) => ({
+      role: entry.role,
+      approverId: entry.approverId,
+      signer: entry.wallet.address,
+    })),
+  };
+  const preflightObservations = [];
+  for (const [index, entry] of providerEntries.entries()) {
+    preflightObservations.push(await observeClosedTestnetDeploymentPreflight({
+      rpcCall: createJsonRpcClient(entry.rpcUrl),
+      plan: deploymentPlan,
+      providerIdentity: entry.id,
+      providerLabel: entry.label,
+      targetBlockNumber: index === 0 ? null : Number(preflightObservations[0].anchorBlock.number),
+    }));
+  }
+  const preflightPreparedAt = Math.floor(Date.now() / 1_000);
+  const preflightRecord = buildClosedTestnetDeploymentPreflightRecord({
+    plan: deploymentPlan,
+    policy: preflightPolicy,
+    observations: preflightObservations,
+    preflightId: id(`treeswap-deployment-rehearsal:preflight:${preflightPreparedAt}`).toLowerCase(),
+    preparedAt: preflightPreparedAt,
+  });
+  const preflightAttestations = [];
+  for (const approver of preflightApprovers) {
+    const approval = buildClosedTestnetDeploymentPreflightApprovalMessage({
+      plan: deploymentPlan,
+      policy: preflightPolicy,
+      record: preflightRecord,
+      observations: preflightObservations,
+      role: approver.role,
+      approverId: approver.approverId,
+    });
+    preflightAttestations.push({
+      role: approver.role,
+      approverId: approver.approverId,
+      signer: approver.wallet.address,
+      signature: await approver.wallet.signTypedData(approval.domain, approval.types, approval.value),
+    });
+  }
+  const preflight = {
+    plan: deploymentPlan,
+    policy: preflightPolicy,
+    record: preflightRecord,
+    observations: preflightObservations,
+    attestations: preflightAttestations,
+  };
+  const preflightVerification = verifyClosedTestnetDeploymentPreflight({
+    ...preflight,
+    now: preflightPreparedAt,
+  });
+  assert.equal(preflightVerification.fundingAuthorization, false);
+
   const receipts = [];
   for (const transaction of deploymentPlan.deploymentTransactions) {
     const response = await wallets[0].sendTransaction({
@@ -199,17 +305,28 @@ try {
   const registry = new Contract(expected.paymentHashRegistry, registryArtifact.abi, provider);
   const vault = new Contract(expected.vault, vaultArtifact.abi, provider);
   const userEscrow = new Contract(expected.userEscrow, userEscrowArtifact.abi, provider);
-  const controllerControl = new Contract(await controller.getAddress(), walletArtifact.abi, wallets[0]);
+  const controllerControl = new Contract(await controller.getAddress(), walletArtifact.abi, wallets[1]);
+  const controllerReceipts = [];
   let sealReceipt;
   for (const action of deploymentPlan.controllerSafeActions) {
-    const receipt = await (await controllerControl.execute(action.to, action.data)).wait();
+    const receipt = await (await controllerControl.execTransaction(
+      action.to,
+      0,
+      action.data,
+      0,
+      0,
+      0,
+      0,
+      "0x0000000000000000000000000000000000000000",
+      "0x0000000000000000000000000000000000000000",
+      "0x",
+    )).wait();
+    controllerReceipts.push(receipt);
     if (action.name === "seal-registry") sealReceipt = receipt;
   }
   assert.ok(sealReceipt);
   await waitForFinality(provider, sealReceipt.blockNumber);
 
-  const proxyUrl = `http://127.0.0.1:${PROXY_PORT}/`;
-  proxy = await startLoopbackProxy(RPC_URL, PROXY_PORT);
   const addresses = {
     bitProxy: await bitProxy.getAddress(),
     controller: await controller.getAddress(),
@@ -271,6 +388,101 @@ try {
     },
   };
   assert.deepEqual(validateDeploymentManifest(manifest, localPolicy), { approved: true, reasons: [] });
+
+  const executionTransactions = {
+    schema: "treeswap.closed-testnet-deployment-execution-transactions.v1",
+    deployments: deploymentPlan.deploymentTransactions.map((transaction, index) => ({
+      name: transaction.name,
+      transactionHash: receipts[index].hash.toLowerCase(),
+    })),
+    controllerActions: deploymentPlan.controllerSafeActions.map((action, index) => ({
+      name: action.name,
+      transactionHash: controllerReceipts[index].hash.toLowerCase(),
+    })),
+  };
+  const postflightObservations = await Promise.all(providerEntries.map((entry) => (
+    observeClosedTestnetDeploymentPostflight({
+      rpcCall: createJsonRpcClient(entry.rpcUrl),
+      preflight,
+      deploymentPolicy: localPolicy,
+      transactions: executionTransactions,
+      providerIdentity: entry.id,
+      providerLabel: entry.label,
+      targetBlockNumber: sealReceipt.blockNumber,
+    })
+  )));
+  const postflightContext = normalizeClosedTestnetDeploymentPostflightContext({
+    preflight,
+    deploymentPolicy: localPolicy,
+  });
+  const contractApprover = {
+    id: id("treeswap-deployment-rehearsal:contract-reviewer").toLowerCase(),
+    wallet: wallets[12],
+  };
+  const postflightApprovers = [
+    { role: "contract-reviewer", approverId: contractApprover.id, wallet: contractApprover.wallet },
+    { role: "operations-reviewer", approverId: operationsApprover.id, wallet: operationsApprover.wallet },
+    ...providerEntries.map((entry) => ({ role: "provider", approverId: entry.id, wallet: entry.wallet })),
+  ].sort((left, right) => `${left.role}:${left.approverId}`.localeCompare(`${right.role}:${right.approverId}`));
+  const postflightPolicy = {
+    schema: "treeswap.closed-testnet-deployment-postflight-policy.v1",
+    environment: "public-testnet",
+    chainId: deploymentPlan.network.chainId,
+    verifyingContract: deploymentPlan.deploymentTransactions[0].expectedContractAddress,
+    reviewedBuildCommit: deploymentPlan.source.reviewedBuildCommit,
+    independentReviewDigest: deploymentPlan.source.independentReviewDigest,
+    inputDigest: deploymentPlan.inputDigest,
+    planDigest: deploymentPlan.planDigest,
+    preflightPolicyDigest: postflightContext.preflight.summary.policyDigest,
+    preflightRecordDigest: postflightContext.preflight.summary.recordDigest,
+    deploymentPolicyDigest: closedTestnetDeploymentPostflightValueDigest(localPolicy),
+    minimumProviderCount: 2,
+    maximumObservationAgeSeconds: 3_600,
+    maximumPostflightLifetimeSeconds: 3_600,
+    approvers: postflightApprovers.map((entry) => ({
+      role: entry.role,
+      approverId: entry.approverId,
+      signer: entry.wallet.address,
+    })),
+  };
+  const postflightPreparedAt = Math.floor(Date.now() / 1_000);
+  const postflightRecord = buildClosedTestnetDeploymentPostflightRecord({
+    preflight,
+    deploymentPolicy: localPolicy,
+    policy: postflightPolicy,
+    observations: postflightObservations,
+    postflightId: id(`treeswap-deployment-rehearsal:postflight:${postflightPreparedAt}`).toLowerCase(),
+    preparedAt: postflightPreparedAt,
+  });
+  const postflightAttestations = [];
+  for (const approver of postflightApprovers) {
+    const approval = buildClosedTestnetDeploymentPostflightApprovalMessage({
+      preflight,
+      deploymentPolicy: localPolicy,
+      policy: postflightPolicy,
+      record: postflightRecord,
+      observations: postflightObservations,
+      role: approver.role,
+      approverId: approver.approverId,
+    });
+    postflightAttestations.push({
+      role: approver.role,
+      approverId: approver.approverId,
+      signer: approver.wallet.address,
+      signature: await approver.wallet.signTypedData(approval.domain, approval.types, approval.value),
+    });
+  }
+  const postflightVerification = verifyClosedTestnetDeploymentPostflight({
+    preflight,
+    deploymentPolicy: localPolicy,
+    policy: postflightPolicy,
+    record: postflightRecord,
+    observations: postflightObservations,
+    attestations: postflightAttestations,
+    now: postflightPreparedAt,
+  });
+  assert.equal(postflightVerification.status, "cryptographically-verified-finalized-deployment-execution");
+  assert.equal(postflightVerification.fundingAuthorization, false);
 
   const captured = structuredClone(manifest);
   captured.guardian.ownerAddresses = [...captured.controller.ownerAddresses];
@@ -335,13 +547,22 @@ try {
   });
 
   const evidence = Object.freeze({
-    schema: "treeswap.deployment-rehearsal-smoke.v2",
+    schema: "treeswap.deployment-rehearsal-smoke.v3",
     chainId: String(CHAIN_ID),
     executionClient: ANVIL_VERSION,
     actualTreeSwapGateRegistryAndEscrows: true,
     generatedPlanExecuted: true,
     generatedDeploymentTransactions: receipts.length,
     generatedControllerSafeActions: deploymentPlan.controllerSafeActions.length,
+    signedPreflightVerified: preflightVerification.status
+      === "cryptographically-verified-closed-testnet-deployment-preflight",
+    preflightProviderSignatures: 2,
+    standardSafeCompatibleReceipts: controllerReceipts.length,
+    signedFinalizedPostflightVerified: postflightVerification.status
+      === "cryptographically-verified-finalized-deployment-execution",
+    postflightProviderSignatures: 2,
+    postflightReviewerSignatures: 2,
+    exactCreationAndSafeReceiptsReconstructed: true,
     deploymentPlanDigest: deploymentPlan.planDigest,
     finalizedCanonicalRpcObservation: true,
     comparedProviderIdentities: 2,

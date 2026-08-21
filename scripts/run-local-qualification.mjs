@@ -76,6 +76,10 @@ const configurationFiles = [
   "scripts/prepare-closed-testnet-deployment-preflight-record.mjs",
   "scripts/prepare-closed-testnet-deployment-preflight-approval.mjs",
   "scripts/verify-closed-testnet-deployment-preflight.mjs",
+  "scripts/observe-closed-testnet-deployment-postflight.mjs",
+  "scripts/prepare-closed-testnet-deployment-postflight-record.mjs",
+  "scripts/prepare-closed-testnet-deployment-postflight-approval.mjs",
+  "scripts/verify-closed-testnet-deployment-postflight.mjs",
   "scripts/manage-public-testnet-campaign.mjs",
   "scripts/prepare-public-testnet-attestation.mjs",
   "scripts/verify-public-testnet-evidence.mjs",
@@ -95,6 +99,8 @@ const configurationFiles = [
   "lib/closed-testnet-deployment-plan.mjs",
   "lib/closed-testnet-deployment-preflight-observer.mjs",
   "lib/closed-testnet-deployment-preflight.mjs",
+  "lib/closed-testnet-deployment-postflight-observer.mjs",
+  "lib/closed-testnet-deployment-postflight.mjs",
   "lib/release-authorization.mjs",
   "lib/public-testnet-campaign-workflow.mjs",
   "lib/public-testnet-evidence.mjs",
@@ -140,6 +146,10 @@ const campaigns = [
   ["governance:closed-testnet-deployment-preflight", "node", [
     "--test",
     "tests/closed-testnet-deployment-preflight.test.mjs",
+  ]],
+  ["governance:closed-testnet-deployment-postflight", "node", [
+    "--test",
+    "tests/closed-testnet-deployment-postflight.test.mjs",
   ]],
   ["governance:deployment-manifest-promotion", "node", [
     "--import",

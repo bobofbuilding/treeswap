@@ -1,6 +1,6 @@
 # Closed public-testnet deployment plan
 
-Status: the repository can deterministically prepare and independently reproduce an unsigned Sepolia deployment plan, then verify a short-lived signed preflight over two matching live-provider observations. No public-testnet contract, Safe, token, provider, signer, transaction, inventory, or funding approval is supplied by this workflow.
+Status: the repository can deterministically prepare and independently reproduce an unsigned Sepolia deployment plan, verify a short-lived signed preflight over two matching live-provider observations, and verify the exact finalized deployment/Safe receipts in a separate signed postflight. No public-testnet contract, Safe, token, provider, signer, transaction, inventory, or funding approval is supplied by this workflow.
 
 TreeSwap uses Sepolia (`chainId = 11155111`) for the first public EVM campaign because Ethereum currently recommends Sepolia as the default testnet for application development. This is a test boundary, not a claim that a Sepolia BIT proxy has been reviewed or deployed. See [Ethereum test networks](https://ethereum.org/developers/docs/networks/).
 
@@ -117,9 +117,9 @@ The verified output is deliberately only a fresh preflight fact. It grants no si
 
 Use a fresh single-purpose deployer and review its signing device before the ceremony. Standard Ethereum RPC exposes the next pending nonce, not a complete authenticated inventory of every provider-hidden or non-contiguous queued transaction. Two providers plus before/after reads reduce disagreement and race risk but cannot prove that no other signed transaction exists. If deployer-key custody or transaction inventory is uncertain, abandon that deployer and regenerate the plan from a new address.
 
-## Required external postconditions
+## Signed postflight and required external postconditions
 
-After separately authorized Safe/deployer execution, the existing finalized deployment observer must prove through two independent providers that:
+After separately authorized Safe/deployer execution, the [signed deployment postflight](./CLOSED_TESTNET_DEPLOYMENT_POSTFLIGHT.md) must reconstruct all four deployment transactions and all three standard Safe `execTransaction` calls against the exact signed preflight. It then uses the finalized deployment observer to prove through two independent providers that:
 
 - all four contract addresses and runtime code match;
 - the gate is closed and has no pending open;
@@ -128,10 +128,10 @@ After separately authorized Safe/deployer execution, the existing finalized depl
 - vault available inventory, locked inventory, accounted balance, and raw BIT balance all reconcile and equal zero; and
 - user-escrow locked liabilities and raw BIT balance reconcile and equal zero.
 
-Use the credential-safe `npm run observe:deployment-manifest` workflow in [Signed deployment-manifest promotion](./DEPLOYMENT_PROMOTION.md). The v2 observation binds all six accounting fields to the same EIP-1898 finalized state anchor as code, topology, roles, and BIT configuration. A pre-funded deployment is ineligible even when its internal accounting is consistent.
+Use the credential-safe `npm run observe:testnet-deployment-postflight` workflow. The result binds every canonical receipt and all six accounting fields to the exact plan, preflight, provider identity, and finalized state anchor. A pre-funded deployment is ineligible even when its internal accounting is consistent. The separate [signed deployment-manifest promotion](./DEPLOYMENT_PROMOTION.md) remains required for review-artifact and findings-disposition evidence.
 
 Only then can the seven-day public-testnet campaign begin. Opening the gate or adding test inventory requires the separate signed release boundary. This file and its CLIs never grant that permission.
 
 ## Trust boundary
 
-The workflow proves deterministic reviewed calldata and cryptographic agreement over an exact live preflight package. Different labels, identity commitments, endpoints, or signing keys do not themselves prove organizational independence. It does not prove hardware custody, provider truth, future nonce availability, deployed bytecode, Safe execution, review quality, monitor availability, Lightning readiness, or asset solvency. A compromised compiler or host remains possible; independent rebuilds, signed artifact digests, finalized post-deployment observation, and external review are still mandatory. Mainnet requires a later plan bound to the reviewed live BIT deployment and completed public-testnet evidence; this Sepolia plan cannot be relabeled for mainnet.
+The workflow proves deterministic reviewed calldata and cryptographic agreement over exact live preflight and postflight packages. Different labels, identity commitments, endpoints, or signing keys do not themselves prove organizational independence. It does not prove hardware custody, provider truth, Safe signing policy, review quality, monitor availability, Lightning readiness, or asset solvency. A compromised compiler or host remains possible; independent rebuilds, signed artifact digests, external review, and cryptographic release binding are still mandatory. Mainnet requires a later plan bound to the reviewed live BIT deployment and completed public-testnet evidence; this Sepolia plan cannot be relabeled for mainnet.

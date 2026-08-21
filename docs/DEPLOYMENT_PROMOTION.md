@@ -2,6 +2,8 @@
 
 Status: the repository can verify promotion of matching finalized deployment observations into candidate reviewed-manifest evidence. Observation schema `treeswap.deployment-observation.v2` additionally binds the raw BIT balances and contract accounting at that same canonical block. No independent provider, reviewer, deployed public-testnet contract, Safe, hardware signer, or funding authorization is included.
 
+Promotion validates finalized state and the external review-artifact set. It does not reconstruct the transactions that created that state. The separate [signed deployment postflight](./CLOSED_TESTNET_DEPLOYMENT_POSTFLIGHT.md) binds the exact preflight to all four creation receipts and three Safe receipts. Both ceremonies are required; making release authorization cryptographically require the postflight digest remains an open release blocker.
+
 ## Purpose
 
 An RPC observation is not a reviewed deployment manifest. A label such as “provider two,” a matching JSON file, or a copied `eligible: true` result cannot prove who observed the deployment, which policy was applied, which reviews were completed, or what exact finalized block was approved.
