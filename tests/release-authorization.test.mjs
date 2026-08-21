@@ -243,7 +243,7 @@ async function verify(release = record(), releasePolicy = policy(release), appro
   });
 }
 
-test("activates operator funding only from one exact five-role signed release record", async () => {
+test("a signed release record alone cannot activate operator funding", async () => {
   const release = record();
   const verification = await verify(release);
   assert.equal(verification.valid, true);
@@ -266,7 +266,8 @@ test("activates operator funding only from one exact five-role signed release re
     capabilities,
     now: NOW,
   });
-  assert.deepEqual(decision, { allowed: true, reasons: [] });
+  assert.equal(decision.allowed, false);
+  assert.match(decision.reasons.join("; "), /same-process live runtime activation/);
 });
 
 test("rejects missing, duplicated, wrong-role, and record-replayed approvals", async () => {

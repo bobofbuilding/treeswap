@@ -36,6 +36,7 @@ The prototype assumes a business par value of **1 BIT = 100 sats**. This value i
 - Five-role signed operational-readiness evidence with exact drills, alerts, backup, reconciliation, support, and loss-allocation commitments in [`docs/OPERATIONAL_READINESS_EVIDENCE.md`](docs/OPERATIONAL_READINESS_EVIDENCE.md)
 - Evidence-derived tiny-bootstrap and campaign-qualified release preparation in [`docs/PUBLIC_TESTNET_RELEASE_CANDIDATES.md`](docs/PUBLIC_TESTNET_RELEASE_CANDIDATES.md)
 - Guarded five-role payload and live contract-wallet approval verification in [`docs/PUBLIC_TESTNET_RELEASE_APPROVALS.md`](docs/PUBLIC_TESTNET_RELEASE_APPROVALS.md)
+- Same-process approval, reconciliation, live-provider, and runtime activation in [`docs/PUBLIC_TESTNET_RELEASE_ACTIVATION.md`](docs/PUBLIC_TESTNET_RELEASE_ACTIVATION.md)
 - Immutable public-testnet operator campaign snapshots via `npm run manage:testnet-campaign`
 - Authenticated solver request/response boundary in [`docs/SOLVER_ENDPOINT.md`](docs/SOLVER_ENDPOINT.md)
 - Optional Lightning account linking in [`docs/LIGHTNING_ACCOUNTS.md`](docs/LIGHTNING_ACCOUNTS.md)
@@ -83,6 +84,7 @@ MAINNET_RPC_URL=<secret> npm run test:live-bit-reorg
 - Repeat the passing EVM outbox/reorg campaigns on public testnet using two independently operated authenticated providers and genuine finality transitions
 - Independently rebuild and review the closed Sepolia plan, deploy its exact transactions through hardware-backed operators, and capture matching finalized v2 manifests proving reconciled zero balances before test inventory
 - Deploy and qualify the bounded solver daemon, continuous safety monitor, backup/restore drills, redundant guardian delivery, and external alert routing
+- Deploy the persistent activation coordinator with independently operated runtime reconciliation signers; never restore funding authority from serialized activation output
 - Deploy the implemented solver endpoint, private-packet, and capacity-reader protocols plus independent quote-delivery paths
 - Bridge-escrow wallet integration with exact intent authorization and explicit approval boundaries
 - Keep email delivery disabled; a later mail release requires ownership verification, unsubscribe, rate limits, auditing, and sender authentication

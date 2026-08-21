@@ -1,6 +1,6 @@
 # Release authorization boundary
 
-Status: exact public-testnet v2 release records, distinct tiny-bootstrap and campaign-qualified modes, signed bootstrap-operator evidence, five-role signed independent-review evidence, five-role signed operational-readiness evidence, evidence-derived candidate preparation, guarded five-role payload preparation and receipt verification, finalized ERC-1271 quorum verification, postflight/promotion binding, and provenance-bound capability activation are implemented locally. Release v2 rejects mainnet; a later schema may add it only after an equivalent mainnet preflight/postflight and promotion ceremony exists. TreeSwap has no signed public-testnet release record, and `V1_CAPABILITIES.webSolverFunding` remains disabled.
+Status: exact public-testnet v2 release records, distinct tiny-bootstrap and campaign-qualified modes, signed bootstrap-operator evidence, five-role signed independent-review evidence, five-role signed operational-readiness evidence, evidence-derived candidate preparation, guarded five-role payload preparation and receipt verification, finalized ERC-1271 quorum verification, postflight/promotion binding, and same-process live activation are implemented locally. Release v2 rejects mainnet; a later schema may add it only after an equivalent mainnet preflight/postflight and promotion ceremony exists. TreeSwap has no signed public-testnet release record, and `V1_CAPABILITIES.webSolverFunding` remains disabled.
 
 ## Purpose
 
@@ -35,16 +35,20 @@ Successful verification is module-private provenance, not a copyable JSON claim.
 
 ## Runtime activation
 
-`activateReleaseCapabilities` can derive an operator-funding profile only while the signed record is active and its funding mode is not closed. `authorizeSolverFunding` then requires:
+The low-level `activateReleaseCapabilities` can derive a release profile only while the signed record is active and its funding mode is not closed. That profile can no longer authorize funding beside a caller-supplied runtime object. The production entry point is `activatePublicTestnetRelease`, documented in [Public-testnet release activation](./PUBLIC_TESTNET_RELEASE_ACTIVATION.md). In one process it requires the live-provenance candidate and provider set, re-verifies all five approvals, verifies a short-lived EIP-712 reconciliation signed by both the Lightning operator and security reviewer, and reads the current release-bound deployment through every provider.
+
+`authorizeSolverFunding` then requires:
 
 - the provenance-bound release profile;
 - an authenticated solver session whose cryptographic solver capability passed;
-- one exact runtime snapshot bound to the signed release-record digest, signed release-policy digest, deployment-manifest digest, verified postflight digest, and verified promotion digest;
+- the exact capability/snapshot pair created by that same activation call, bound to the signed release-record digest, signed release-policy digest, deployment-manifest digest, verified postflight digest, and verified promotion digest;
 - a fresh observation inside the signed policy's maximum age;
-- an open risk gate with a nonzero risk digest; and
-- reconciled balances with a nonzero reconciliation digest.
+- an open gate whose active digest commits to that exact release and deployment;
+- current provider agreement on the gate, registry, escrow, and BIT code and state;
+- reconciled onchain BIT accounting, reserve, and in-flight limits; and
+- a currently valid two-party reconciliation with zero unexplained liabilities and signed Lightning limits.
 
-Nominal booleans such as `audited: true`, an arbitrary `webSolverFunding: true`, a copied capability object, stale state, or a different manifest cannot authorize funding.
+Nominal booleans such as `audited: true`, an arbitrary `webSolverFunding: true`, a plain or copied runtime snapshot, a copied capability object, stale state, expired reconciliation, or a different manifest cannot authorize funding.
 
 ## Local qualification evidence
 
