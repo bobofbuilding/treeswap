@@ -33,6 +33,12 @@ npm run monitor:lightning-close < private-lnd-observation.json
 
 The input file can contain private LND identifiers and must remain inside the operator trust domain; only the returned aggregate may enter shared monitoring evidence.
 
+## Published local checkpoint
+
+Source commit [`7a8cd7dd49ff67d007e8cb8b2e2fce44009804d8`](https://github.com/bobofbuilding/treeswap/commit/7a8cd7dd49ff67d007e8cb8b2e2fce44009804d8), reviewed in [PR #39](https://github.com/bobofbuilding/treeswap/pull/39), passed [main-branch CI](https://github.com/bobofbuilding/treeswap/actions/runs/32592074931) and exact Vercel production deployment [`dpl_59ULvwvs83ekjwz5psny1em3wCt8`](https://treeswap-nlb0iimdj-bittrees-tech.vercel.app). Its sealed qualification passed all 41 campaigns, including 3,603 seconds and 119 continuous observations with a midpoint adapter restart and zero dispatch, followed by the genuine force-close/CSV-sweep/bounded-anchor/replacement-channel campaign. The private mode-`0600` evidence independently reconstructs byte-for-byte to `sha256:91f0d1c75242d4112a3d0d77c2e64c505e234eac76c2c617c2ee3ae85e54aa2a`; all 140 configuration hashes and three immutable image pins reproduce, privacy checks pass, and no disposable lab volume remains.
+
+This checkpoint is local-only. It does not supply independent collectors, production alert delivery, actual operator-node recovery evidence, public-testnet traffic, production infrastructure, inventory, or funding authorization.
+
 ## Deployment gate
 
 Before funding, deploy at least two supervised collectors under independent service identities for every operator node, keep raw responses private, and set the generic safety monitor freshness window no longer than the collector schedule. Prove stale/missing/unsafe observations close both quote issuance and the deployed onchain gate, page two retained alert channels, and never block exits. Retain private operator evidence for an actual force close, anchor-limit breach, non-anchor overdue sweep, collector outage, and recovery. Reopening requires a new healthy observation set plus the signed release process; no collector can reopen the gate itself.
