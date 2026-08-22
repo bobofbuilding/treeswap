@@ -22,7 +22,7 @@ The canonical manifest digest covers every field, including its promotion time a
 
 ## Guarded derivation
 
-Use one private mode-`0700` evidence directory outside the clean checkout. Before the provider/review evidence expires, run:
+Use one private mode-`0700` evidence directory outside the clean checkout. Validate and compare every static provider/reviewer input with the [BIT review ceremony preflight](./BIT_CEREMONY_PREFLIGHT.md) before either provider captures state. The preflight cannot enter manifest derivation. Before the resulting live provider/review evidence expires, run:
 
 ```sh
 npm run promote:bit-reviewed-manifest -- \

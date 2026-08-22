@@ -20,6 +20,7 @@
     "prepare:bit-provider-evidence": "node scripts/prepare-bit-provider-evidence.mjs",
     "prepare:bit-provider-attestation": "node scripts/prepare-bit-provider-attestation.mjs",
     "verify:bit-provider-evidence": "node scripts/verify-bit-provider-evidence.mjs",
+    "preflight:bit-review-ceremony": "node scripts/preflight-bit-review-ceremony.mjs",
     "prepare:bit-independent-review": "node scripts/prepare-bit-independent-review.mjs",
     "prepare:bit-independent-review-attestation": "node scripts/prepare-bit-independent-review-attestation.mjs",
     "verify:bit-independent-review": "node scripts/verify-bit-independent-review.mjs",

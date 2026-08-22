@@ -85,6 +85,7 @@ const configurationFiles = [
   "scripts/prepare-bit-provider-evidence.mjs",
   "scripts/prepare-bit-provider-attestation.mjs",
   "scripts/verify-bit-provider-evidence.mjs",
+  "scripts/preflight-bit-review-ceremony.mjs",
   "scripts/prepare-bit-independent-review.mjs",
   "scripts/prepare-bit-independent-review-attestation.mjs",
   "scripts/verify-bit-independent-review.mjs",
@@ -228,6 +229,10 @@ const campaigns = [
     "--test",
     "tests/bit-deployment-observer.test.mjs",
     "tests/bit-provider-evidence.test.mjs",
+  ]],
+  ["governance:bit-review-ceremony-preflight", "node", [
+    "--test",
+    "tests/bit-review-ceremony-preflight.test.mjs",
   ]],
   ["governance:bit-independent-review", "node", [
     "--test",

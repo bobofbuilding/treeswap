@@ -76,7 +76,7 @@ The policy must name exactly two canonically ordered reviewers:
 
 ## Short-lived ceremony
 
-The signed provider evidence expires after at most one hour. Prepare review artifacts and policy in advance, then capture provider observations and complete every signature from separate clean checkouts within the same validity window. Candidate preparation refuses to begin with less than five minutes remaining; the review policy may shorten but never extend the provider deadline.
+The signed provider evidence expires after at most one hour. Prepare review artifacts and policy in advance, run the deterministic [BIT review ceremony preflight](./BIT_CEREMONY_PREFLIGHT.md), and have all four participants reproduce its static-input digest from separate clean checkouts before live capture. Then capture provider observations and complete every signature within the same validity window. Candidate preparation refuses to begin with less than five minutes remaining; the review policy may shorten but never extend the provider deadline. The preflight itself has no live evidence or authority and is not a review input.
 
 Prepare a private, non-overwriting mode-`0600` review candidate. This command re-verifies both provider signatures in-process and refuses a copied provider summary:
 
