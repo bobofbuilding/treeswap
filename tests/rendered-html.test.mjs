@@ -92,11 +92,12 @@ test("disables accounts before any wallet signature when durable storage is abse
 });
 
 test("keeps swaps non-production and direct sends explicitly wallet-authorized", async () => {
-  const [page, invoiceQr, sendPanel, sendLogic, account, authServer, authVerify, layout, manifest, nextConfig, staticHeaders, inputHandling, readme, protocol, threatModel, vault, license] = await Promise.all([
+  const [page, invoiceQr, sendPanel, sendLogic, userAuthorizationWallet, account, authServer, authVerify, layout, manifest, nextConfig, staticHeaders, inputHandling, readme, protocol, threatModel, vault, license] = await Promise.all([
     readFile(new URL("../app/page.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/components/InvoiceQr.tsx", import.meta.url), "utf8"),
     readFile(new URL("../app/components/SendPanel.tsx", import.meta.url), "utf8"),
     readFile(new URL("../lib/send.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../lib/user-authorization-wallet.mjs", import.meta.url), "utf8"),
     readFile(new URL("../app/components/WalletAccount.tsx", import.meta.url), "utf8"),
     readFile(new URL("../lib/siwe-server.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/api/auth/verify/route.ts", import.meta.url), "utf8"),
@@ -114,6 +115,12 @@ test("keeps swaps non-production and direct sends explicitly wallet-authorized",
 
   assert.match(page, /Swap prototype/);
   assert.match(page, /Simulation only/);
+  assert.match(page, /CONFIRMATION 1 OF 2/);
+  assert.match(page, /CONFIRMATION 2 OF 2/);
+  assert.match(page, /No funds move\. This only reserves capacity/);
+  assert.match(page, /Any changed invoice, hash, amount, solver, recipient, or expiry requires a new confirmation/);
+  assert.match(page, /This second signature is not a token allowance/);
+  assert.match(page, /This screen does not open a wallet, reserve capacity, lock BIT, create an invoice, or move funds/);
   assert.match(page, /Amountless invoices are not supported/);
   assert.match(page, /checksum, signature, expiry/);
   assert.match(page, /short-lived, all-in prices/i);
@@ -161,6 +168,11 @@ test("keeps swaps non-production and direct sends explicitly wallet-authorized",
   assert.match(sendPanel, /validateBitTransactionResponse/);
   assert.match(sendLogic, /parseUnits/);
   assert.match(sendLogic, /zero address cannot receive BIT/i);
+  assert.match(userAuthorizationWallet, /eth_signTypedData_v4/);
+  assert.match(userAuthorizationWallet, /does not match the locally expected exact terms/);
+  assert.match(userAuthorizationWallet, /wallet chain does not match the exact authorization domain/);
+  assert.match(userAuthorizationWallet, /connect the exact RFQ wallet before signing/);
+  assert.doesNotMatch(userAuthorizationWallet, /wallet_switchEthereumChain|eth_requestAccounts/);
   assert.match(authVerify, /sameSite: "strict"/);
   assert.match(authServer, /SESSION_DURATION_SECONDS/);
   assert.match(readme, /never request an allowance/i);

@@ -1378,6 +1378,90 @@ footer a:hover {
   margin-top: 22px;
 }
 
+.confirmation-progress {
+  margin: 20px 0 2px;
+  display: grid;
+  grid-template-columns: auto minmax(28px, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+}
+
+.confirmation-progress > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: #8a958d;
+  font-size: 8px;
+  font-weight: 750;
+  text-transform: uppercase;
+}
+
+.confirmation-progress > span.active,
+.confirmation-progress > span.complete {
+  color: var(--forest-700);
+}
+
+.confirmation-progress i {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: grid;
+  place-items: center;
+  color: white;
+  background: #a2aaa4;
+  font-style: normal;
+}
+
+.confirmation-progress > span.active i,
+.confirmation-progress > span.complete i {
+  color: var(--forest-950);
+  background: var(--leaf);
+}
+
+.confirmation-progress b {
+  height: 1px;
+  background: #dce2da;
+}
+
+.authorization-card {
+  margin: 14px 0 10px;
+  border: 1px solid #d7e4d2;
+  border-radius: 14px;
+  padding: 13px;
+  background: #f2f8ee;
+}
+
+.authorization-card.final {
+  border-color: #c7dbc0;
+  background: #edf7e7;
+}
+
+.authorization-card > span {
+  color: var(--forest-700);
+  font: 800 7px/1 var(--font-geist-mono), monospace;
+  letter-spacing: 0.1em;
+}
+
+.authorization-card h3 {
+  margin: 7px 0 5px;
+  font: 400 20px/1.1 Georgia, serif;
+  letter-spacing: -0.03em;
+}
+
+.authorization-card p,
+.authorization-card strong {
+  display: block;
+  margin: 0;
+  color: #637168;
+  font-size: 8px;
+  line-height: 1.55;
+}
+
+.authorization-card strong {
+  margin-top: 7px;
+  color: #365340;
+}
+
 .intent-path {
   margin: 24px 0 18px;
   display: grid;
@@ -1453,6 +1537,20 @@ footer a:hover {
 .hash-card code {
   color: var(--forest-700);
   font-weight: 700;
+}
+
+.full-hash-card {
+  margin-top: 10px;
+  align-items: flex-start;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.full-hash-card code {
+  width: 100%;
+  overflow-wrap: anywhere;
+  font-size: 7px;
+  line-height: 1.45;
 }
 
 .invoice-code-card {

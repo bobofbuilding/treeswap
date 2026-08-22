@@ -1,6 +1,6 @@
 # Authenticated multipath RFQ delivery
 
-Status: the local blind-pricing client protocol, path-diversity gate, authenticated batch merge, two-stage exact user authorization, durable pre-disclosure capacity reservation, one-use executable binding, selected-solver finalization, and adversarial tests are implemented. No relay or encrypted disclosure service is deployed, no shared coordinator, wallet ceremony, or operator independence has been established, and funded operation remains closed.
+Status: the local blind-pricing client protocol, path-diversity gate, authenticated batch merge, two-stage exact user authorization, client-safe readable wallet ceremony, durable pre-disclosure capacity reservation, one-use executable binding, selected-solver finalization, and adversarial tests are implemented. The deployed prototype previews both confirmation meanings but never requests a swap signature. No relay or encrypted disclosure service is deployed, no shared coordinator or testnet wallet journey has been established, operator independence is unproven, and funded operation remains closed.
 
 ## Purpose
 
@@ -35,6 +35,14 @@ Each path is configured locally. Relay paths bind a canonical public HTTPS origi
 The plan rejects duplicate identifiers, origins, keys, operator commitments, identity digests, or direct solver identities before network access. The default `POST /v1/rfq` transport permits only canonical credential-free HTTPS origins on the default port, resolves only public addresses, refuses mixed public/private DNS, pins the selected address while preserving TLS hostname verification and `Host`, refuses redirects, bounds JSON and bytes, and applies a hard deadline.
 
 The merged receipt commits the blind pricing digest, complete configured plan, attempt count, authenticated response digests, local receipt times, bounded expiries, privacy-safe failure codes, retained blind offers, and final user selection. It retains no private settlement fields.
+
+## Readable wallet ceremony
+
+`lib/user-authorization-wallet.mjs` owns the canonical EIP-712 fields shared with the coordinator. It accepts a received authorization only when its exact typed data and digest match an independently derived local expectation. The first prompt says **Reserve this quote** and displays the selected solver, beneficiary, direction, gross and net BIT, Lightning amount, BIT fee, routing ceiling, received-set/offer commitments, invoice state, contract, chain, and signed expiry. It explicitly says that no funds move. The second prompt says **Authorize this exact invoice**, displays the same economic terms plus the full invoice digest, payment hash, executable-offer digest, and durable execution binding, and says that it is not a token allowance.
+
+Only the original module-verified prompt may call `eth_signTypedData_v4`. The signer refuses to connect or switch chain implicitly, requires the exact RFQ wallet to be active before and after the request, rechecks the chain and expiry after the wallet returns, verifies the signature against the exact displayed typed data, blocks concurrent use, and returns the canonical authorization for the coordinator's existing independent verifier. A copied prompt, changed field/type/digest, incomplete invoice commitment, wrong chain, wrong account, wrong signature, account change, or exact-boundary expiry fails closed.
+
+The public prototype walks through these two meanings without opening a wallet, reserving capacity, creating an invoice, locking BIT, or moving funds. Connecting the original verified prompts to independently deployed testnet paths and retaining both-direction user-journey evidence remains a deployment gate.
 
 ## Qualification checkpoint
 

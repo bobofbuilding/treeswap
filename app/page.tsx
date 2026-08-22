@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import InvoiceQr from "@/app/components/InvoiceQr";
 import SendPanel from "@/app/components/SendPanel";
@@ -32,6 +32,7 @@ type Offer = {
 const BIT_CONTRACT = "0x57A447E4d5e18A9423408C365963A73F08B9d18C";
 const DEMO_INVOICE = "lnbc2500u1qpzry9x8gf2tvdw0s3jn54khce6mua7l";
 const DEMO_ADDRESS = "0x1111111111111111111111111111111111111111";
+const DEMO_PAYMENT_HASH = `0x${"7ea4".repeat(16)}`;
 const offerBook: Record<Direction, Offer[]> = {
   "lightning-to-bit": [
     { name: sanitizeSolverLabel("Rootline"), kind: "Solver", feeBps: 18, routeFee: 0, speed: "~12 sec", color: "mint" },
@@ -69,11 +70,13 @@ export default function Home() {
   const [receiveAddress, setReceiveAddress] = useState("");
   const [selectedOffer, setSelectedOffer] = useState(0);
   const [intentOpen, setIntentOpen] = useState(false);
+  const [confirmationStep, setConfirmationStep] = useState<1 | 2>(1);
   const [intentPhase, setIntentPhase] = useState(0);
   const [paymentStarted, setPaymentStarted] = useState(false);
   const [lightningLiquidity, setLightningLiquidity] = useState("5000000");
   const [bitLiquidity, setBitLiquidity] = useState("50000");
   const [poolReceipt, setPoolReceipt] = useState(false);
+  const intentModalRef = useRef<HTMLElement | null>(null);
 
   const direction: Direction = view === "get-bit" ? "lightning-to-bit" : "bit-to-lightning";
   const isPayInvoice = view === "pay-invoice";
@@ -119,6 +122,10 @@ export default function Home() {
     return () => window.clearTimeout(timer);
   }, [intentOpen, intentPhase, paymentStarted]);
 
+  useEffect(() => {
+    if (intentOpen) intentModalRef.current?.scrollTo({ top: 0, behavior: "auto" });
+  }, [confirmationStep, intentOpen, paymentStarted]);
+
   function selectView(next: View) {
     setView(next);
     setSelectedOffer(0);
@@ -130,6 +137,7 @@ export default function Home() {
   }
 
   function beginIntent() {
+    setConfirmationStep(1);
     setIntentPhase(0);
     setPaymentStarted(false);
     setIntentOpen(true);
@@ -501,14 +509,14 @@ export default function Home() {
 
       {intentOpen && (
         <div className="modal-backdrop" role="presentation" onMouseDown={() => setIntentOpen(false)}>
-          <section className="intent-modal" role="dialog" aria-modal="true" aria-labelledby="intent-title" onMouseDown={(event) => event.stopPropagation()}>
+          <section ref={intentModalRef} className="intent-modal" role="dialog" aria-modal="true" aria-labelledby="intent-title" onMouseDown={(event) => event.stopPropagation()}>
             <button type="button" className="modal-close" onClick={() => setIntentOpen(false)} aria-label="Close simulation">×</button>
-            <span className="modal-kicker">INVOICE CHECKOUT · PROTOTYPE</span>
+            <span className="modal-kicker">TWO CONFIRMATIONS · PROTOTYPE</span>
             <h2 id="intent-title">
               {!paymentStarted
-                ? isPayInvoice
-                  ? "Pay this invoice with BIT."
-                  : "Pay this invoice to receive BIT."
+                ? confirmationStep === 1
+                  ? "Reserve this quote."
+                  : "Authorize the exact invoice."
                 : intentPhase >= intentSteps.length
                   ? "Invoice settled."
                   : "Following the payment hash…"}
@@ -521,29 +529,77 @@ export default function Home() {
 
             {!paymentStarted ? (
               <>
-                <InvoiceQr
-                  key={isPayInvoice ? normalizeBolt11(invoice) : generatedInvoice}
-                  invoice={isPayInvoice ? normalizeBolt11(invoice) : generatedInvoice}
-                  label={isPayInvoice ? "Invoice to be paid" : "Invoice to pay"}
-                  prototype={!isPayInvoice}
-                />
-                <div className="checkout-rows">
-                  <div><span>Selected solver</span><strong>{activeOffer.name}</strong></div>
-                  <div><span>Invoice amount</span><strong>{numberFormat(isPayInvoice ? desiredOutput : displayInput)} sats</strong></div>
-                  <div><span>BIT amount</span><strong>{numberFormat(isPayInvoice ? displayInput : desiredOutput, 6)} BIT</strong></div>
-                  <div><span>BIT fee</span><strong>{feeLabel}</strong></div>
+                <div className="confirmation-progress" aria-label={`Confirmation ${confirmationStep} of 2`}>
+                  <span className={confirmationStep === 1 ? "active" : "complete"}><i>{confirmationStep === 1 ? "1" : "✓"}</i> Quote</span>
+                  <b />
+                  <span className={confirmationStep === 2 ? "active" : ""}><i>2</i> Invoice</span>
                 </div>
-                <div className="checkout-warning">
-                  Prototype preview only. A live flow must verify the invoice checksum, signature, expiry, network, amount, and payment hash before locking funds.
-                </div>
-                <p className="checkout-account-note">Email delivery is disabled during the prototype.</p>
-                <button
-                  type="button"
-                  className="primary-action"
-                  onClick={() => { setIntentPhase(0); setPaymentStarted(true); }}
-                >
-                  Simulate invoice payment <span>→</span>
-                </button>
+
+                {confirmationStep === 1 ? (
+                  <>
+                    {isPayInvoice && (
+                      <InvoiceQr
+                        key={normalizeBolt11(invoice)}
+                        invoice={normalizeBolt11(invoice)}
+                        label="Invoice to be paid"
+                      />
+                    )}
+                    <div className="authorization-card" role="note">
+                      <span>CONFIRMATION 1 OF 2</span>
+                      <h3>Reserve this quote</h3>
+                      <p>A live wallet signs the selected solver, complete received quote set, recipient, exact amounts, invoice commitment, and short expiry.</p>
+                      <strong>No funds move. This only reserves capacity and permits private finalization.</strong>
+                    </div>
+                    <div className="checkout-rows">
+                      <div><span>Selected solver</span><strong>{activeOffer.name}</strong></div>
+                      <div><span>You pay</span><strong>{isPayInvoice ? `${numberFormat(displayInput, 6)} BIT` : `${numberFormat(displayInput)} sats`}</strong></div>
+                      <div><span>You receive</span><strong>{isPayInvoice ? `${numberFormat(desiredOutput)} sats` : `${numberFormat(desiredOutput, 6)} BIT`}</strong></div>
+                      <div><span>Maximum BIT fee</span><strong>{feeLabel}</strong></div>
+                      <div><span>Invoice binding</span><strong>{isPayInvoice ? "Bound now" : "Added in confirmation 2"}</strong></div>
+                    </div>
+                    <div className="checkout-warning">
+                      Prototype preview only. This screen does not open a wallet, reserve capacity, lock BIT, create an invoice, or move funds.
+                    </div>
+                    <button type="button" className="primary-action" onClick={() => setConfirmationStep(2)}>
+                      Review exact invoice <span>→</span>
+                    </button>
+                  </>
+                ) : (
+                  <>
+                    <InvoiceQr
+                      key={isPayInvoice ? normalizeBolt11(invoice) : generatedInvoice}
+                      invoice={isPayInvoice ? normalizeBolt11(invoice) : generatedInvoice}
+                      label={isPayInvoice ? "Exact invoice to be paid" : "Exact invoice to pay"}
+                      prototype={!isPayInvoice}
+                    />
+                    <div className="authorization-card final" role="note">
+                      <span>CONFIRMATION 2 OF 2</span>
+                      <h3>Authorize this exact invoice</h3>
+                      <p>A live wallet signs the finalized executable quote, payment hash, invoice digest, recipient, solver, exact amounts, and expiry.</p>
+                      <strong>Any changed invoice, hash, amount, solver, recipient, or expiry requires a new confirmation.</strong>
+                    </div>
+                    <div className="checkout-rows">
+                      <div><span>Selected solver</span><strong>{activeOffer.name}</strong></div>
+                      <div><span>Invoice amount</span><strong>{numberFormat(isPayInvoice ? desiredOutput : displayInput)} sats</strong></div>
+                      <div><span>BIT amount</span><strong>{numberFormat(isPayInvoice ? displayInput : desiredOutput, 6)} BIT</strong></div>
+                      <div><span>BIT fee</span><strong>{feeLabel}</strong></div>
+                    </div>
+                    <div className="hash-card full-hash-card">
+                      <span>Exact payment hash</span><code>{DEMO_PAYMENT_HASH}</code>
+                    </div>
+                    <div className="checkout-warning">
+                      Prototype preview only. A live flow must fully verify the BOLT 11 checksum, signature, expiry, network, amount, features, and payment hash before this wallet request appears.
+                    </div>
+                    <p className="checkout-account-note">This second signature is not a token allowance. Email delivery is disabled during the prototype.</p>
+                    <button
+                      type="button"
+                      className="primary-action"
+                      onClick={() => { setIntentPhase(0); setPaymentStarted(true); }}
+                    >
+                      Simulate final confirmation <span>→</span>
+                    </button>
+                  </>
+                )}
               </>
             ) : (
               <>
