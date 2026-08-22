@@ -6,6 +6,7 @@ smoke_port=${LIVE_BIT_REORG_SMOKE_PORT:-18551}
 smoke_rpc="http://127.0.0.1:${smoke_port}"
 smoke_mnemonic="test test test test test test test test test test test junk"
 smoke_log=$(mktemp)
+smoke_result=$(mktemp)
 anvil_pid=""
 
 cleanup() {
@@ -13,22 +14,15 @@ cleanup() {
     kill "$anvil_pid" >/dev/null 2>&1 || true
     wait "$anvil_pid" >/dev/null 2>&1 || true
   fi
-  rm -f "$smoke_log"
+  rm -f "$smoke_log" "$smoke_result"
 }
 trap cleanup EXIT
 
 cd "$project_root"
-if [[ -n "$(git status --porcelain --untracked-files=all)" ]]; then
-  echo "live-BIT reorg evidence requires a clean source tree" >&2
+source_commit=$(node scripts/verify-published-main.mjs) || {
+  echo "live-BIT reorg evidence requires exact current canonical published main" >&2
   exit 1
-fi
-source_branch=$(git branch --show-current)
-source_commit=$(git rev-parse HEAD)
-published_commit=$(git rev-parse origin/main)
-if [[ "$source_branch" != "main" || "$source_commit" != "$published_commit" ]]; then
-  echo "live-BIT reorg evidence requires exact published main" >&2
-  exit 1
-fi
+}
 if [[ -z "${MAINNET_RPC_URL:-}" ]]; then
   echo "MAINNET_RPC_URL is required" >&2
   exit 1
@@ -60,4 +54,14 @@ ESCROW_REORG_RPC_URL="$smoke_rpc" \
 ESCROW_REORG_MNEMONIC="$smoke_mnemonic" \
 ESCROW_REORG_ANVIL_VERSION="$(anvil --version | head -n 1)" \
 ESCROW_REORG_TOKEN_MODE="live-bit" \
-node infra/evm/escrow-reorg-smoke.mjs
+node infra/evm/escrow-reorg-smoke.mjs >"$smoke_result"
+
+final_source_commit=$(node scripts/verify-published-main.mjs) || {
+  echo "live-BIT reorg evidence source changed during the campaign" >&2
+  exit 1
+}
+if [[ "$final_source_commit" != "$source_commit" ]]; then
+  echo "live-BIT reorg evidence source changed during the campaign" >&2
+  exit 1
+fi
+cat "$smoke_result"

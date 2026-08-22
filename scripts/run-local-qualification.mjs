@@ -3,6 +3,11 @@ import { chmod, lstat, mkdir, readFile, writeFile } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildQualificationEvidence, hashQualificationFile } from "../lib/qualification-evidence.mjs";
+import {
+  assertTreeSwapCanonicalOrigin,
+  parsePublishedMainReference,
+  validatePublishedMainSource,
+} from "../lib/published-source.mjs";
 
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 process.chdir(repository);
@@ -32,15 +37,21 @@ function outputName() {
   return name;
 }
 
-const requestedOutputName = outputName();
-const status = capture("git", ["status", "--porcelain", "--untracked-files=all"]);
-if (status) throw new Error("qualification requires a clean source tree");
-const branch = capture("git", ["branch", "--show-current"]);
-const sourceCommit = capture("git", ["rev-parse", "HEAD"]);
-const publishedCommit = capture("git", ["rev-parse", "origin/main"]);
-if (branch !== "main" || sourceCommit !== publishedCommit) {
-  throw new Error("qualification requires the exact locally known origin/main commit");
+function currentPublishedCommit() {
+  const status = capture("git", ["status", "--porcelain", "--untracked-files=all"]);
+  const branch = capture("git", ["branch", "--show-current"]);
+  const head = capture("git", ["rev-parse", "HEAD"]);
+  const originUrl = capture("git", ["remote", "get-url", "origin"]);
+  assertTreeSwapCanonicalOrigin(originUrl);
+  const published = parsePublishedMainReference(
+    capture("git", ["ls-remote", "--exit-code", "origin", "refs/heads/main"]),
+  );
+  return validatePublishedMainSource({ branch, head, originUrl, published, status });
 }
+
+const requestedOutputName = outputName();
+const branch = "main";
+const sourceCommit = currentPublishedCommit();
 
 const configurationFiles = [
   "package.json",
@@ -71,6 +82,7 @@ const configurationFiles = [
   "scripts/run-live-bit-reorg-smoke.sh",
   "scripts/observe-bit-deployment.mjs",
   "scripts/compare-bit-observations.mjs",
+  "scripts/verify-published-main.mjs",
   "scripts/run-local-qualification.mjs",
   "scripts/run-live-account-evidence.mjs",
   "scripts/run-live-account-maintenance-evidence.mjs",
@@ -131,6 +143,7 @@ const configurationFiles = [
   "lib/service-isolation-evidence.mjs",
   "lib/public-testnet-release-candidate.mjs",
   "lib/bit-deployment-observer.mjs",
+  "lib/published-source.mjs",
   "lib/admission-policy.mjs",
   "lib/capabilities.mjs",
   "lib/rfq.mjs",
@@ -268,9 +281,7 @@ try {
   if (stopped.status !== 0 && !campaignError) campaignError = new Error("regtest cleanup failed");
 }
 if (campaignError) throw campaignError;
-if (capture("git", ["status", "--porcelain", "--untracked-files=all"]) || capture("git", ["rev-parse", "HEAD"]) !== sourceCommit) {
-  throw new Error("qualification campaigns changed the source tree");
-}
+if (currentPublishedCommit() !== sourceCommit) throw new Error("qualification source changed during the campaigns");
 
 const evidence = buildQualificationEvidence({
   branch,

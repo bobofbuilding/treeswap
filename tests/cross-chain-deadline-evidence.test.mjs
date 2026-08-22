@@ -287,10 +287,15 @@ test("live-BIT evidence requires exact published main and revalidates deadline o
 });
 
 test("credentialed live-BIT runner is pinned, private, and never falls back to mock evidence", async () => {
-  const runner = await readFile(new URL("../scripts/run-live-bit-cross-chain-deadline-smoke.sh", import.meta.url), "utf8");
-  assert.match(runner, /git status --porcelain --untracked-files=all/);
-  assert.match(runner, /source_branch.*main/);
-  assert.match(runner, /source_commit.*published_commit/);
+  const [runner, sourceVerifier] = await Promise.all([
+    readFile(new URL("../scripts/run-live-bit-cross-chain-deadline-smoke.sh", import.meta.url), "utf8"),
+    readFile(new URL("../scripts/verify-published-main.mjs", import.meta.url), "utf8"),
+  ]);
+  assert.match(runner, /node scripts\/verify-published-main\.mjs/);
+  assert.match(sourceVerifier, /remote.*get-url.*origin/s);
+  assert.match(sourceVerifier, /ls-remote.*refs\/heads\/main/s);
+  assert.match(sourceVerifier, /status.*--porcelain.*--untracked-files=all/s);
+  assert.doesNotMatch(runner, /git rev-parse origin\/main/);
   assert.match(runner, /MAINNET_RPC_URL is required/);
   assert.match(runner, /--fork-block-number 25788856/);
   assert.match(runner, /--host 127\.0\.0\.1/);

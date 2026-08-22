@@ -32,17 +32,10 @@ trap cleanup EXIT
 
 chmod 0700 "$smoke_state_dir"
 cd "$project_root"
-if [[ -n "$(git status --porcelain --untracked-files=all)" ]]; then
-  echo "live-BIT deadline evidence requires a clean source tree" >&2
+source_commit=$(node scripts/verify-published-main.mjs) || {
+  echo "live-BIT deadline evidence requires exact current canonical published main" >&2
   exit 1
-fi
-source_branch=$(git branch --show-current)
-source_commit=$(git rev-parse HEAD)
-published_commit=$(git rev-parse origin/main)
-if [[ "$source_branch" != "main" || "$source_commit" != "$published_commit" ]]; then
-  echo "live-BIT deadline evidence requires exact published main" >&2
-  exit 1
-fi
+}
 if [[ -z "${MAINNET_RPC_URL:-}" ]]; then
   echo "MAINNET_RPC_URL is required" >&2
   exit 1
@@ -89,6 +82,21 @@ CROSS_CHAIN_DEADLINE_ANVIL_VERSION="$(anvil --version | head -n 1)" \
 CROSS_CHAIN_DEADLINE_TOKEN_MODE="live-bit" \
 CROSS_CHAIN_DEADLINE_EVIDENCE_PATH="$evidence_path" \
 bash infra/regtest/lab.sh cross-chain-deadline-smoke
+
+final_source_commit=$(node scripts/verify-published-main.mjs) || {
+  if [[ -n "$evidence_path" && -f "$evidence_path" && ! -L "$evidence_path" ]]; then
+    rm -f -- "$evidence_path"
+  fi
+  echo "live-BIT deadline evidence source changed during the campaign" >&2
+  exit 1
+}
+if [[ "$final_source_commit" != "$source_commit" ]]; then
+  if [[ -n "$evidence_path" && -f "$evidence_path" && ! -L "$evidence_path" ]]; then
+    rm -f -- "$evidence_path"
+  fi
+  echo "live-BIT deadline evidence source changed during the campaign" >&2
+  exit 1
+fi
 
 if [[ -n "$evidence_path" ]]; then
   echo "Durable live-BIT cross-chain deadline evidence: outputs/$(basename "$evidence_path")"
