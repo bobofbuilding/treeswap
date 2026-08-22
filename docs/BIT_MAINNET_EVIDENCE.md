@@ -32,7 +32,7 @@ Comparison v2 accepts bounded non-symlink inputs only. Before reading them and a
 
 These controls make accidental reuse, relabeling, stale capture, input substitution, source drift, and unbound comparison visible. They cannot prove that two provider accounts, signers, companies, or endpoints are independently controlled. Reviewers must retain the real operator identities, control relationships, and provider agreements separately and bind their conclusions into the signed review and promotion records.
 
-An eligible comparison can now enter the [signed BIT provider-evidence ceremony](./BIT_PROVIDER_EVIDENCE.md). Both provider operators sign the exact observations, comparison, source, finalized block, and one-hour policy. Distinct signers and distinct organization, identity-evidence, and service-evidence commitments prevent silent unsigned coordinator fabrication and obvious double-counting. They still cannot prove the real-world independence or truth of those claims, so the signed summary remains an unreviewed, non-funding handoff.
+An eligible comparison can now enter the [signed BIT provider-evidence ceremony](./BIT_PROVIDER_EVIDENCE.md). Both provider operators sign the exact observations, comparison, source, finalized block, and one-hour policy. Distinct signers and distinct organization, identity-evidence, and service-evidence commitments prevent silent unsigned coordinator fabrication and obvious double-counting. The [BIT independent-review ceremony](./BIT_INDEPENDENT_REVIEW.md) then re-verifies that complete signed package and requires separate contract-security and provider-independence reviewers to bind the exact source/compiler, roles/storage, upgrade, organizational-control, and findings artifacts. Neither signature layer proves the real-world facts without retained-evidence inspection, and both remain non-funding handoffs.
 
 The shared authenticated JSON-RPC client rejects redirects, non-JSON envelopes, response-ID/version mismatches, result/error ambiguity, and response bodies larger than one megabyte. Remote transport must use HTTPS, is time-bounded, and never includes the credential-bearing endpoint in an error or retained artifact.
 
@@ -50,7 +50,7 @@ The proxy is an exact creation and runtime match in [Sourcify](https://repo.sour
 
 The implementation is an exact match in [Etherscan](https://etherscan.io/address/0xa27b118c0770939295f052aE1b003366E5eF806F#code) with the same compiler, optimizer, and EVM settings. A local standard-JSON recompile reproduced all 12,734 runtime bytes after applying the three compiler-declared `UUPSUpgradeable.__self` immutable references to the implementation address. The resulting Keccak-256 hash exactly matched the pinned implementation runtime hash.
 
-Explorer verification and local reproduction prove source-to-bytecode identity, not source safety. Independent reviewers must still assess BIT's upgrade authority, role holders, storage layout, transfer behavior, pause behavior, mint/redeem accounting, and how those external controls affect TreeSwap.
+Explorer verification and local reproduction prove source-to-bytecode identity, not source safety. The repository now provides the exact [BIT independent-review evidence](./BIT_INDEPENDENT_REVIEW.md) ceremony for the two required reviewer roles, but real reviewers must still perform and retain the assessment of BIT's upgrade authority, role holders, storage layout, transfer behavior, pause behavior, mint/redeem accounting, and how those external controls affect TreeSwap.
 
 ## Mainnet-fork campaign
 
@@ -67,4 +67,4 @@ The observer separately rejects an unfinalized target, a changing finalized hash
 
 ## Promotion rule
 
-Do not copy this document into a production manifest automatically. Promotion requires two authenticated provider observations from the same published commit, both source bundles and compiler artifacts, a reviewer-signed comparison, live role and upgrade-authority evidence, the controlled reorg campaign, and closure of every independent-review finding.
+Do not copy this document or a verification summary into a production manifest automatically. Promotion requires two authenticated provider observations from the same published commit, both provider signatures, the complete two-role signed review package, both source bundles and compiler artifacts, live role and upgrade-authority evidence, the controlled reorg campaign, and closure of every independent-review finding. The current BIT review verifier is a non-authorizing handoff; mainnet promotion remains intentionally unsupported until an equivalent signed deployment ceremony exists.
