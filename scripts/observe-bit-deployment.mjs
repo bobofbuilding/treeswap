@@ -9,6 +9,10 @@ import {
   validateBitObservationSourceProvenance,
 } from "../lib/bit-deployment-observer.mjs";
 import { writeExclusiveJson } from "../lib/closed-testnet-deployment-files.mjs";
+import {
+  assertTreeSwapCanonicalOrigin,
+  parsePublishedMainReference,
+} from "../lib/published-source.mjs";
 
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -42,11 +46,15 @@ function git(arguments_) {
 }
 
 function currentPublishedCommit() {
-  const remote = git(["ls-remote", "--exit-code", "origin", "refs/heads/main"]).split(/\s+/, 1)[0];
+  const originUrl = git(["remote", "get-url", "origin"]);
+  assertTreeSwapCanonicalOrigin(originUrl);
+  const remote = parsePublishedMainReference(
+    git(["ls-remote", "--exit-code", "origin", "refs/heads/main"]),
+  );
   return validateBitObservationSourceProvenance({
     branch: git(["branch", "--show-current"]),
     head: git(["rev-parse", "HEAD"]),
-    originUrl: git(["remote", "get-url", "origin"]),
+    originUrl,
     published: remote,
     status: git(["status", "--porcelain", "--untracked-files=all"]),
   });
@@ -74,6 +82,9 @@ async function main() {
     sourceCommit,
     targetBlockNumber: options.block,
   });
+  if (currentPublishedCommit() !== sourceCommit) {
+    throw new Error("BIT observation source changed during live capture");
+  }
   const serialized = `${JSON.stringify(observation, null, 2)}\n`;
 
   if (options.out) {

@@ -6,6 +6,12 @@ import {
   buildQualificationEvidence,
   hashQualificationFile,
 } from "../lib/qualification-evidence.mjs";
+import {
+  TREESWAP_CANONICAL_ORIGIN,
+  assertTreeSwapCanonicalOrigin,
+  parsePublishedMainReference,
+  validatePublishedMainSource,
+} from "../lib/published-source.mjs";
 
 function input() {
   return {
@@ -57,6 +63,54 @@ test("rejects failed campaigns, mutable images, and secret-bearing fields", () =
   }), /configuration hash entry is invalid/);
 });
 
+test("requires the exact clean commit currently published at the canonical TreeSwap origin", () => {
+  const commit = "a".repeat(40);
+  assert.equal(assertTreeSwapCanonicalOrigin(TREESWAP_CANONICAL_ORIGIN), TREESWAP_CANONICAL_ORIGIN);
+  assert.equal(
+    assertTreeSwapCanonicalOrigin("https://github.com/bobofbuilding/treeswap"),
+    TREESWAP_CANONICAL_ORIGIN,
+  );
+  assert.equal(parsePublishedMainReference(`${commit}\trefs/heads/main`), commit);
+  assert.equal(validatePublishedMainSource({
+    branch: "main",
+    head: commit,
+    originUrl: TREESWAP_CANONICAL_ORIGIN,
+    published: commit,
+    status: "",
+  }), commit);
+
+  for (const mutation of [
+    { branch: "feature" },
+    { head: "b".repeat(40) },
+    { originUrl: "git@github.com:bobofbuilding/treeswap.git" },
+    { originUrl: "https://github.com/bobofbuilding/treeswap/" },
+    { originUrl: "https://token@github.com/bobofbuilding/treeswap.git" },
+    { published: "b".repeat(40) },
+    { status: "?? untracked" },
+  ]) {
+    assert.throws(() => validatePublishedMainSource({
+      branch: "main",
+      head: commit,
+      originUrl: TREESWAP_CANONICAL_ORIGIN,
+      published: commit,
+      status: "",
+      ...mutation,
+    }), /canonical TreeSwap|exact clean commit/);
+  }
+  assert.throws(
+    () => parsePublishedMainReference(`${commit}\trefs/heads/main\n${"b".repeat(40)}\trefs/heads/other`),
+    /one exact remote main reference/,
+  );
+  assert.throws(() => validatePublishedMainSource({
+    branch: "main",
+    head: commit,
+    originUrl: TREESWAP_CANONICAL_ORIGIN,
+    published: commit,
+    status: "",
+    ignored: true,
+  }), /fields are not exact/);
+});
+
 test("isolates disposable stale-chain state from the main payer volume", async () => {
   const lab = await readFile(new URL("../infra/regtest/lab.sh", import.meta.url), "utf8");
   const start = lab.indexOf("smoke_stale_chain_header() {");
@@ -69,12 +123,19 @@ test("isolates disposable stale-chain state from the main payer volume", async (
 });
 
 test("binds credentialed live-BIT reorg evidence to exact published main", async () => {
-  const [runner, campaign] = await Promise.all([
+  const [runner, deadlineRunner, campaign, verifier] = await Promise.all([
     readFile(new URL("../scripts/run-live-bit-reorg-smoke.sh", import.meta.url), "utf8"),
+    readFile(new URL("../scripts/run-live-bit-cross-chain-deadline-smoke.sh", import.meta.url), "utf8"),
     readFile(new URL("../infra/evm/escrow-reorg-smoke.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../scripts/verify-published-main.mjs", import.meta.url), "utf8"),
   ]);
-  assert.match(runner, /git status --porcelain --untracked-files=all/);
-  assert.match(runner, /git rev-parse origin\/main/);
+  assert.match(runner, /node scripts\/verify-published-main\.mjs/);
+  assert.match(deadlineRunner, /node scripts\/verify-published-main\.mjs/);
+  assert.doesNotMatch(runner, /git rev-parse origin\/main/);
+  assert.doesNotMatch(deadlineRunner, /git rev-parse origin\/main/);
+  assert.match(verifier, /remote.*get-url.*origin/s);
+  assert.match(verifier, /ls-remote.*refs\/heads\/main/s);
+  assert.match(verifier, /status.*--porcelain.*--untracked-files=all/s);
   assert.match(runner, /--fork-block-number 25788856/);
   assert.match(campaign, /live-BIT reorg evidence requires a clean source tree/);
   assert.match(campaign, /live-BIT reorg evidence requires exact published main/);

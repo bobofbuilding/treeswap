@@ -7,6 +7,11 @@ import {
   liveAccountMaintenanceEvidencePolicy,
 } from "../lib/live-account-maintenance-evidence.mjs";
 import { runLiveAccountMaintenanceLifecycle } from "../lib/live-account-maintenance-lifecycle.mjs";
+import {
+  assertTreeSwapCanonicalOrigin,
+  parsePublishedMainReference,
+  validatePublishedMainSource,
+} from "../lib/published-source.mjs";
 
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const origin = liveAccountMaintenanceEvidencePolicy.origin;
@@ -30,6 +35,22 @@ function outputName() {
   return name;
 }
 
+function currentPublishedCommit() {
+  const sourceStatus = capture("git", ["status", "--porcelain", "--untracked-files=all"]);
+  const branch = capture("git", ["branch", "--show-current"]);
+  const head = capture("git", ["rev-parse", "HEAD"]);
+  const originUrl = capture("git", ["remote", "get-url", "origin"]);
+  try {
+    assertTreeSwapCanonicalOrigin(originUrl);
+    const published = parsePublishedMainReference(
+      capture("git", ["ls-remote", "--exit-code", "origin", "refs/heads/main"]),
+    );
+    return validatePublishedMainSource({ branch, head, originUrl, published, status: sourceStatus });
+  } catch {
+    throw new Error("live account maintenance evidence requires the exact clean published main commit");
+  }
+}
+
 const requestedOutputName = outputName();
 const authorization = String(process.env.TREESWAP_ACCOUNT_BYPASS_TOKEN ?? "");
 const deploymentVersion = String(process.env.TREESWAP_ACCOUNT_DEPLOYMENT_VERSION ?? "");
@@ -39,13 +60,7 @@ if (authorization.length < 20 || authorization.length > 4_096 || /[\r\n]/.test(a
 if (!/^[1-9][0-9]*$/.test(deploymentVersion)) throw new Error("the exact Sites deployment version is required");
 delete process.env.TREESWAP_ACCOUNT_BYPASS_TOKEN;
 
-const sourceStatus = capture("git", ["status", "--porcelain", "--untracked-files=all"]);
-const branch = capture("git", ["branch", "--show-current"]);
-const sourceCommit = capture("git", ["rev-parse", "HEAD"]);
-const publishedCommit = capture("git", ["ls-remote", "--exit-code", "origin", "refs/heads/main"]).split(/\s+/, 1)[0];
-if (sourceStatus || branch !== "main" || sourceCommit !== publishedCommit || !/^[0-9a-f]{40}$/.test(publishedCommit)) {
-  throw new Error("live account maintenance evidence requires the exact clean published main commit");
-}
+const sourceCommit = currentPublishedCommit();
 
 const outputDirectory = join(repository, "outputs");
 try {
@@ -114,6 +129,9 @@ const evidence = buildLiveAccountMaintenanceEvidence({
   checks,
 });
 
+if (currentPublishedCommit() !== sourceCommit) {
+  throw new Error("live account maintenance evidence source changed during capture");
+}
 await writeFile(outputPath, `${JSON.stringify(evidence, null, 2)}\n`, { flag: "wx", mode: 0o600 });
 await chmod(outputPath, 0o600);
 process.stdout.write(`${JSON.stringify({
