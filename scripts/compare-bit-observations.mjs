@@ -1,6 +1,5 @@
 #!/usr/bin/env node
 
-import { execFileSync } from "node:child_process";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import {
@@ -8,23 +7,21 @@ import {
   validateBitComparisonSourceProvenance,
   validateBitObservationSourceProvenance,
 } from "../lib/bit-deployment-observer.mjs";
+import { currentPublishedBitSource } from "../lib/bit-evidence-source.mjs";
 import { readBoundedJson, writeExclusiveJson } from "../lib/closed-testnet-deployment-files.mjs";
-import {
-  assertTreeSwapCanonicalOrigin,
-  parsePublishedMainReference,
-} from "../lib/published-source.mjs";
 
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), "..");
+const USAGE = "Usage: npm run compare:bit -- first.json second.json [--out comparison.json]";
 
 function parseArguments(values) {
   const parsed = { inputs: [], out: null };
+  if (values.length === 1 && values[0] === "--help") return { ...parsed, help: true };
   for (let index = 0; index < values.length; index += 1) {
-    if (values[index] === "--out" && values[index + 1]) {
+    if (values[index] === "--out" && values[index + 1]
+        && !values[index + 1].startsWith("--") && parsed.out === null) {
       parsed.out = resolve(values[++index]);
-    } else if (values[index] === "--help") {
-      parsed.help = true;
     } else if (values[index].startsWith("--")) {
-      throw new TypeError(`unknown argument: ${values[index]}`);
+      throw new TypeError(USAGE);
     } else {
       parsed.inputs.push(resolve(values[index]));
     }
@@ -40,40 +37,17 @@ async function readObservation(path) {
   }
 }
 
-function git(arguments_) {
-  try {
-    return execFileSync("git", arguments_, {
-      cwd: repository,
-      encoding: "utf8",
-      maxBuffer: 2_000_000,
-      stdio: ["ignore", "pipe", "pipe"],
-    }).trim();
-  } catch {
-    throw new Error("BIT comparison source provenance check failed");
-  }
-}
-
 function currentPublishedSource() {
-  const originUrl = git(["remote", "get-url", "origin"]);
-  assertTreeSwapCanonicalOrigin(originUrl);
-  return {
-    branch: git(["branch", "--show-current"]),
-    head: git(["rev-parse", "HEAD"]),
-    originUrl,
-    published: parsePublishedMainReference(
-      git(["ls-remote", "--exit-code", "origin", "refs/heads/main"]),
-    ),
-    status: git(["status", "--porcelain", "--untracked-files=all"]),
-  };
+  return currentPublishedBitSource(repository).provenance;
 }
 
 async function main() {
   const options = parseArguments(process.argv.slice(2));
   if (options.help) {
-    process.stdout.write("Usage: npm run compare:bit -- first.json second.json [--out comparison.json]\n");
+    process.stdout.write(`${USAGE}\n`);
     return;
   }
-  if (options.inputs.length !== 2) throw new TypeError("exactly two observation files are required");
+  if (options.inputs.length !== 2) throw new TypeError(USAGE);
 
   const sourceBefore = currentPublishedSource();
   validateBitObservationSourceProvenance(sourceBefore);
