@@ -1,10 +1,10 @@
 # Operational readiness evidence
 
-Status: strict local evidence schema, five-role EIP-712 attestation ceremony, verifier, operator CLIs, verified service-isolation dependency, and release-candidate binding implemented. No production operators, isolated deployment, alert channels, drill results, support service, or funding authority are supplied by the repository.
+Status: strict local evidence schema v3, exact public adoption policy, five-role EIP-712 attestation ceremony, verifier, operator CLIs, verified service-isolation dependency, and release-candidate binding implemented. No production operators, isolated deployment, alert channels, drill results, support service, or funding authority are supplied by the repository.
 
 ## Purpose
 
-A release must not treat one opaque `incidentDrills`, `monitoring`, `backupRestore`, `lossAllocation`, or `supportPolicy` hash as proof that operations are complete. `lib/operational-readiness-evidence.mjs` requires one canonical package that exposes the required structure without disclosing operational secrets.
+A release must not treat one opaque `incidentDrills`, `monitoring`, `backupRestore`, `lossAllocation`, or `supportPolicy` hash as proof that operations are complete. `lib/operational-readiness-evidence.mjs` requires one canonical package that exposes the required structure without disclosing operational secrets. Loss allocation, privacy retention, and support are derived from the complete exact [adoption policy](./ADOPTION_POLICY.md), rather than supplied as unexplained commitments.
 
 The package is bound to the exact public-testnet funding mode, chain, gate, source commit, protocol version, deployment manifest, preparation time, and validity window. It requires exactly one participant for each role:
 
@@ -45,6 +45,7 @@ Each participant independently reproduces the record and policy, then prepares i
 npm run prepare:operational-readiness-attestation -- \
   --record operations-record.json \
   --policy operations-policy.json \
+  --adoption-policy adoption-policy.json \
   --isolation-record isolation-record.json \
   --isolation-policy isolation-policy.json \
   --isolation-attestations isolation-attestations.json \
@@ -58,17 +59,18 @@ The command does not access a key or sign. Collect one signature per exact parti
 npm run verify:operational-readiness-evidence -- \
   --record operations-record.json \
   --policy operations-policy.json \
+  --adoption-policy adoption-policy.json \
   --attestations operations-attestations.json \
   --isolation-record isolation-record.json \
   --isolation-policy isolation-policy.json \
   --isolation-attestations isolation-attestations.json
 ```
 
-Input files must satisfy the common bounded regular-file reader. Before any operational payload is prepared, the verifier requires live, same-process [service-isolation evidence](./SERVICE_ISOLATION_EVIDENCE.md) provenance; matches its source, chain, gate, protocol, deployment, and validity interval; and requires the exact derived isolation digest in the operational record. The verifier rejects copied provenance, unknown fields, secrets, unrestricted endpoints, invoices, payment data, duplicated roles or evidence, weak alert routing, incomplete drills, future/stale evidence, participant substitution, signature replay, or a changed record or policy.
+Input files must satisfy the common bounded regular-file reader. Before any operational payload is prepared, the verifier requires live, same-process [service-isolation evidence](./SERVICE_ISOLATION_EVIDENCE.md) provenance; matches its source, chain, gate, protocol, deployment, and validity interval; and requires the exact derived isolation digest in the operational record. It also validates the adoption policy, requires its validity to cover the complete operational interval, matches its support owner and incident commander to exact participants, and derives the record's loss, privacy, and support commitments. The adoption-policy digest is an explicit EIP-712 field signed by every operational role. The verifier rejects copied provenance, unknown fields, secrets, unrestricted endpoints, invoices, payment data, duplicated roles or evidence, weak alert routing, incomplete drills, future/stale evidence, participant substitution, signature replay, or a changed record, operating policy, or adoption policy.
 
 ## Release binding
 
-Both public-testnet release-candidate commands require `--operations-record`, `--operations-policy`, `--operations-attestations`, `--isolation-record`, `--isolation-policy`, and `--isolation-attestations`. Candidate preparation re-verifies both packages in the same process and requires:
+Both public-testnet release-candidate commands require `--operations-record`, `--operations-policy`, `--operations-attestations`, `--adoption-policy`, `--isolation-record`, `--isolation-policy`, and `--isolation-attestations`. Candidate preparation re-verifies all three packages in the same process and requires:
 
 - exact source, protocol, chain, gate, deployment manifest, funding mode, and release-time agreement;
 - an exact provenance-bound service-isolation digest whose validity covers the complete operational and release interval;
@@ -79,9 +81,11 @@ Both public-testnet release-candidate commands require `--operations-record`, `-
 - exact alert-channel agreement with the signed bootstrap roster or completed campaign;
 - exact backup, incident, monitoring, provider, solver, and qualification artifact agreement with upstream evidence;
 - exact campaign reconciliation and per-drill evidence agreement for the campaign-qualified path; and
-- release validity wholly inside the operational evidence interval.
+- release validity wholly inside the operational evidence interval;
+- every release cap and reserve to equal the exact adoption policy; and
+- every adoption-policy admission/risk/fee digest to match signed upstream evidence, with every named fee below both deployed immutable escrow ceilings.
 
-Operational-readiness v1 is rejected. The former release-record template v2 and prepared candidate v2 schemas are rejected. Template v3 no longer accepts operator-entered loss-allocation, support-policy, or service-isolation hashes. Candidate v3 derives those commitments and every operational release digest only from live verifier provenance.
+Operational-readiness v1 and v2 are rejected. The former release-record template v2 and prepared candidate v2/v3 schemas are rejected. Template v3 accepts no operator-entered loss-allocation, support-policy, or service-isolation hashes. Candidate v4 derives those commitments and every operational release digest only from live verifier provenance and retains the exact adoption-policy digest.
 
 ## Authority boundary
 

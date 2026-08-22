@@ -82,6 +82,7 @@ Stopping new quotes must not disable valid claim, refund, or solver withdrawal p
 - [x] Deterministic cross-clock timeout model and boundary tests
 - [x] Local dual-provider finalized BIT-vault reader and signed aggregate Lightning-capacity protocol
 - [x] Short-lived signed bootstrap roster with derived provider, observer, monitor, relay, solver, and alert-channel counts; exact deployment-provider matching; and provenance-only release-candidate integration
+- [x] Exact public adoption policy with directional fees, mode ceilings, reserves, solver exposure, privacy, loss allocation, support ownership, and immutable-upgrade response; bootstrap public permissionless execution fails closed
 - [ ] Deploy continuous reconciliation and capacity observations with independent operators
 - [ ] Two independent solver deployments
 - [ ] External review and tiny testnet limits

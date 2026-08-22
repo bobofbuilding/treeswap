@@ -2,6 +2,8 @@
 
 Status: enforced by both direction-specific escrow prototypes and canonical quote arithmetic. Live fee parameters remain deployment-manifest inputs subject to the immutable contract ceiling.
 
+The public-testnet [adoption policy](./ADOPTION_POLICY.md) additionally requires BIT → Lightning to have a strictly higher base fee than Lightning → BIT and binds both values, the maximum fee, and inventory-scarcity thresholds into the five-role operational package and release candidate. The repository fixture uses 72 bps and 18 bps respectively; a real release must publish its own exact signed values within the deployed immutable ceiling.
+
 ## One protocol fee asset
 
 TreeSwap charges its protocol fee only in BIT wei, in both directions. It never tries to skim a Lightning payment.

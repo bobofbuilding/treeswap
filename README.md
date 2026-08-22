@@ -35,6 +35,7 @@ The prototype assumes a business par value of **1 BIT = 100 sats**. This value i
 - Short-lived signed bootstrap-operator roster with derived counts and exact deployment-provider matching in [`docs/PUBLIC_TESTNET_BOOTSTRAP_EVIDENCE.md`](docs/PUBLIC_TESTNET_BOOTSTRAP_EVIDENCE.md)
 - Five-role signed review evidence with exact finding accounting in [`docs/INDEPENDENT_REVIEW_EVIDENCE.md`](docs/INDEPENDENT_REVIEW_EVIDENCE.md)
 - Five-role signed operational-readiness evidence with exact drills, alerts, backup, reconciliation, support, and loss-allocation commitments in [`docs/OPERATIONAL_READINESS_EVIDENCE.md`](docs/OPERATIONAL_READINESS_EVIDENCE.md)
+- Exact public adoption policy for fees, caps, solver liveness, privacy, loss allocation, support, and immutable upgrades in [`docs/ADOPTION_POLICY.md`](docs/ADOPTION_POLICY.md)
 - Three-role signed service-isolation evidence with exact service, trust-domain, ingress, transport, and credential-scope commitments in [`docs/SERVICE_ISOLATION_EVIDENCE.md`](docs/SERVICE_ISOLATION_EVIDENCE.md)
 - Evidence-derived tiny-bootstrap and campaign-qualified release preparation in [`docs/PUBLIC_TESTNET_RELEASE_CANDIDATES.md`](docs/PUBLIC_TESTNET_RELEASE_CANDIDATES.md)
 - Guarded five-role payload and live contract-wallet approval verification in [`docs/PUBLIC_TESTNET_RELEASE_APPROVALS.md`](docs/PUBLIC_TESTNET_RELEASE_APPROVALS.md)
