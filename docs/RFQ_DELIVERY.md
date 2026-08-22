@@ -34,6 +34,12 @@ The plan rejects duplicate identifiers, origins, keys, operator commitments, ide
 
 The merged receipt commits the blind pricing digest, complete configured plan, attempt count, authenticated response digests, local receipt times, bounded expiries, privacy-safe failure codes, retained blind offers, and final user selection. It retains no private settlement fields.
 
+## Qualification checkpoint
+
+Clean published source [`28a3542d0f70027aef028e9f52d828958c846964`](https://github.com/bobofbuilding/treeswap/commit/28a3542d0f70027aef028e9f52d828958c846964), merged through [PR #32](https://github.com/bobofbuilding/treeswap/pull/32), passed 438 application/security tests with no skips, both production web build paths, 68 contract tests, all 41 sealed local campaigns from `2026-08-22T12:35:19.483Z` through `2026-08-22T13:44:47.684Z`, and [hosted main-branch CI](https://github.com/bobofbuilding/treeswap/actions/runs/32573377971). Exact Vercel deployment [`dpl_2zxDPfgrrmrCzQdnj3P14NY8wT9C`](https://treeswap-60re0ks7w-bittrees-tech.vercel.app) is ready and serves both official aliases.
+
+The ignored regular mode-`0600` qualification artifact independently reconstructs to `sha256:61fdb565cb75c8cf7e2f89f90a32d87a52e50f8c56ebe2b8e253c663e8323d3a`. All 135 configuration hashes, 41 unique passed campaigns, three pinned images, exact clean remote-`main` source, privacy exclusions, and lab teardown reproduce. The one-hour Lightning campaign passed 3,603 monotonic seconds, 119 observations, midpoint adapter replacement with persisted chain-progress state, deterministic stale-chain rejection, and zero dispatch. The artifact is local-only, records a simulated EVM reservation, and grants no funding authority.
+
 ## What remains unprovable
 
 No client can prove that a relay forwarded every quote it saw or that no better quote existed elsewhere. Two keys and two operator commitments also do not prove organizational independence. TreeSwap therefore continues to say “Best received quote,” excludes market-making rewards, and requires retained deployment evidence from independently controlled relays and solvers.
