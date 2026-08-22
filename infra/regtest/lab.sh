@@ -246,7 +246,8 @@ bake_node_credentials() {
     uri:/lnrpc.Lightning/GetInfo \
     uri:/lnrpc.Lightning/ListChannels \
     uri:/lnrpc.Lightning/PendingChannels \
-    uri:/lnrpc.Lightning/ChannelBalance >/dev/null
+    uri:/lnrpc.Lightning/ChannelBalance \
+    uri:/walletrpc.WalletKit/PendingSweeps >/dev/null
   compose exec -T "$node" lncli --network=regtest bakemacaroon \
     --timeout="$ROLE_CREDENTIAL_LIFETIME_SECONDS" \
     --root_key_id=102 --save_to=/root/.lnd/treeswap/invoice.macaroon \
@@ -286,7 +287,8 @@ role_permissions() {
         uri:/lnrpc.Lightning/ChannelBalance \
         uri:/lnrpc.Lightning/GetInfo \
         uri:/lnrpc.Lightning/ListChannels \
-        uri:/lnrpc.Lightning/PendingChannels
+        uri:/lnrpc.Lightning/PendingChannels \
+        uri:/walletrpc.WalletKit/PendingSweeps
       ;;
     invoice)
       printf '%s\n' \
@@ -2268,12 +2270,40 @@ smoke_unsynced_chain_catchup() {
   echo "Unsynced-node smoke passed: a real 500-block backlog forced catch-up rejection, zero dispatch, and healthy adapter recovery."
 }
 
+observe_lightning_close_recovery() {
+  local node=$1
+  local macaroon=/root/.lnd/treeswap/observer.macaroon
+  local pending_channels pending_sweeps block_height observed_at
+  pending_channels=$(compose exec -T "$node" lncli --network=regtest \
+    --macaroonpath="$macaroon" pendingchannels)
+  pending_sweeps=$(compose exec -T "$node" lncli --network=regtest \
+    --macaroonpath="$macaroon" wallet pendingsweeps)
+  block_height=$(compose exec -T "$node" lncli --network=regtest \
+    --macaroonpath="$macaroon" getinfo | jq -er '.block_height | tonumber')
+  observed_at=$(date +%s)
+  jq -cn \
+    --argjson pendingChannels "$pending_channels" \
+    --argjson pendingSweeps "$pending_sweeps" \
+    --argjson blockHeight "$block_height" \
+    --argjson observedAt "$observed_at" \
+    '{pendingChannels:$pendingChannels,pendingSweeps:$pendingSweeps,blockHeight:$blockHeight,observedAt:$observedAt}' |
+    node "$LAB_DIR/../../scripts/evaluate-lightning-close-recovery.mjs"
+}
+
 smoke_force_close_recovery() {
   ensure_runtime_env
   start_lab >/dev/null
   local channel_point miner_address invoice payment_request payment_hash invoice_digest intent_digest
   local request_id operation envelope force_result active_channels pending_state bob_pending_state pending_count maturity_blocks
-  local decode_result recovered=false
+  local decode_result baseline_close_evidence pending_close_evidence alice_recovery_evidence bob_recovery_evidence
+  local recovered=false anchor_count
+
+  baseline_close_evidence=$(observe_lightning_close_recovery alice)
+  if ! jq -e '.status == "healthy" and (.reasonCodes | length) == 0' <<<"$baseline_close_evidence" >/dev/null; then
+    echo "Lightning close monitor did not accept the bounded baseline" >&2
+    jq -c '{status,reasonCodes}' <<<"$baseline_close_evidence" >&2
+    return 1
+  fi
 
   channel_point=$(compose exec -T alice lncli --network=regtest listchannels |
     jq -er '.channels[] | select(.active == true) | .channel_point' | head -1)
@@ -2309,6 +2339,13 @@ smoke_force_close_recovery() {
   done
   if (( active_channels != 0 || pending_count == 0 )); then
     echo "force-close did not remove the only active channel into a pending close" >&2
+    return 1
+  fi
+  pending_close_evidence=$(observe_lightning_close_recovery alice)
+  if ! jq -e '.status == "unsafe" and ((.reasonCodes | index("WAITING_CLOSE_CONFIRMATION")) != null or (.reasonCodes | index("PENDING_FORCE_CLOSE")) != null)' \
+    <<<"$pending_close_evidence" >/dev/null; then
+    echo "Lightning close monitor did not halt on the live pending close" >&2
+    jq -c '{status,reasonCodes}' <<<"$pending_close_evidence" >&2
     return 1
   fi
 
@@ -2375,6 +2412,23 @@ smoke_force_close_recovery() {
   fund_private_channel
   wait_for_active_channel alice
   wait_for_active_channel bob
+  alice_recovery_evidence=$(observe_lightning_close_recovery alice)
+  bob_recovery_evidence=$(observe_lightning_close_recovery bob)
+  if ! jq -e '.status == "healthy" and .pendingForceCloseChannels == 0 and .waitingCloseChannels == 0 and .nonAnchorSweeps == 0 and .timeSensitiveHtlcSweeps == 0' \
+    <<<"$alice_recovery_evidence" >/dev/null ||
+      ! jq -e '.status == "healthy" and .pendingForceCloseChannels == 0 and .waitingCloseChannels == 0 and .nonAnchorSweeps == 0 and .timeSensitiveHtlcSweeps == 0' \
+        <<<"$bob_recovery_evidence" >/dev/null; then
+    echo "Lightning close monitor did not accept the bounded recovered state" >&2
+    jq -cn --argjson alice "$alice_recovery_evidence" --argjson bob "$bob_recovery_evidence" \
+      '{alice:{status:$alice.status,reasonCodes:$alice.reasonCodes},bob:{status:$bob.status,reasonCodes:$bob.reasonCodes}}' >&2
+    return 1
+  fi
+  anchor_count=$(jq -rn --argjson alice "$alice_recovery_evidence" --argjson bob "$bob_recovery_evidence" \
+    '$alice.uneconomicAnchorSweeps + $bob.uneconomicAnchorSweeps')
+  if (( anchor_count == 0 )); then
+    echo "pinned LND did not expose the expected bounded uneconomic anchor exception" >&2
+    return 1
+  fi
   assert_adapter_payment_not_found "$intent_digest" "$payment_hash" "$invoice_digest" 10000
   request_id="0x$(openssl rand -hex 32)"
   decode_result=$(call_adapter payer-adapter /lnrpc.Lightning/DecodePayReq \
@@ -2384,7 +2438,7 @@ smoke_force_close_recovery() {
     '.result.paymentHash == $paymentHash and .result.amountSats == "10000"' <<<"$decode_result" >/dev/null
 
   unset payment_request envelope
-  echo "Force-close smoke passed: new exposure stopped, the CSV close fully swept, zero dispatch was proven, and a fresh balanced channel restored service."
+  echo "Force-close smoke passed: new exposure and the close monitor halted, the CSV close fully swept, bounded anchors remained aggregate-only, and a fresh balanced channel restored service."
 }
 
 smoke_route_and_duplicate_failure() {

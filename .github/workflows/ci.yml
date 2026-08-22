@@ -100,6 +100,7 @@ jobs:
       - run: node --check lib/solver-daemon-runtime.mjs
       - run: node --check lib/solver-private-packet.mjs
       - run: node --check lib/safety-monitor.mjs
+      - run: node --check lib/lightning-close-monitor.mjs
       - run: node --check lib/cross-chain-deadline-evidence.mjs
       - run: node --check lib/live-bit-cross-chain-deadline-evidence.mjs
       - run: node --check lib/bit-deployment-observer.mjs
@@ -122,6 +123,7 @@ jobs:
       - run: bash -n scripts/run-cross-chain-deadline-smoke.sh
       - run: bash -n scripts/run-live-bit-cross-chain-deadline-smoke.sh
       - run: node --check scripts/run-local-qualification.mjs
+      - run: node --check scripts/evaluate-lightning-close-recovery.mjs
       - run: node --check scripts/observe-bit-deployment.mjs
       - run: node --check scripts/compare-bit-observations.mjs
       - run: node --check scripts/prepare-bit-provider-evidence.mjs
@@ -165,6 +167,7 @@ jobs:
       - run: npm run test:coordinator-evm
       - run: npm run test:evm-outbox-faults
       - run: npm run test:safety-monitor
+      - run: node --test tests/lightning-close-monitor.test.mjs
       - run: npm run test:deployment-rehearsal
       - run: npm run test:escrow-reorg
       - run: npm run test:coordinator-runtime
