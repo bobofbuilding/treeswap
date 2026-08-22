@@ -51,6 +51,29 @@ x-adapter-service: &adapter-service
     timeout: 2s
     retries: 30
 
+x-close-collector: &close-collector
+  build:
+    context: ../..
+    dockerfile: infra/lightning-close-collector/Dockerfile
+  image: treeswap/lightning-close-collector:regtest
+  profiles: [tools]
+  read_only: true
+  cap_drop: [ALL]
+  security_opt: [no-new-privileges:true]
+  tmpfs:
+    - /tmp:rw,noexec,nosuid,nodev,size=8m
+  environment:
+    LND_REST_URL: https://alice:8080
+    LND_MACAROON_PATH: /run/treeswap/credentials/role.macaroon
+    LND_TLS_CERT_PATH: /run/treeswap/credentials/tls.cert
+    LND_TLS_CERT_FINGERPRINT: ${ALICE_TLS_FINGERPRINT}
+    COLLECTOR_SIGNING_PRIVATE_KEY_PATH: /run/treeswap/credentials/signing-private.pem
+    LIGHTNING_NODE_COMMITMENT: ${ALICE_CLOSE_NODE_COMMITMENT}
+    ATTESTATION_LIFETIME_SECONDS: "30"
+    LND_REQUEST_TIMEOUT_MS: "5000"
+    MAXIMUM_LND_RESPONSE_BYTES: "1048576"
+  networks: [regtest]
+
 services:
   bitcoind:
     image: bitcoin/bitcoin:31.1@sha256:da25cedc66b1daefff9f412ee196c901a899c3fa68a33b20849c3e08b5c40d63
@@ -199,6 +222,44 @@ services:
       - ${BOB_CAPACITY_PRIVATE_KEY_PATH}:/capacity-private.pem:ro
     networks: [regtest]
 
+  export-alice-close-collector-a-credential:
+    image: node:22.22.0-alpine@sha256:e4bf2a82ad0a4037d28035ae71529873c069b13eb0455466ae0bc13363826e34
+    profiles: [tools]
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - >-
+        cp -f /source/tls.cert /target/tls.cert;
+        cp -f /source/treeswap/close-observer-a.macaroon /target/role.macaroon;
+        cp -f /signing-private.pem /target/signing-private.pem;
+        chown 1000:1000 /target/tls.cert /target/role.macaroon /target/signing-private.pem;
+        chmod 0400 /target/role.macaroon /target/signing-private.pem;
+        chmod 0444 /target/tls.cert
+    volumes:
+      - alice-data:/source:ro
+      - alice-close-collector-a-credentials:/target
+      - ${ALICE_CLOSE_COLLECTOR_A_PRIVATE_KEY_PATH}:/signing-private.pem:ro
+    networks: [regtest]
+
+  export-alice-close-collector-b-credential:
+    image: node:22.22.0-alpine@sha256:e4bf2a82ad0a4037d28035ae71529873c069b13eb0455466ae0bc13363826e34
+    profiles: [tools]
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - >-
+        cp -f /source/tls.cert /target/tls.cert;
+        cp -f /source/treeswap/close-observer-b.macaroon /target/role.macaroon;
+        cp -f /signing-private.pem /target/signing-private.pem;
+        chown 1000:1000 /target/tls.cert /target/role.macaroon /target/signing-private.pem;
+        chmod 0400 /target/role.macaroon /target/signing-private.pem;
+        chmod 0444 /target/tls.cert
+    volumes:
+      - alice-data:/source:ro
+      - alice-close-collector-b-credentials:/target
+      - ${ALICE_CLOSE_COLLECTOR_B_PRIVATE_KEY_PATH}:/signing-private.pem:ro
+    networks: [regtest]
+
   export-coordinator-private-key:
     image: node:22.22.0-alpine@sha256:e4bf2a82ad0a4037d28035ae71529873c069b13eb0455466ae0bc13363826e34
     profiles: [tools]
@@ -268,6 +329,44 @@ services:
       - bob-invoice-credentials:/run/treeswap/credentials:ro
       - invoice-adapter-state:/data
 
+  lightning-close-collector-a:
+    <<: *close-collector
+    depends_on:
+      alice:
+        condition: service_started
+    environment:
+      LND_REST_URL: https://alice:8080
+      LND_MACAROON_PATH: /run/treeswap/credentials/role.macaroon
+      LND_TLS_CERT_PATH: /run/treeswap/credentials/tls.cert
+      LND_TLS_CERT_FINGERPRINT: ${ALICE_TLS_FINGERPRINT}
+      COLLECTOR_SIGNING_PRIVATE_KEY_PATH: /run/treeswap/credentials/signing-private.pem
+      LIGHTNING_NODE_COMMITMENT: ${ALICE_CLOSE_NODE_COMMITMENT}
+      COLLECTOR_ID: alice-close-a
+      ATTESTATION_LIFETIME_SECONDS: "30"
+      LND_REQUEST_TIMEOUT_MS: "5000"
+      MAXIMUM_LND_RESPONSE_BYTES: "1048576"
+    volumes:
+      - alice-close-collector-a-credentials:/run/treeswap/credentials:ro
+
+  lightning-close-collector-b:
+    <<: *close-collector
+    depends_on:
+      alice:
+        condition: service_started
+    environment:
+      LND_REST_URL: https://alice:8080
+      LND_MACAROON_PATH: /run/treeswap/credentials/role.macaroon
+      LND_TLS_CERT_PATH: /run/treeswap/credentials/tls.cert
+      LND_TLS_CERT_FINGERPRINT: ${ALICE_TLS_FINGERPRINT}
+      COLLECTOR_SIGNING_PRIVATE_KEY_PATH: /run/treeswap/credentials/signing-private.pem
+      LIGHTNING_NODE_COMMITMENT: ${ALICE_CLOSE_NODE_COMMITMENT}
+      COLLECTOR_ID: alice-close-b
+      ATTESTATION_LIFETIME_SECONDS: "30"
+      LND_REQUEST_TIMEOUT_MS: "5000"
+      MAXIMUM_LND_RESPONSE_BYTES: "1048576"
+    volumes:
+      - alice-close-collector-b-credentials:/run/treeswap/credentials:ro
+
   coordinator-smoke:
     build:
       context: ../..
@@ -322,6 +421,8 @@ volumes:
   charlie-data:
   alice-payer-credentials:
   bob-invoice-credentials:
+  alice-close-collector-a-credentials:
+  alice-close-collector-b-credentials:
   payer-adapter-state:
   invoice-adapter-state:
   coordinator-credentials:

@@ -51,6 +51,7 @@
     "regtest:unsynced-chain-smoke": "bash infra/regtest/lab.sh unsynced-chain-smoke",
     "regtest:force-close-smoke": "bash infra/regtest/lab.sh force-close-smoke",
     "monitor:lightning-close": "node scripts/evaluate-lightning-close-recovery.mjs",
+    "verify:lightning-close-collectors": "node scripts/verify-lightning-close-collector-quorum.mjs",
     "regtest:route-fault-smoke": "bash infra/regtest/lab.sh route-fault-smoke",
     "regtest:htlc-cutoff-smoke": "bash infra/regtest/lab.sh htlc-cutoff-smoke",
     "regtest:coordinator-smoke": "bash infra/regtest/lab.sh coordinator-smoke",
