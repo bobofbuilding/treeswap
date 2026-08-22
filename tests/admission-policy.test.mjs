@@ -70,6 +70,7 @@ function offer(overrides = {}) {
     direction: "lightning-to-bit",
     bitAmountWei: 10n * BIT,
     lightningAmountSats: 1_000n,
+    maxRoutingFeeSats: 0n,
     capacityEpoch: 7,
     expiresAt: NOW + 20,
     solverSigned: true,
@@ -142,6 +143,20 @@ test("caps unknown BIT-to-Lightning solvers and promotes only from completed-fil
   assert.equal(withinCap.exposureTier, "unknown");
   assert.equal(withinCap.exposureCapSats, 5_000n);
 
+  const routingAboveCap = assessFirmOffer({
+    offer: offer({
+      direction: "bit-to-lightning",
+      bitAmountWei: 0n,
+      lightningAmountSats: 5_000n,
+      maxRoutingFeeSats: 1n,
+    }),
+    solver: unknown,
+    policy,
+    now: NOW,
+  });
+  assert.equal(routingAboveCap.allowed, false);
+  assert.match(routingAboveCap.reasons.join("; "), /unknown solver BIT-to-Lightning cap exceeded/);
+
   const aboveCap = assessFirmOffer({
     offer: offer({ direction: "bit-to-lightning", bitAmountWei: 0n, lightningAmountSats: 5_001n }),
     solver: unknown,
@@ -180,6 +195,7 @@ test("atomically accounts for capacity committed to a firm offer", () => {
   const assessment = assessFirmOffer({ offer: offer(), solver: current, policy, now: NOW });
   const reserved = reserveFirmOfferCapacity({ solver: current, assessment });
   assert.equal(reserved.committedBitWei, 10n * BIT);
+  assert.equal(reserved.committedLightningSats, 1_000n);
   assert.equal(reserved.activeFirmQuotes, 1);
 
   const released = recordFirmOfferOutcome({
@@ -189,6 +205,7 @@ test("atomically accounts for capacity committed to a firm offer", () => {
     policy,
   });
   assert.equal(released.committedBitWei, 0n);
+  assert.equal(released.committedLightningSats, 0n);
   assert.equal(released.successfulFills, 10n);
   assert.equal(released.consecutiveFailures, 0);
 });

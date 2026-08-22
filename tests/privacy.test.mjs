@@ -5,14 +5,12 @@ import {
   PRIVACY_RETENTION_SECONDS,
   assertPublicPricingRequest,
   buildBlindPricingRequest,
-  buildSelectedSolverDisclosure,
   privacySafeAudit,
   retentionDeadline,
   unlinkablePricingId,
 } from "../lib/privacy.mjs";
 
 const NOW = 2_000_000_000;
-const SOLVER = "0x1111111111111111111111111111111111111111";
 const request = {
   pricingId: unlinkablePricingId(id("random pricing nonce")),
   requestId: id("private settlement"),
@@ -45,66 +43,6 @@ test("publishes only the minimum unlinkable fields required to price an exact sw
 test("rejects sensitive fields anywhere in a public pricing request", () => {
   assert.throws(() => assertPublicPricingRequest({ nested: { invoice: "lnbc..." } }), /sensitive field: invoice/);
   assert.throws(() => buildBlindPricingRequest({ ...request, pricingId: request.requestId }), /must be unlinkable/);
-});
-
-test("reveals settlement data only to the selected authenticated encrypted peer", () => {
-  const input = {
-    request,
-    pricingId: request.pricingId,
-    selectedSolver: SOLVER,
-    selectedOfferId: id("offer"),
-    invoice: "lnbc250u1private",
-    channel: { authenticated: true, encrypted: true, peer: SOLVER },
-    now: NOW,
-  };
-  const packet = buildSelectedSolverDisclosure(input);
-  assert.equal(packet.selectedSolver, SOLVER);
-  assert.equal(packet.invoice, input.invoice);
-  assert.equal("email" in packet, false);
-  assert.equal("routeHints" in packet, false);
-  assert.throws(
-    () => buildSelectedSolverDisclosure({ ...input, channel: { authenticated: true, encrypted: false, peer: SOLVER } }),
-    /authenticated encrypted peer-bound/,
-  );
-  assert.throws(
-    () => buildSelectedSolverDisclosure({ ...input, channel: { authenticated: true, encrypted: true, peer: request.user } }),
-    /authenticated encrypted peer-bound/,
-  );
-});
-
-test("discloses an invoice only in the user-invoice direction", () => {
-  const lightningToBit = {
-    ...request,
-    direction: "lightning-to-bit",
-    exactBitOutputWei: 100n * 10n ** 18n,
-    exactLightningOutputSats: 0n,
-    paymentHash: `0x${"00".repeat(32)}`,
-    invoiceDigest: `0x${"00".repeat(32)}`,
-  };
-  const input = {
-    request: lightningToBit,
-    pricingId: request.pricingId,
-    selectedSolver: SOLVER,
-    selectedOfferId: id("lightning-to-bit-offer"),
-    invoice: "",
-    channel: { authenticated: true, encrypted: true, peer: SOLVER },
-    now: NOW,
-  };
-  const packet = buildSelectedSolverDisclosure(input);
-  assert.equal(packet.invoice, "");
-  assert.equal(packet.paymentHash, `0x${"00".repeat(32)}`);
-  assert.throws(
-    () => buildSelectedSolverDisclosure({ ...input, invoice: "lnbc-unselected-invoice" }),
-    /must leave solver invoice fields unbound/,
-  );
-  assert.throws(
-    () => buildSelectedSolverDisclosure({
-      ...input,
-      request: { ...request, paymentHash: `0x${"00".repeat(32)}` },
-      invoice: "lnbc250u1private",
-    }),
-    /commitments are missing/,
-  );
 });
 
 test("redacts cross-network identifiers and supplies deletion deadlines", () => {

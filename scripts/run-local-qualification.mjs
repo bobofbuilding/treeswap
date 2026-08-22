@@ -158,6 +158,8 @@ const configurationFiles = [
   "lib/published-source.mjs",
   "lib/admission-policy.mjs",
   "lib/capabilities.mjs",
+  "lib/invoice-policy.mjs",
+  "lib/privacy.mjs",
   "lib/rfq.mjs",
   "lib/rfq-delivery.mjs",
   "lib/blind-rfq.mjs",
