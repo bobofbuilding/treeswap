@@ -27,6 +27,8 @@ Each direction has its own starting fee. The BIT → Lightning fee starts higher
 
 The fee is a risk and allocation control, not a substitute for the market-price circuit breaker.
 
+For public-testnet adoption, the exact two base fees, maximum fee, reserve floor, and scarcity start are canonical fields in the signed [adoption policy](./ADOPTION_POLICY.md). Candidate preparation requires its eight limits and reserves to equal the release record and rejects fees above either deployed escrow's immutable ceiling.
+
 ## BIT proxy monitor and onchain gate
 
 The monitor reads the standardized ERC-1967 implementation slot:

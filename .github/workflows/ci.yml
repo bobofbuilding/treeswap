@@ -87,6 +87,7 @@ jobs:
       - run: node --check lib/public-testnet-evidence.mjs
       - run: node --check lib/public-testnet-bootstrap-evidence.mjs
       - run: node --check lib/independent-review-evidence.mjs
+      - run: node --check lib/adoption-policy.mjs
       - run: node --check lib/operational-readiness-evidence.mjs
       - run: node --check lib/public-testnet-release-candidate.mjs
       - run: node --check lib/solver-capability.mjs

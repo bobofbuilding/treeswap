@@ -59,6 +59,9 @@ test("verifies five signed operational roles and derives complete release eviden
   assert.equal(evidence.participants.length, 5);
   assert.equal(evidence.drills.length, REQUIRED_OPERATIONAL_DRILLS.length);
   assert.equal(evidence.alertChannelEvidenceDigests.length, 2);
+  assert.equal(evidence.adoptionPolicy.fees.baseBitToLightningBps, 72);
+  assert.equal(evidence.adoptionPolicy.fees.baseLightningToBitBps, 18);
+  assert.match(evidence.adoptionPolicyDigest, /^0x[0-9a-f]{64}$/);
   assert.match(evidence.recordDigest, /^0x[0-9a-f]{64}$/);
   assert.equal(buildOperationalReadinessEvidenceSummary(value.verification).drillCount, 14);
   assert.equal(value.verification.authorizations.funding, false);
@@ -162,6 +165,20 @@ test("rejects weak role separation, alert routing, schema drift, and secret-bear
   const incompletePolicy = fresh();
   incompletePolicy.policy.requiredDrills.pop();
   assert.throws(() => prepareOperationalReadinessEvidenceCandidate(incompletePolicy), /complete exact drill set/);
+
+  const wrongSupportOwner = fresh();
+  wrongSupportOwner.adoptionPolicy.supportOwnerId = id("substituted support owner").toLowerCase();
+  assert.throws(
+    () => prepareOperationalReadinessEvidenceCandidate(wrongSupportOwner),
+    /support and incident owners/,
+  );
+
+  const shortAdoptionWindow = fresh();
+  shortAdoptionWindow.adoptionPolicy.validUntil = shortAdoptionWindow.record.validUntil - 1;
+  assert.throws(
+    () => prepareOperationalReadinessEvidenceCandidate(shortAdoptionWindow),
+    /outside the exact adoption policy interval/,
+  );
 });
 
 test("rejects missing, substituted, replayed, stale, future, and mutated attestations", async () => {
@@ -195,7 +212,10 @@ test("rejects missing, substituted, replayed, stale, future, and mutated attesta
 
   const mutated = { ...input, record: structuredClone(input.record) };
   mutated.record.artifacts.supportPolicy = id("substituted support policy").toLowerCase();
-  assert.throws(() => verifyOperationalReadinessEvidence({ ...mutated, now: PREPARED_AT + 60 }), /signature is invalid/);
+  assert.throws(
+    () => verifyOperationalReadinessEvidence({ ...mutated, now: PREPARED_AT + 60 }),
+    /does not match the exact adoption policy/,
+  );
 });
 
 test("typed payload is restricted to one exact operational participant", async () => {
@@ -215,6 +235,7 @@ test("typed payload is restricted to one exact operational participant", async (
   });
   assert.equal(typed.value.operationsId, input.record.operationsId);
   assert.equal(typed.value.role, participant.role);
+  assert.match(typed.value.adoptionPolicyDigest, /^0x[0-9a-f]{64}$/);
   assert.throws(() => buildOperationalReadinessAttestationMessage({
     ...input,
     role: participant.role,
@@ -241,6 +262,7 @@ test("operator preparation and verification CLIs expose no signing or funding au
   try {
     const recordPath = join(directory, "record.json");
     const policyPath = join(directory, "policy.json");
+    const adoptionPolicyPath = join(directory, "adoption-policy.json");
     const attestationsPath = join(directory, "attestations.json");
     const isolationRecordPath = join(directory, "isolation-record.json");
     const isolationPolicyPath = join(directory, "isolation-policy.json");
@@ -248,6 +270,7 @@ test("operator preparation and verification CLIs expose no signing or funding au
     await Promise.all([
       writeFile(recordPath, JSON.stringify(input.record)),
       writeFile(policyPath, JSON.stringify(input.policy)),
+      writeFile(adoptionPolicyPath, JSON.stringify(input.adoptionPolicy)),
       writeFile(attestationsPath, JSON.stringify(input.attestations)),
       writeFile(isolationRecordPath, JSON.stringify(serviceIsolation.candidate.record)),
       writeFile(isolationPolicyPath, JSON.stringify(serviceIsolation.candidate.policy)),
@@ -258,6 +281,7 @@ test("operator preparation and verification CLIs expose no signing or funding au
       "scripts/prepare-operational-readiness-attestation.mjs",
       "--record", recordPath,
       "--policy", policyPath,
+      "--adoption-policy", adoptionPolicyPath,
       "--isolation-record", isolationRecordPath,
       "--isolation-policy", isolationPolicyPath,
       "--isolation-attestations", isolationAttestationsPath,
@@ -272,6 +296,7 @@ test("operator preparation and verification CLIs expose no signing or funding au
       "scripts/verify-operational-readiness-evidence.mjs",
       "--record", recordPath,
       "--policy", policyPath,
+      "--adoption-policy", adoptionPolicyPath,
       "--attestations", attestationsPath,
       "--isolation-record", isolationRecordPath,
       "--isolation-policy", isolationPolicyPath,

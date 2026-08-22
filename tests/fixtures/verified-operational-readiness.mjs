@@ -5,6 +5,7 @@ import {
   buildOperationalReadinessAttestationMessage,
   verifyOperationalReadinessEvidence,
 } from "../../lib/operational-readiness-evidence.mjs";
+import { buildAdoptionPolicyEvidence } from "../../lib/adoption-policy.mjs";
 import { buildServiceIsolationReleaseEvidence } from "../../lib/service-isolation-evidence.mjs";
 import { createVerifiedServiceIsolationFixture } from "./verified-service-isolation.mjs";
 
@@ -58,30 +59,30 @@ export function fixture({
         alertDelivery: id("operational alert delivery evidence").toLowerCase(),
         backupRestore: upstream.candidate.record.artifacts.backupRestore,
         incidentDrills: upstream.candidate.record.artifacts.incidentDrills,
-        lossAllocation: id("operational loss allocation policy").toLowerCase(),
+        lossAllocation: id("operational loss allocation placeholder").toLowerCase(),
         monitoring: upstream.candidate.record.artifacts.monitoring,
-        privacyRetention: id("operational privacy and deletion evidence").toLowerCase(),
+        privacyRetention: id("operational privacy placeholder").toLowerCase(),
         providerQuorum: upstream.candidate.record.artifacts.providerQuorum,
         reconciliation: upstream.candidate.record.reconciliation.reconciliationDigest,
         serviceIsolation: serviceIsolation.releaseEvidence?.evidenceDigest
           ?? buildServiceIsolationReleaseEvidence(serviceIsolation.verification).evidenceDigest,
         solverOperations: upstream.candidate.record.artifacts.solverOperations,
-        supportPolicy: id("operational support and escalation policy").toLowerCase(),
+        supportPolicy: id("operational support placeholder").toLowerCase(),
         testQualification: upstream.candidate.record.artifacts.testQualification,
       }
     : {
         alertDelivery: id("bootstrap operational alert delivery evidence").toLowerCase(),
         backupRestore: upstream.candidate.record.artifacts.backupRestore,
         incidentDrills: upstream.candidate.record.artifacts.incidentDrills,
-        lossAllocation: id("bootstrap operational loss allocation policy").toLowerCase(),
+        lossAllocation: id("bootstrap operational loss allocation placeholder").toLowerCase(),
         monitoring: upstream.candidate.record.artifacts.monitoring,
-        privacyRetention: id("bootstrap operational privacy and deletion evidence").toLowerCase(),
+        privacyRetention: id("bootstrap operational privacy placeholder").toLowerCase(),
         providerQuorum: upstream.candidate.record.artifacts.providerQuorum,
         reconciliation: id("bootstrap operational zero-liability reconciliation").toLowerCase(),
         serviceIsolation: serviceIsolation.releaseEvidence?.evidenceDigest
           ?? buildServiceIsolationReleaseEvidence(serviceIsolation.verification).evidenceDigest,
         solverOperations: upstream.candidate.record.artifacts.solverOperations,
-        supportPolicy: id("bootstrap operational support and escalation policy").toLowerCase(),
+        supportPolicy: id("bootstrap operational support placeholder").toLowerCase(),
         testQualification: upstream.candidate.record.artifacts.testQualification,
       };
   const scenarioEvidence = new Map(
@@ -89,8 +90,116 @@ export function fixture({
       ? upstream.candidate.record.scenarios.map((scenario) => [scenario.name, scenario.evidenceDigest])
       : [],
   );
+  const modeLimits = fundingMode === "operator-testnet"
+    ? {
+        maxDailyLightningSats: "100000",
+        maxEpochSats: "50000",
+        maxInFlightSats: "10000",
+        maxPriceBandBps: "500",
+        maxRoutingFeeSats: "100",
+        maxSwapSats: "5000",
+        minBitReserveWei: "1000000000000000000",
+        minLightningReserveSats: "25000",
+      }
+    : {
+        maxDailyLightningSats: "10000",
+        maxEpochSats: "5000",
+        maxInFlightSats: "1000",
+        maxPriceBandBps: "250",
+        maxRoutingFeeSats: "50",
+        maxSwapSats: "500",
+        minBitReserveWei: "1000000000000000000",
+        minLightningReserveSats: "25000",
+      };
+  const upstreamAdmissionPolicy = fundingMode === "operator-testnet"
+    ? upstream.candidate.policy.admissionPolicyDigest
+    : upstream.candidate.record.artifacts.admissionPolicy;
+  const upstreamRiskPolicy = fundingMode === "operator-testnet"
+    ? upstream.candidate.policy.riskPolicyDigest
+    : upstream.candidate.record.artifacts.riskPolicy;
+  const upstreamFeeSchedule = fundingMode === "operator-testnet"
+    ? upstream.candidate.policy.feeScheduleDigest
+    : upstream.candidate.record.artifacts.feeSchedule;
+  const adoptionPolicy = {
+    schema: "treeswap.adoption-policy.v1",
+    environment: "public-testnet",
+    fundingMode,
+    chainId: deployment.verification.record.chainId,
+    verifyingContract: deployment.verification.record.verifyingContract,
+    reviewedBuildCommit: deployment.verification.record.reviewedBuildCommit,
+    protocolVersion,
+    deploymentManifestDigest: deployment.verification.record.manifestDigest,
+    admissionPolicyDigest: upstreamAdmissionPolicy,
+    riskPolicyDigest: upstreamRiskPolicy,
+    feeScheduleDigest: upstreamFeeSchedule,
+    preparedAt,
+    validUntil: preparedAt + 3_600,
+    supportOwnerId: participants.find((participant) => participant.role === "support-owner").operatorId,
+    incidentCommanderId: participants.find((participant) => participant.role === "incident-commander").operatorId,
+    limits: modeLimits,
+    fees: {
+      baseBitToLightningBps: 72,
+      baseLightningToBitBps: 18,
+      maxFeeBps: 100,
+      reserveFloorBps: 2_000,
+      scarcityStartsBps: 6_000,
+    },
+    liveness: {
+      bondPolicy: "no-bond-objective-history-only",
+      establishedSolverMaxBitToLightningSats: fundingMode === "operator-testnet" ? "5000" : "500",
+      lastLookAllowed: false,
+      maxActiveFirmQuotesPerSolver: 2,
+      maxCapacityAgeSeconds: 30,
+      maxConsecutiveFailures: 2,
+      maxFirmQuoteTtlSeconds: 30,
+      maxGlobalBitToLightningInFlightSats: fundingMode === "operator-testnet" ? "10000" : "1000",
+      minimumCompletedFillsForEstablished: 20,
+      minimumReliabilityBps: 9_000,
+      minimumReliabilitySample: 20,
+      partialFillsAllowed: false,
+      unknownSolverMaxBitToLightningSats: fundingMode === "operator-testnet" ? "500" : "100",
+    },
+    lossAllocation: {
+      automaticReimbursement: false,
+      inventoryOwnerBearsCustodyRisk: true,
+      protocolInsuranceFund: false,
+      solverBearsLightningDeliveryFailure: true,
+      solverPaysLightningRoutingFees: true,
+      unresolvedIncidentAction: "halt-and-case-review",
+      userBearsOwnWalletAndNetworkFees: true,
+    },
+    privacy: {
+      emailDeliveryEnabled: false,
+      onchainLinkageDisclosed: true,
+      preimageLoggingAllowed: false,
+      pricingRequestRetentionSeconds: 600,
+      rawInvoiceLoggingAllowed: false,
+      rawTerminalPacketRetentionSeconds: 3_600,
+      receiptRetentionSeconds: 2_592_000,
+      selectedSolverMayLinkBothLegs: true,
+    },
+    support: {
+      maxIncidentAcknowledgementSeconds: 900,
+      maxUserResponseSeconds: 172_800,
+      publicIncidentUpdates: true,
+      securityUri: "https://github.com/bobofbuilding/treeswap/security/policy",
+      statusUri: "https://github.com/bobofbuilding/treeswap/actions",
+      supportUri: "https://github.com/bobofbuilding/treeswap/issues",
+    },
+    upgrades: {
+      activeLiabilityMigrationAllowed: false,
+      bitImplementationChangeAction: "halt-review-new-observation",
+      bitPauseAction: "halt-until-unpaused-and-reviewed",
+      emergencyAuthorityMayIncreaseRisk: false,
+      treeswapContractChangeAction: "deploy-new-immutable-release",
+    },
+  };
+  const adoption = buildAdoptionPolicyEvidence(adoptionPolicy);
+  artifacts.lossAllocation = adoption.lossAllocationDigest;
+  artifacts.privacyRetention = adoption.privacyRetentionDigest;
+  artifacts.supportPolicy = adoption.supportPolicyDigest;
   const record = {
-    schema: "treeswap.operational-readiness-evidence.v2",
+    schema: "treeswap.operational-readiness-evidence.v3",
     operationsId: id(`operational readiness:${fundingMode}:${preparedAt}`).toLowerCase(),
     environment: "public-testnet",
     fundingMode,
@@ -120,7 +229,7 @@ export function fixture({
     }),
   };
   const policy = {
-    schema: "treeswap.operational-readiness-evidence-policy.v2",
+    schema: "treeswap.operational-readiness-evidence-policy.v3",
     environment: record.environment,
     fundingMode: record.fundingMode,
     chainId: record.chainId,
@@ -137,6 +246,7 @@ export function fixture({
     requiredDrills: [...REQUIRED_OPERATIONAL_DRILLS],
   };
   return {
+    adoptionPolicy,
     attestations: [],
     policy,
     record,
@@ -149,6 +259,7 @@ export async function sign(value) {
   value.attestations = [];
   for (const participant of value.record.participants) {
     const typed = buildOperationalReadinessAttestationMessage({
+      adoptionPolicy: value.adoptionPolicy,
       record: value.record,
       policy: value.policy,
       serviceIsolationVerification: value.serviceIsolationVerification,

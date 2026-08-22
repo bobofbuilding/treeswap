@@ -4,10 +4,11 @@ import { readBoundedJson } from "../lib/closed-testnet-deployment-files.mjs";
 import { buildOperationalReadinessAttestationMessage } from "../lib/operational-readiness-evidence.mjs";
 import { verifyServiceIsolationEvidence } from "../lib/service-isolation-evidence.mjs";
 
-const USAGE = "Usage: prepare-operational-readiness-attestation --record record.json --policy policy.json --isolation-record isolation-record.json --isolation-policy isolation-policy.json --isolation-attestations isolation-attestations.json --role role --operator-id 0x...";
+const USAGE = "Usage: prepare-operational-readiness-attestation --record record.json --policy policy.json --adoption-policy adoption-policy.json --isolation-record isolation-record.json --isolation-policy isolation-policy.json --isolation-attestations isolation-attestations.json --role role --operator-id 0x...";
 
 function argumentsFromCommandLine(values) {
   const allowed = new Set([
+    "--adoption-policy",
     "--isolation-attestations",
     "--isolation-policy",
     "--isolation-record",
@@ -16,7 +17,7 @@ function argumentsFromCommandLine(values) {
     "--record",
     "--role",
   ]);
-  if (values.length !== 14) throw new Error(USAGE);
+  if (values.length !== 16) throw new Error(USAGE);
   const result = {};
   for (let index = 0; index < values.length; index += 2) {
     const flag = values[index];
@@ -28,9 +29,10 @@ function argumentsFromCommandLine(values) {
 }
 
 const args = argumentsFromCommandLine(process.argv.slice(2));
-const [record, policy, isolationRecord, isolationPolicy, isolationAttestations] = await Promise.all([
+const [record, policy, adoptionPolicy, isolationRecord, isolationPolicy, isolationAttestations] = await Promise.all([
   readBoundedJson(args["--record"], "operational readiness record"),
   readBoundedJson(args["--policy"], "operational readiness policy"),
+  readBoundedJson(args["--adoption-policy"], "adoption policy"),
   readBoundedJson(args["--isolation-record"], "service isolation record"),
   readBoundedJson(args["--isolation-policy"], "service isolation policy"),
   readBoundedJson(args["--isolation-attestations"], "service isolation attestations"),
@@ -42,6 +44,7 @@ const serviceIsolationVerification = verifyServiceIsolationEvidence({
   now: record.preparedAt,
 });
 const typed = buildOperationalReadinessAttestationMessage({
+  adoptionPolicy,
   record,
   policy,
   serviceIsolationVerification,

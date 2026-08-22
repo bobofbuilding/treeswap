@@ -31,6 +31,7 @@ import { createVerifiedServiceIsolationFixture } from "./fixtures/verified-servi
 import { verifyPublicTestnetBootstrapEvidence } from "../lib/public-testnet-bootstrap-evidence.mjs";
 import { verifyIndependentReviewEvidence } from "../lib/independent-review-evidence.mjs";
 import { verifyOperationalReadinessEvidence } from "../lib/operational-readiness-evidence.mjs";
+import { buildAdoptionPolicyEvidence } from "../lib/adoption-policy.mjs";
 import {
   buildPublicTestnetReleaseApproval,
   buildPublicTestnetReleaseCandidateSummary,
@@ -388,6 +389,7 @@ function bootstrapRecordTemplate() {
     maxRoutingFeeSats: "50",
     maxSwapSats: "500",
   };
+  value.features.publicPermissionlessExecution = false;
   return value;
 }
 
@@ -475,6 +477,7 @@ test("derives one exact release candidate from verified deployment, campaign, an
     ])));
   assert.equal(candidate.evidence.independentReviewRecordDigest, review.verification.recordDigest);
   assert.equal(candidate.evidence.operationalReadinessRecordDigest, operations.verification.recordDigest);
+  assert.equal(candidate.evidence.adoptionPolicyDigest, operations.verification.adoptionPolicyDigest);
   assert.deepEqual(buildReleaseApprovalMessage(candidate.record, candidate.policy), candidate.approval.message);
   assert.equal(buildPublicTestnetReleaseApproval(candidate).value.recordDigest, candidate.recordDigest);
   assert.equal(
@@ -646,6 +649,7 @@ test("derives a distinct tiny-limit bootstrap candidate before campaign evidence
   assert.equal(candidate.record.limits.maxSwapSats, "500");
   assert.equal(candidate.record.counts.independentMonitors, 2);
   assert.notEqual(candidate.evidence.bootstrapEvidenceDigest, bootstrap.verification.recordDigest);
+  assert.equal(candidate.evidence.adoptionPolicyDigest, operations.verification.adoptionPolicyDigest);
   assert.notEqual(candidate.record.evidenceDigests.solverOperations, bootstrap.candidate.record.artifacts.solverOperations);
   assert.equal(
     candidate.record.approvalProviderSetDigest,
@@ -657,7 +661,7 @@ test("derives a distinct tiny-limit bootstrap candidate before campaign evidence
   assert.equal(buildPublicTestnetReleaseApproval(candidate).value.recordDigest, candidate.recordDigest);
   assert.equal(
     inspectPreparedPublicTestnetReleaseCandidate(structuredClone(candidate)).candidateSchema,
-    "treeswap.prepared-public-testnet-bootstrap-release-candidate.v3",
+    "treeswap.prepared-public-testnet-bootstrap-release-candidate.v4",
   );
 
   assert.throws(() => preparePublicTestnetBootstrapReleaseCandidate({
@@ -715,7 +719,20 @@ test("derives a distinct tiny-limit bootstrap candidate before campaign evidence
       independentReviewVerification: review.verification,
       operationalReadinessVerification: operations.verification,
     }),
-    /testnet-bootstrap maximum/,
+    /adoption maxDailyLightningSats does not match/,
+  );
+  const permissionlessBootstrap = bootstrapRecordTemplate();
+  permissionlessBootstrap.features.publicPermissionlessExecution = true;
+  assert.throws(
+    () => preparePublicTestnetBootstrapReleaseCandidate({
+      recordTemplate: permissionlessBootstrap,
+      policyTemplate: bootstrapPolicyTemplate(deployment.verification.manifest),
+      bootstrapEvidenceVerification: bootstrap.verification,
+      deploymentPromotionVerification: deployment.verification,
+      independentReviewVerification: review.verification,
+      operationalReadinessVerification: operations.verification,
+    }),
+    /must keep public permissionless execution disabled/,
   );
   const copied = structuredClone(deployment.verification);
   assert.throws(
@@ -851,6 +868,19 @@ test("requires exact operational roles, alert channels, drills, artifacts, and r
     ...base,
     operationalReadinessVerification: wrongArtifactVerification,
   }), /operational monitoring artifact/);
+
+  const mismatchedAdoptionLimit = rawOperations();
+  mismatchedAdoptionLimit.adoptionPolicy.limits.maxSwapSats = "4000";
+  mismatchedAdoptionLimit.adoptionPolicy.liveness.establishedSolverMaxBitToLightningSats = "4000";
+  const mismatchedAdoptionEvidence = buildAdoptionPolicyEvidence(mismatchedAdoptionLimit.adoptionPolicy);
+  mismatchedAdoptionLimit.record.artifacts.lossAllocation = mismatchedAdoptionEvidence.lossAllocationDigest;
+  mismatchedAdoptionLimit.record.artifacts.privacyRetention = mismatchedAdoptionEvidence.privacyRetentionDigest;
+  mismatchedAdoptionLimit.record.artifacts.supportPolicy = mismatchedAdoptionEvidence.supportPolicyDigest;
+  const mismatchedAdoptionLimitVerification = await verifyOperations(mismatchedAdoptionLimit);
+  assert.throws(() => preparePublicTestnetReleaseCandidate({
+    ...base,
+    operationalReadinessVerification: mismatchedAdoptionLimitVerification,
+  }), /adoption maxSwapSats does not match/);
 
   const wrongAlert = rawOperations();
   wrongAlert.record.alertChannelEvidenceDigests[0] = id("substituted alert channel").toLowerCase();
@@ -1131,6 +1161,7 @@ test("operator CLI writes a private non-overwriting candidate without authority"
       operationsRecord: operations.candidate.record,
       operationsPolicy: operations.candidate.policy,
       operationsAttestations: operations.candidate.attestations,
+      adoptionPolicy: operations.candidate.adoptionPolicy,
       isolationRecord: operations.serviceIsolation.candidate.record,
       isolationPolicy: operations.serviceIsolation.candidate.policy,
       isolationAttestations: operations.serviceIsolation.candidate.attestations,
@@ -1160,6 +1191,7 @@ test("operator CLI writes a private non-overwriting candidate without authority"
       "--operations-record", paths.operationsRecord,
       "--operations-policy", paths.operationsPolicy,
       "--operations-attestations", paths.operationsAttestations,
+      "--adoption-policy", paths.adoptionPolicy,
       "--isolation-record", paths.isolationRecord,
       "--isolation-policy", paths.isolationPolicy,
       "--isolation-attestations", paths.isolationAttestations,
@@ -1226,6 +1258,7 @@ test("bootstrap operator CLI also writes only a private non-authorizing candidat
       operationsRecord: operations.candidate.record,
       operationsPolicy: operations.candidate.policy,
       operationsAttestations: operations.candidate.attestations,
+      adoptionPolicy: operations.candidate.adoptionPolicy,
       isolationRecord: operations.serviceIsolation.candidate.record,
       isolationPolicy: operations.serviceIsolation.candidate.policy,
       isolationAttestations: operations.serviceIsolation.candidate.attestations,
@@ -1255,6 +1288,7 @@ test("bootstrap operator CLI also writes only a private non-authorizing candidat
       "--operations-record", paths.operationsRecord,
       "--operations-policy", paths.operationsPolicy,
       "--operations-attestations", paths.operationsAttestations,
+      "--adoption-policy", paths.adoptionPolicy,
       "--isolation-record", paths.isolationRecord,
       "--isolation-policy", paths.isolationPolicy,
       "--isolation-attestations", paths.isolationAttestations,

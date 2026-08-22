@@ -13,6 +13,7 @@ import {
 } from "../lib/public-testnet-release-candidate.mjs";
 
 const FLAGS = Object.freeze([
+  "--adoption-policy",
   "--campaign-attestations",
   "--campaign-policy",
   "--campaign-record",
@@ -35,7 +36,7 @@ const FLAGS = Object.freeze([
   "--review-policy",
   "--review-record",
 ]);
-const USAGE = "Usage: prepare-public-testnet-release-candidate --record-template record-template.json --policy-template policy-template.json --promotion-record promotion-record.json --promotion-policy promotion-policy.json --deployment-policy deployment-policy.json --promotion-observations promotion-observations.json --promotion-attestations promotion-attestations.json --postflight-bundle postflight-bundle.json --campaign-record campaign-record.json --campaign-policy campaign-policy.json --campaign-attestations campaign-attestations.json --review-record review-record.json --review-policy review-policy.json --review-attestations review-attestations.json --isolation-record isolation-record.json --isolation-policy isolation-policy.json --isolation-attestations isolation-attestations.json --operations-record operations-record.json --operations-policy operations-policy.json --operations-attestations operations-attestations.json --out release-candidate.json";
+const USAGE = "Usage: prepare-public-testnet-release-candidate --record-template record-template.json --policy-template policy-template.json --adoption-policy adoption-policy.json --promotion-record promotion-record.json --promotion-policy promotion-policy.json --deployment-policy deployment-policy.json --promotion-observations promotion-observations.json --promotion-attestations promotion-attestations.json --postflight-bundle postflight-bundle.json --campaign-record campaign-record.json --campaign-policy campaign-policy.json --campaign-attestations campaign-attestations.json --review-record review-record.json --review-policy review-policy.json --review-attestations review-attestations.json --isolation-record isolation-record.json --isolation-policy isolation-policy.json --isolation-attestations isolation-attestations.json --operations-record operations-record.json --operations-policy operations-policy.json --operations-attestations operations-attestations.json --out release-candidate.json";
 
 function argumentsFromCommandLine(values) {
   if (values.length !== FLAGS.length * 2) throw new Error(USAGE);
@@ -50,13 +51,14 @@ function argumentsFromCommandLine(values) {
 }
 
 const args = argumentsFromCommandLine(process.argv.slice(2));
-const [recordTemplate, policyTemplate, promotionRecord, promotionPolicy, deploymentPolicy,
+const [recordTemplate, policyTemplate, adoptionPolicy, promotionRecord, promotionPolicy, deploymentPolicy,
   promotionObservations, promotionAttestations, postflightBundle, campaignRecord, campaignPolicy,
   campaignAttestations, reviewRecord, reviewPolicy, reviewAttestations, operationsRecord,
   operationsPolicy, operationsAttestations, isolationRecord, isolationPolicy,
   isolationAttestations] = await Promise.all([
   readBoundedJson(args["--record-template"], "release record template"),
   readBoundedJson(args["--policy-template"], "release policy template"),
+  readBoundedJson(args["--adoption-policy"], "adoption policy"),
   readBoundedJson(args["--promotion-record"], "deployment promotion record"),
   readBoundedJson(args["--promotion-policy"], "deployment promotion policy"),
   readBoundedJson(args["--deployment-policy"], "deployment policy"),
@@ -110,6 +112,7 @@ const serviceIsolationVerification = verifyServiceIsolationEvidence({
   now: verificationTime,
 });
 const operationalReadinessVerification = verifyOperationalReadinessEvidence({
+  adoptionPolicy,
   record: operationsRecord,
   policy: operationsPolicy,
   attestations: operationsAttestations,

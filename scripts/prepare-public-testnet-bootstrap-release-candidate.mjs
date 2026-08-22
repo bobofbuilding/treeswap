@@ -13,6 +13,7 @@ import {
 } from "../lib/public-testnet-release-candidate.mjs";
 
 const FLAGS = Object.freeze([
+  "--adoption-policy",
   "--bootstrap-attestations",
   "--bootstrap-policy",
   "--bootstrap-record",
@@ -35,7 +36,7 @@ const FLAGS = Object.freeze([
   "--review-policy",
   "--review-record",
 ]);
-const USAGE = "Usage: prepare-public-testnet-bootstrap-release-candidate --record-template record-template.json --policy-template policy-template.json --bootstrap-record bootstrap-record.json --bootstrap-policy bootstrap-policy.json --bootstrap-attestations bootstrap-attestations.json --promotion-record promotion-record.json --promotion-policy promotion-policy.json --deployment-policy deployment-policy.json --promotion-observations promotion-observations.json --promotion-attestations promotion-attestations.json --postflight-bundle postflight-bundle.json --review-record review-record.json --review-policy review-policy.json --review-attestations review-attestations.json --isolation-record isolation-record.json --isolation-policy isolation-policy.json --isolation-attestations isolation-attestations.json --operations-record operations-record.json --operations-policy operations-policy.json --operations-attestations operations-attestations.json --out bootstrap-release-candidate.json";
+const USAGE = "Usage: prepare-public-testnet-bootstrap-release-candidate --record-template record-template.json --policy-template policy-template.json --adoption-policy adoption-policy.json --bootstrap-record bootstrap-record.json --bootstrap-policy bootstrap-policy.json --bootstrap-attestations bootstrap-attestations.json --promotion-record promotion-record.json --promotion-policy promotion-policy.json --deployment-policy deployment-policy.json --promotion-observations promotion-observations.json --promotion-attestations promotion-attestations.json --postflight-bundle postflight-bundle.json --review-record review-record.json --review-policy review-policy.json --review-attestations review-attestations.json --isolation-record isolation-record.json --isolation-policy isolation-policy.json --isolation-attestations isolation-attestations.json --operations-record operations-record.json --operations-policy operations-policy.json --operations-attestations operations-attestations.json --out bootstrap-release-candidate.json";
 
 function argumentsFromCommandLine(values) {
   if (values.length !== FLAGS.length * 2) throw new Error(USAGE);
@@ -50,13 +51,14 @@ function argumentsFromCommandLine(values) {
 }
 
 const args = argumentsFromCommandLine(process.argv.slice(2));
-const [recordTemplate, policyTemplate, bootstrapRecord, bootstrapPolicy, bootstrapAttestations,
+const [recordTemplate, policyTemplate, adoptionPolicy, bootstrapRecord, bootstrapPolicy, bootstrapAttestations,
   promotionRecord, promotionPolicy, deploymentPolicy, promotionObservations, promotionAttestations,
   postflightBundle, reviewRecord, reviewPolicy, reviewAttestations, operationsRecord,
   operationsPolicy, operationsAttestations, isolationRecord, isolationPolicy,
   isolationAttestations] = await Promise.all([
   readBoundedJson(args["--record-template"], "bootstrap release record template"),
   readBoundedJson(args["--policy-template"], "bootstrap release policy template"),
+  readBoundedJson(args["--adoption-policy"], "adoption policy"),
   readBoundedJson(args["--bootstrap-record"], "bootstrap evidence record"),
   readBoundedJson(args["--bootstrap-policy"], "bootstrap evidence policy"),
   readBoundedJson(args["--bootstrap-attestations"], "bootstrap evidence attestations"),
@@ -109,6 +111,7 @@ const serviceIsolationVerification = verifyServiceIsolationEvidence({
   now: recordTemplate.approvalBlockTimestamp,
 });
 const operationalReadinessVerification = verifyOperationalReadinessEvidence({
+  adoptionPolicy,
   record: operationsRecord,
   policy: operationsPolicy,
   attestations: operationsAttestations,
