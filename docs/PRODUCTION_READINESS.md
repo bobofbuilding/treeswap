@@ -22,6 +22,7 @@ Status: Gate 0 is complete. Gates 1 through 6 are in progress. No funded testnet
 - [x] Fork the recorded block and pass live BIT snapshot, transfer-delta, both-direction open/claim/refund, pause/unpause, implementation-slot, and cross-direction hash-reuse campaigns.
 - [ ] Capture the observation through two independently operated Ethereum RPC providers and compare every field.
   - [x] Current published commit `37fa0044554451b392447ac79c83021c5f41ea02` captured a fresh authenticated Alchemy observation at canonical finalized block `25807484` and independently revalidated the exact block, proxy and implementation hashes, implementation slot/address, `BIT` / `18` / `false` token state, source provenance, mode-`0600` file safety, and privacy exclusions through Alchemy CLI `0.22.0`. The ignored file digest is `sha256:4948f7b8dcf8e05120fc6d506783081f78cdc0d6a01ebec872c2939de34bfeda`. Both passes use the same provider, so independent-provider comparison, review, promotion, and funding authorization remain open.
+  - [x] Observation v3 now requires the canonical TreeSwap origin, an exact clean commit fetched from `origin/main`, a nonzero provider-identity commitment, a credential-free label, exact canonical fields, and a fresh one-hour comparison window. Comparison v2 binds both distinct identities and exact observation digests, uses bounded non-symlink inputs and mode-`0600` non-overwriting output, and states that organizational independence remains externally unverified and funding authorization is false. Historical v2 observations cannot enter this path.
 - [ ] Obtain independent review of both matched source bundles, compiler inputs, roles, storage, and upgrade behavior.
 - [ ] Promote the reviewed observation into a signed deployment manifest; never promote an `unreviewed-live-observation` automatically.
   - [x] An exact promotion verifier now revalidates the complete deployment policy and matching fresh canonical observations, binds the finalized block, source, manifest, provider observation, review-bundle, and findings digests, and requires distinct EIP-712 approvals from every provider plus contract and operations reviewers. Its provenance-bound output has no funding authority. See [Signed deployment-manifest promotion](./DEPLOYMENT_PROMOTION.md).
@@ -39,9 +40,11 @@ Status: Gate 0 is complete. Gates 1 through 6 are in progress. No funded testnet
 Run the observer only with an authenticated mainnet endpoint:
 
 ```sh
+export TREESWAP_EVIDENCE_DIR=/absolute/path/to/an/existing/mode-0700-directory
 ETHEREUM_RPC_URL=<secret> \
 ETHEREUM_RPC_PROVIDER_LABEL=<provider> \
-npm run observe:bit -- --out bit-observation.json
+ETHEREUM_RPC_PROVIDER_IDENTITY=<nonzero-bytes32-identity-commitment> \
+npm run observe:bit -- --out "$TREESWAP_EVIDENCE_DIR/bit-observation.json"
 ```
 
 For the second provider, pass the first observation's `finalizedBlock.number` so both providers inspect the identical state:
@@ -49,11 +52,14 @@ For the second provider, pass the first observation's `finalizedBlock.number` so
 ```sh
 ETHEREUM_RPC_URL=<second-secret> \
 ETHEREUM_RPC_PROVIDER_LABEL=<independent-provider> \
-npm run observe:bit -- --block <first-finalized-block> --out bit-observation-2.json
-npm run compare:bit -- bit-observation.json bit-observation-2.json --out bit-comparison.json
+ETHEREUM_RPC_PROVIDER_IDENTITY=<different-nonzero-bytes32-identity-commitment> \
+npm run observe:bit -- --block <first-finalized-block> --out "$TREESWAP_EVIDENCE_DIR/bit-observation-2.json"
+npm run compare:bit -- "$TREESWAP_EVIDENCE_DIR/bit-observation.json" "$TREESWAP_EVIDENCE_DIR/bit-observation-2.json" --out "$TREESWAP_EVIDENCE_DIR/bit-comparison.json"
 ```
 
-Only an eligible comparison from independent operators may enter review. The comparison remains explicitly unreviewed until source verification and reviewer signatures are attached.
+Run each capture from a separate clean checkout after fetching `origin/main`. A provider identity is a stable commitment used to bind later signatures; different labels, identity commitments, accounts, URLs, or keys do not by themselves prove organizational independence. Retain the operators' public identities and commercial/control evidence outside the secret-free observation.
+
+Only an eligible comparison from independently controlled operators may enter review. The comparison remains explicitly unreviewed until source verification, organizational-independence evidence, and reviewer signatures are attached.
 
 The current reproducibility and fork evidence is recorded in [BIT mainnet boundary evidence](./BIT_MAINNET_EVIDENCE.md) and [controlled EVM reorg evidence](./EVM_REORG_EVIDENCE.md).
 

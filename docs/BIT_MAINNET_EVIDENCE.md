@@ -22,6 +22,16 @@ Exact clean published commit `37fa0044554451b392447ac79c83021c5f41ea02` captured
 
 A separate Alchemy CLI `0.22.0` pass re-read that exact block and every state value through its canonical block-hash anchor, recomputed both code hashes, decoded all three token calls, confirmed the provider still reported the block finalized, matched the exact published commit, and found no endpoint, RPC URL, API-key marker, or credential-like value in the retained JSON. Both passes use the same provider. This checkpoint therefore proves current-source reproducibility and credential-safe collection only; it does not prove provider independence, source review, signed promotion, or funding authorization.
 
+## Independent-provider handoff
+
+Historical observations above use schema v2 and remain reproducibility evidence only. New release-bound captures must use `treeswap.bit-deployment-observation.v3`; the comparison tool rejects v2 rather than silently upgrading it.
+
+Before making an RPC request, v3 requires the canonical HTTPS TreeSwap origin, a clean `main` checkout, and an exact commit matching the current remote `origin/main`. Each operator must supply a stable nonzero `bytes32` provider-identity commitment and a credential-free display label. The observation has one exact canonical shape, recomputes its own safety result, rejects unknown or endpoint-bearing fields, and binds every read to one canonical finalized block.
+
+Comparison v2 accepts bounded non-symlink inputs only. Both observations must be no more than one hour old, no more than thirty minutes apart, and no more than sixty seconds future-dated. It requires distinct identity commitments, case-insensitively distinct labels, and distinct exact canonical observation digests before comparing every safety-critical field. Its mode-`0600`, non-overwriting report retains both identities and digests, declares organizational independence externally unverified, and sets `fundingAuthorization` to `false`.
+
+These controls make accidental reuse, relabeling, stale capture, input substitution, source drift, and unbound comparison visible. They cannot prove that two provider accounts, signers, companies, or endpoints are independently controlled. Reviewers must retain the real operator identities, control relationships, and provider agreements separately and bind their conclusions into the signed review and promotion records.
+
 ## Source reproduction
 
 The proxy is an exact creation and runtime match in [Sourcify](https://repo.sourcify.dev/1/0x57A447E4d5e18A9423408C365963A73F08B9d18C). Sourcify identifies OpenZeppelin `ERC1967Proxy`, compiler `0.8.28+commit.7893614a`, optimizer enabled with 1,000 runs, and Paris EVM output.

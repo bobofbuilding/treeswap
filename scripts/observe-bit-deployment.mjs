@@ -1,9 +1,16 @@
 #!/usr/bin/env node
 
 import { execFileSync } from "node:child_process";
-import { writeFile } from "node:fs/promises";
-import { resolve } from "node:path";
-import { createJsonRpcClient, observeBitDeployment } from "../lib/bit-deployment-observer.mjs";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import {
+  createJsonRpcClient,
+  observeBitDeployment,
+  validateBitObservationSourceProvenance,
+} from "../lib/bit-deployment-observer.mjs";
+import { writeExclusiveJson } from "../lib/closed-testnet-deployment-files.mjs";
+
+const repository = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 function parseArguments(values) {
   const parsed = { out: null, block: null };
@@ -21,33 +28,56 @@ function parseArguments(values) {
   return parsed;
 }
 
-function currentCommit() {
+function git(arguments_) {
   try {
-    return execFileSync("git", ["rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+    return execFileSync("git", arguments_, {
+      cwd: repository,
+      encoding: "utf8",
+      maxBuffer: 2_000_000,
+      stdio: ["ignore", "pipe", "pipe"],
+    }).trim();
   } catch {
-    return null;
+    throw new Error("BIT observation source provenance check failed");
   }
+}
+
+function currentPublishedCommit() {
+  const remote = git(["ls-remote", "--exit-code", "origin", "refs/heads/main"]).split(/\s+/, 1)[0];
+  return validateBitObservationSourceProvenance({
+    branch: git(["branch", "--show-current"]),
+    head: git(["rev-parse", "HEAD"]),
+    originUrl: git(["remote", "get-url", "origin"]),
+    published: remote,
+    status: git(["status", "--porcelain", "--untracked-files=all"]),
+  });
 }
 
 async function main() {
   const options = parseArguments(process.argv.slice(2));
   if (options.help) {
-    process.stdout.write("Usage: ETHEREUM_RPC_URL=<secret> npm run observe:bit -- [--block number] [--out evidence.json]\n");
+    process.stdout.write("Usage: ETHEREUM_RPC_URL=<secret> ETHEREUM_RPC_PROVIDER_LABEL=<label> ETHEREUM_RPC_PROVIDER_IDENTITY=<bytes32> npm run observe:bit -- [--block number] [--out evidence.json]\n");
     return;
   }
 
   const rpcUrl = process.env.ETHEREUM_RPC_URL;
-  if (!rpcUrl) throw new TypeError("ETHEREUM_RPC_URL is required");
+  const providerLabel = process.env.ETHEREUM_RPC_PROVIDER_LABEL;
+  const providerIdentity = process.env.ETHEREUM_RPC_PROVIDER_IDENTITY;
+  if (!rpcUrl || !providerLabel || !providerIdentity) {
+    throw new TypeError("ETHEREUM_RPC_URL, ETHEREUM_RPC_PROVIDER_LABEL, and ETHEREUM_RPC_PROVIDER_IDENTITY are required");
+  }
+  const sourceCommit = currentPublishedCommit();
+  delete process.env.ETHEREUM_RPC_URL;
   const observation = await observeBitDeployment({
     rpcCall: createJsonRpcClient(rpcUrl),
-    providerLabel: process.env.ETHEREUM_RPC_PROVIDER_LABEL ?? "operator-supplied",
-    sourceCommit: currentCommit(),
+    providerLabel,
+    providerIdentity,
+    sourceCommit,
     targetBlockNumber: options.block,
   });
   const serialized = `${JSON.stringify(observation, null, 2)}\n`;
 
   if (options.out) {
-    await writeFile(options.out, serialized, { flag: "wx", mode: 0o600 });
+    await writeExclusiveJson(options.out, observation);
     process.stdout.write(`${options.out}\n`);
   } else {
     process.stdout.write(serialized);
