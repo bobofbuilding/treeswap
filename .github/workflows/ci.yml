@@ -125,6 +125,7 @@ jobs:
       - run: node --check scripts/prepare-bit-provider-evidence.mjs
       - run: node --check scripts/prepare-bit-provider-attestation.mjs
       - run: node --check scripts/verify-bit-provider-evidence.mjs
+      - run: node --check scripts/preflight-bit-review-ceremony.mjs
       - run: node --check scripts/prepare-bit-independent-review.mjs
       - run: node --check scripts/prepare-bit-independent-review-attestation.mjs
       - run: node --check scripts/verify-bit-independent-review.mjs
@@ -158,7 +159,7 @@ jobs:
       - run: node --check scripts/verify-deployment-promotion.mjs
       - run: forge build --quiet
       - run: node --test tests/closed-testnet-deployment-files.test.mjs tests/closed-testnet-deployment-plan.test.mjs tests/closed-testnet-deployment-preflight.test.mjs tests/closed-testnet-deployment-postflight.test.mjs
-      - run: node --test tests/bit-deployment-observer.test.mjs tests/bit-provider-evidence.test.mjs tests/bit-independent-review.test.mjs tests/bit-reviewed-manifest.test.mjs
+      - run: node --test tests/bit-deployment-observer.test.mjs tests/bit-provider-evidence.test.mjs tests/bit-review-ceremony-preflight.test.mjs tests/bit-independent-review.test.mjs tests/bit-reviewed-manifest.test.mjs
       - run: npm run test:coordinator-evm
       - run: npm run test:evm-outbox-faults
       - run: npm run test:safety-monitor

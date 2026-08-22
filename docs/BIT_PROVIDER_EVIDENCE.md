@@ -56,6 +56,8 @@ Create a private policy file whose `sourceCommit` is the exact current `origin/m
 }
 ```
 
+Before either provider captures live state, run the deterministic [BIT review ceremony preflight](./BIT_CEREMONY_PREFLIGHT.md) over this policy, the prepared reviewer policy, all seven review-artifact commitments, and finding counts. Every participant should reproduce and compare the same preflight digest from a separate clean checkout. A preflight is static validation only and cannot substitute for either live observation or signature.
+
 Prepare one exact candidate while both observations are fresh:
 
 ```sh
