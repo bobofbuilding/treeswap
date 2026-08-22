@@ -124,7 +124,7 @@ test("authenticates a fresh exact send-payment packet and private transport", as
 
   let requestedUrl;
   const transported = await fetchVerifiedPrivatePacket({
-    providerOrigin: "http://packet-provider.internal",
+    providerOrigin: "https://packet-provider.internal:443",
     requestEnvelope: request,
     providerPublicKey: providerKeys.publicKey,
     expectedProviderKeyId: PROVIDER_KEY_ID,
@@ -135,10 +135,13 @@ test("authenticates a fresh exact send-payment packet and private transport", as
       assert.equal(options.redirect, "error");
       assert.equal(options.headers["cache-control"], "no-store");
       assert.deepEqual(JSON.parse(options.body), request);
-      return new Response(JSON.stringify(signed), { status: 200, headers: { "content-type": "application/json" } });
+      return new Response(JSON.stringify(signed), {
+        status: 200,
+        headers: { "cache-control": "no-store", "content-type": "application/json" },
+      });
     },
   });
-  assert.equal(requestedUrl, "http://packet-provider.internal/v1/private-packet");
+  assert.equal(requestedUrl, "https://packet-provider.internal/v1/private-packet");
   assert.equal(transported.packet.operation.feeLimitSats, "25");
 });
 
@@ -219,27 +222,156 @@ test("binds an EVM claim template without accepting a provider-supplied preimage
   );
 });
 
-test("refuses public or credential-bearing provider origins and hard transport failures", async () => {
+test("requires private HTTPS port 443 and hides hard transport failures", async () => {
   const value = settlement("transport");
   const request = requestEnvelope(value);
+  let dispatches = 0;
   const args = {
     requestEnvelope: request,
     providerPublicKey: providerKeys.publicKey,
     expectedProviderKeyId: PROVIDER_KEY_ID,
     minimumEvmSafetySeconds: SAFETY_SECONDS,
     nowSeconds: () => 1_002,
-    requestImpl: async () => { throw new Error("offline"); },
+    requestImpl: async () => {
+      dispatches += 1;
+      throw new Error("offline");
+    },
   };
+  for (const providerOrigin of [
+    "https://provider.example",
+    "https://8.8.8.8",
+    "https://user:pass@packet-provider.internal",
+    "http://packet-provider.internal",
+    "https://packet-provider.internal:8443",
+    "https://packet-provider.internal/private",
+    "https://packet-provider.internal?token=secret",
+    "https://packet-provider.internal#fragment",
+    "ftp://packet-provider.internal",
+    "::::",
+  ]) {
+    await assert.rejects(
+      fetchVerifiedPrivatePacket({ ...args, providerOrigin }),
+      /isolated private HTTPS origin on port 443/,
+    );
+  }
+  assert.equal(dispatches, 0);
   await assert.rejects(
-    fetchVerifiedPrivatePacket({ ...args, providerOrigin: "https://provider.example" }),
-    /isolated private HTTP origin/,
-  );
-  await assert.rejects(
-    fetchVerifiedPrivatePacket({ ...args, providerOrigin: "http://user:pass@packet-provider.internal" }),
-    /isolated private HTTP origin/,
-  );
-  await assert.rejects(
-    fetchVerifiedPrivatePacket({ ...args, providerOrigin: "http://packet-provider.internal" }),
+    fetchVerifiedPrivatePacket({ ...args, providerOrigin: "https://packet-provider.internal" }),
     /transport failed/,
   );
+  assert.equal(dispatches, 1);
+});
+
+test("bounds headers and the complete response-body read under the same deadline", async () => {
+  const value = settlement("response-policy");
+  const request = requestEnvelope(value);
+  const signed = response(request, packet(value, request, {
+    paymentRequest: value.paymentRequest,
+    feeLimitSats: "25",
+    timeoutSeconds: 30,
+  }));
+  const args = {
+    providerOrigin: "https://packet-provider.internal",
+    requestEnvelope: request,
+    providerPublicKey: providerKeys.publicKey,
+    expectedProviderKeyId: PROVIDER_KEY_ID,
+    minimumEvmSafetySeconds: SAFETY_SECONDS,
+    nowSeconds: () => 1_002,
+  };
+
+  await assert.rejects(
+    fetchVerifiedPrivatePacket({
+      ...args,
+      requestImpl: async () => new Response(JSON.stringify(signed), {
+        headers: { "cache-control": "no-store", "content-type": "application/jsonp" },
+      }),
+    }),
+    /content type is invalid/,
+  );
+  await assert.rejects(
+    fetchVerifiedPrivatePacket({
+      ...args,
+      requestImpl: async () => new Response(JSON.stringify(signed), {
+        headers: { "content-type": "application/json" },
+      }),
+    }),
+    /must disable storage/,
+  );
+  await assert.rejects(
+    fetchVerifiedPrivatePacket({
+      ...args,
+      requestImpl: async () => new Response(JSON.stringify(signed), {
+        headers: {
+          "cache-control": "no-store",
+          "content-length": "invalid",
+          "content-type": "application/json",
+        },
+      }),
+    }),
+    /content length is invalid/,
+  );
+  await assert.rejects(
+    fetchVerifiedPrivatePacket({
+      ...args,
+      requestImpl: async () => new Response(JSON.stringify(signed), {
+        headers: {
+          "cache-control": "no-store",
+          "content-length": "65537",
+          "content-type": "application/json",
+        },
+      }),
+    }),
+    /response is too large/,
+  );
+  await assert.rejects(
+    fetchVerifiedPrivatePacket({
+      ...args,
+      requestImpl: async () => new Response(new Uint8Array(65_537), {
+        headers: { "cache-control": "no-store", "content-type": "application/json" },
+      }),
+    }),
+    /response is too large/,
+  );
+
+  const stalled = new ReadableStream({ pull: () => new Promise(() => {}) });
+  const startedAt = Date.now();
+  await assert.rejects(
+    fetchVerifiedPrivatePacket({
+      ...args,
+      timeoutMs: 20,
+      requestImpl: async () => new Response(stalled, {
+        headers: { "cache-control": "private, no-store", "content-type": "application/json; charset=utf-8" },
+      }),
+    }),
+    /transport failed/,
+  );
+  assert.ok(Date.now() - startedAt < 500, "response-body timeout must remain bounded");
+});
+
+test("refuses private packet dispatch when Node TLS verification is globally disabled", async () => {
+  const value = settlement("tls-disabled");
+  const request = requestEnvelope(value);
+  const previous = process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+  let dispatched = false;
+  process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+  try {
+    await assert.rejects(
+      fetchVerifiedPrivatePacket({
+        providerOrigin: "https://packet-provider.internal",
+        requestEnvelope: request,
+        providerPublicKey: providerKeys.publicKey,
+        expectedProviderKeyId: PROVIDER_KEY_ID,
+        minimumEvmSafetySeconds: SAFETY_SECONDS,
+        requestImpl: async () => {
+          dispatched = true;
+          throw new Error("must not dispatch");
+        },
+      }),
+      /TLS certificate verification is disabled/,
+    );
+  } finally {
+    if (previous === undefined) delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+    else process.env.NODE_TLS_REJECT_UNAUTHORIZED = previous;
+  }
+  assert.equal(dispatched, false);
 });
