@@ -100,8 +100,8 @@ npm run verify:bit-provider-evidence -- \
   --out bit-provider-summary.json
 ```
 
-The verified summary is a review input only. It cannot be used as a deployment promotion, release approval, gate-opening instruction, or funding authorization.
+The verified summary is a review input only. The [BIT independent-review ceremony](./BIT_INDEPENDENT_REVIEW.md) must re-verify the complete provider candidate and both attestations in-process; a copied summary has no provenance. Neither boundary can be used as a deployment promotion, release approval, gate-opening instruction, or funding authorization.
 
 ## External facts still required
 
-Two valid keys do not prove two organizations or two independently controlled RPC backends. Before this evidence may enter review, an independent reviewer must inspect the retained operator identities, corporate/control relationships, provider agreements or account-control records, endpoint ownership and upstream architecture, signer custody, and the complete source/compiler/roles/storage/upgrade bundle. The reviewer must confirm that the two captures actually came from independently operated services and bind that conclusion into the later signed review package.
+Two valid keys do not prove two organizations or two independently controlled RPC backends. Before this evidence may enter review, the two roles in [BIT independent review evidence](./BIT_INDEPENDENT_REVIEW.md) must inspect the retained operator identities, corporate/control relationships, provider agreements or account-control records, endpoint ownership and upstream architecture, signer custody, and the complete source/compiler/roles/storage/upgrade bundle. Both reviewers bind their conclusions, exact report commitments, reconciled findings, and the complete signed provider record into one short-lived EIP-712 package.
