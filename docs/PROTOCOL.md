@@ -8,7 +8,7 @@ TreeSwap coordinates full-fill swaps between Lightning sats and BIT on Ethereum 
 
 The product displays `1 BIT = 100 sats` as a project reference value. The BIT contract does not enforce that price. TreeSwap never promises unconditional redemption at par; users accept exact integer amounts from short-lived solver quotes.
 
-The user experience is invoice-first. BIT → Lightning starts with one exact, amount-bearing BOLT 11 invoice supplied by the user and shared unchanged across solver offers. For Lightning → BIT, each competing solver creates its own short-lived hold invoice and binds its nonzero hash and digest in its signed offer; the request itself leaves those fields zero until the user selects one exact offer. Amountless invoices remain unsupported in v1.
+The user experience is invoice-first, but public quote discovery is blind. BIT → Lightning starts with one exact, amount-bearing BOLT 11 invoice supplied by the user; only its amount and user caps reach competing solvers, while the invoice, hash, digest, payee, user, and beneficiary remain private until one solver is selected. For Lightning → BIT, the selected solver creates one short-lived hold invoice only after selection. Amountless invoices remain unsupported in v1.
 
 ## 2. Minimal participants
 
@@ -24,7 +24,7 @@ There is no central limit order book, shared LP pool, market-making reward, or p
 
 The target production architecture opens quote creation and solver competition without opening public pooled custody. See [`PERMISSIONLESS_AUTOMATION.md`](PERMISSIONLESS_AUTOMATION.md). Optional EVM-to-Lightning identity linking is described in [`LIGHTNING_ACCOUNTS.md`](LIGHTNING_ACCOUNTS.md), and immutable version transitions are described in [`UPGRADES.md`](UPGRADES.md).
 
-The RFQ client follows [`RFQ_POLICY.md`](RFQ_POLICY.md): it validates complete solver-signed offers, bounds work and one retained offer per solver, orders the verified received set by executable input price and receipt time, and commits that set before the user selects one quote. It never claims that a relay supplied a globally complete market.
+The RFQ client follows [`RFQ_POLICY.md`](RFQ_POLICY.md) and [`RFQ_DELIVERY.md`](RFQ_DELIVERY.md): it queries at least two authenticated relay paths and two distinct capability-bound direct solver paths with an unlinkable blind pricing request, locally timestamps their complete signed batches, validates every solver-signed blind offer, and commits the delivery and offer receipts before the user selects one quote. Only the selected solver then receives the private settlement fields and must return an exact capability-bound executable quote matching its blind terms. The client never claims that a relay supplied a globally complete market.
 
 ## 3. Selected-quote intent
 
@@ -89,8 +89,8 @@ The public web application never receives a node macaroon, seed, preimage store,
 
 ### BIT → Lightning
 
-1. The user creates an exact BOLT 11 invoice and requests quotes.
-2. The user selects one solver quote and deposits or reserves the quoted BIT to the solver-bound escrow.
+1. The user creates an exact BOLT 11 invoice; the client keeps it private and requests blind quotes using only its exact amount and caps.
+2. The user selects one blind solver quote, privately discloses the exact invoice to that solver, verifies the solver's matching executable quote, and only then deposits or reserves the quoted BIT to the solver-bound escrow.
 3. The solver waits for the configured Ethereum finality threshold and validates the invoice.
 4. The solver pays the invoice and receives the preimage.
 5. Anyone may relay the preimage, but BIT is paid only to the bound solver beneficiary.
@@ -100,8 +100,8 @@ The public web application never receives a node macaroon, seed, preimage store,
 
 ### Lightning → BIT
 
-1. Solvers create distinct short-lived hold invoices and return signed quotes against their own pre-funded vault inventory; the user validates the received set and selects one.
-2. The selected offer's exact invoice, hash, solver, price, and capacity epoch become the private settlement intent. No other solver or invoice may be substituted without a new selection and authorization.
+1. Solvers return blind signed quotes against verified pre-funded vault inventory; no hold invoice or user address traverses the relays. The user validates the received set and selects one solver.
+2. Only the selected solver receives the private settlement request, creates one short-lived hold invoice, and returns a full executable quote whose solver, price, capacity, endpoint, and runtime must match the selected blind offer. No other solver, invoice, or price may be substituted without a new selection and authorization.
 3. The user countersigns and exercises the quote. The vault verifies both signatures, the live-open gate, BIT runtime settings, price and exposure caps, and deadline ordering. The user then verifies the finalized reservation and every supported BOLT 11 field before paying.
 4. The solver settles the hold invoice with the preimage.
 5. The user or a relayer supplies the preimage to claim BIT.

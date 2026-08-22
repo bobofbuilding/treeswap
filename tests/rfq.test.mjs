@@ -241,12 +241,12 @@ test("requires an explicit selection from the committed received set", async () 
   assert.equal(selection.receiptDigest, book.receiptDigest);
   assert.throws(
     () => bindSelectedSolverInvoice(request, book, id("offer-1")),
-    /executable selection requires capability-bound/,
+    /selected-offer finalization/,
   );
   assert.throws(() => { book.offers[0].offer.paymentHash = id("post-verification-mutation"); }, /read only/);
   assert.throws(
     () => bindSelectedSolverInvoice({ ...request, maxFeeBps: 99n }, book, id("offer-1")),
-    /request changed after quote verification/,
+    /selected-offer finalization/,
   );
   assert.throws(() => selectReceivedQuote(book, id("suppressed-offer")), /not in the verified received set/);
   assert.throws(() => selectReceivedQuote({ ...book }, id("offer-1")), /locally verified offers/);
@@ -367,7 +367,7 @@ test("rejects routing costs above the signed request cap", async () => {
   );
 });
 
-test("binds an executable selection to independently verified capability, inventory, endpoint, and code", async () => {
+test("keeps a capability-bound flat quote book non-authorizing without blind selection finalization", async () => {
   const first = await executableEnvelope(solvers[0], 1, 10_000, "relay-a");
   const second = await executableEnvelope(solvers[1], 2, 10_100, "direct-b");
   const book = buildExecutableQuoteBook({
@@ -382,15 +382,11 @@ test("binds an executable selection to independently verified capability, invent
   assert.equal(book.offers[1].offer.capacityEpoch, 42);
   const selection = selectReceivedQuote(book, id("offer-1"));
   assert.equal(selection.executable, true);
-  const selectedIntent = bindSelectedSolverInvoice(request, book, id("offer-1"));
-  assert.equal(selectedIntent.paymentHash, id("payment-hash-1"));
-  assert.equal(selectedIntent.invoiceDigest, id("invoice-1"));
-  assert.equal(selectedIntent.selectedSolver, solvers[0].address);
-  assert.equal(selectedIntent.capabilityDigest, first.verification.capabilityDigest);
-  assert.equal(selectedIntent.capacitySnapshotDigest, first.verification.capacitySnapshotDigest);
-  assert.equal(selectedIntent.endpointPublicKeyDigest, first.verification.binding.endpointPublicKeyDigest);
-  assert.equal(selectedIntent.settlementContractCodeHash, LIGHTNING_TO_BIT_CODE_HASH);
-  assert.equal(selectedIntent.capacityEpoch, 41);
+  assert.equal(selection.deliveryAuthenticated, false);
+  assert.throws(
+    () => bindSelectedSolverInvoice(request, book, id("offer-1")),
+    /selected-offer finalization/,
+  );
 });
 
 test("rejects executable offer rebinding and forged capability provenance", async () => {

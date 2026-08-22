@@ -18,6 +18,7 @@ import {
   buildSolverCapabilityRequest,
   isPublicSolverEndpointAddress,
   pinnedPublicHttpsRequest,
+  pinnedPublicRfqRequest,
   queryVerifiedSolverCapability,
   solverEndpointResponseDigest,
 } from "../lib/solver-endpoint-transport.mjs";
@@ -318,6 +319,32 @@ test("pins the resolved public address while preserving the TLS and HTTP hostnam
     }),
     /outside the public network/,
   );
+});
+
+test("keeps the public RFQ route pinned and separate from the capability route", async () => {
+  const response = await pinnedPublicRfqRequest(`${ORIGIN}/v1/rfq`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: "{}",
+  }, {
+    lookupImpl: async () => [{ address: "8.8.8.8", family: 4 }],
+    httpsRequestImpl: (options, callback) => {
+      assert.equal(options.path, "/v1/rfq");
+      assert.equal(options.hostname, "8.8.8.8");
+      assert.equal(options.servername, "solver.example");
+      const request = new EventEmitter();
+      request.end = () => {
+        const incoming = Readable.from([Buffer.from("{}")]);
+        incoming.statusCode = 200;
+        incoming.headers = { "content-type": "application/json" };
+        queueMicrotask(() => callback(incoming));
+      };
+      return request;
+    },
+  });
+  assert.equal(response.status, 200);
+  await assert.rejects(pinnedPublicRfqRequest(`${ORIGIN}/v1/capability`, { body: "{}" }), /invalid/);
+  await assert.rejects(pinnedPublicHttpsRequest(`${ORIGIN}/v1/rfq`, { body: "{}" }), /invalid/);
 });
 
 test("rejects expired responses, oversized bodies, and signed capacity overstatement", async () => {

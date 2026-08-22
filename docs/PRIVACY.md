@@ -1,11 +1,11 @@
 # Privacy boundary
 
-Status: enforced as a coordinator policy harness. The current prototype has no public intent relay or swap-history database.
+Status: enforced in the privacy harness and the local authenticated multipath RFQ protocol. The public wire carries only the blind pricing request and blind offers; selected-solver encrypted disclosure is specified and locally guarded but not deployed. The prototype has no public intent relay or swap-history database.
 
 TreeSwap uses two stages:
 
 1. An unlinkable pricing request contains only a random pricing identifier, direction, exact output amount and unit, chain, user caps, capacity epoch, and short expiry. It contains no wallet address, payment hash, invoice digest, invoice, payee, route hints, email, or signature.
-2. After the user chooses one solver, only that solver receives the private settlement identifier, addresses, hash, invoice digest, and invoice over an authenticated, encrypted, peer-bound channel. The public pricing identifier and private settlement identifier must differ.
+2. Competing solvers return blind price/capacity offers that contain none of those private fields. After the user chooses one solver, only that solver receives the private settlement identifier and addresses over an authenticated, encrypted, peer-bound channel. BIT → Lightning also discloses the user's fixed hash, digest, and invoice; Lightning → BIT keeps those fields empty until the selected solver creates its hold invoice. Its full executable quote must match the selected blind economic and capability terms. The public pricing identifier and private settlement identifier must differ.
 
 The exact amount remains visible to competing solvers because it is necessary to produce an executable price. Final onchain settlement links the recipient, amount, timing, and eventually the Lightning preimage; TreeSwap cannot promise cross-network anonymity. Users should assume a selected solver can correlate both legs.
 

@@ -1,51 +1,69 @@
 # TreeSwap RFQ and quote-selection policy
 
-Status: deterministic signed-offer validation and selection, open cryptographic repository admission, capability-bound executable quotes, local atomic persistence, authenticated endpoint transport, and concrete capacity-reader protocols are implemented. Independently operated endpoints/readers and independent solver/relay operation remain testnet deployment gates. Funded operation is closed.
+Status: blind multipath quote discovery, deterministic signed-offer selection, selected-solver private finalization, open cryptographic repository admission, local atomic persistence, authenticated endpoint transport, and concrete capacity-reader protocols are implemented. Independently operated endpoints/readers and independent solver/relay operation remain testnet deployment gates. Funded operation is closed.
 
-## What TreeSwap can prove
+## Two-stage quote boundary
 
-Every indicative solver offer is an EIP-712 message bound to protocol version, Ethereum chain, direction-specific verifying contract, request ID, direction, user, beneficiary, exact amounts, BIT fee, maximum routing fee, payment hash, invoice digest, request and offer nonces, expiry, and the individual solver's capacity epoch. The user request does not impose one shared epoch on independent solvers.
+TreeSwap does not publish private settlement fields to an RFQ relay.
 
-An indicative offer may be compared, but it cannot authorize invoice payment or settlement. An executable offer signs every indicative field plus the locally verified capability digest, exact capacity-snapshot digest, endpoint-key digest, settlement-contract runtime code hash, and exact available BIT and Lightning amounts. Its EIP-712 chain and verifying-contract domain must exactly match the capability's chain and direction-specific escrow. The offer must reproduce a live verifier-issued result object; copying its fields into a new object does not create authority. Its expiry may not outlive the capability, and its direction-specific inventory must cover the complete proposed liability.
+The public pricing request contains only an unlinkable pricing ID, direction, chain, exact output and unit, fee and routing caps, minimum capacity epoch, and short expiry. It contains no wallet, beneficiary, private settlement ID, payment hash, invoice digest, invoice, payee, route hints, email, or signature.
 
-Invoice ownership differs by direction:
+Each competing solver returns a blind EIP-712 offer bound to:
 
-- For BIT → Lightning, the user supplies one exact standard invoice. Its payment hash and invoice digest are fixed in the request and every solver must quote against those same values.
-- For Lightning → BIT, the pricing request uses the all-zero payment hash and invoice digest because no shared invoice can represent competing solver nodes. Every solver creates and signs a distinct short-lived hold invoice, and its offer binds that invoice's nonzero hash and digest. Duplicate hashes or invoice digests across competing solver identities are rejected.
+- the pricing ID, direction, solver, exact gross BIT, BIT fee, Lightning amount, routing cap, and expiry;
+- the solver's own capacity epoch;
+- the locally verified capability and capacity-snapshot digests;
+- the endpoint-key and settlement-runtime digests; and
+- exact verified BIT and Lightning capacity.
 
-After the user selects a Lightning → BIT executable offer, `bindSelectedSolverInvoice` converts only that signed offer's hash and invoice digest into the private settlement intent and commits the received-set digest, capability digest, snapshot digest, endpoint-key digest, settlement runtime hash, capacity epoch, and exact observed capacities. It refuses an indicative book. The user must decode and validate that exact hold invoice before countersigning or paying. Unselected hold invoices receive no payment and expire or are canceled by their owning solver under bounded firm-quote admission.
+The blind offer is sufficient to compare price and currently verified capacity. Its fee cap is checked with exact integer cross-multiplication, so basis-point division cannot round an over-cap fee into validity. It cannot authorize an invoice payment, BIT reservation, or settlement because it deliberately omits the private settlement fields.
 
-The client rejects any offer that changes an exact request field, exceeds a user cap, uses stale or mismatched capacity, changes the verified endpoint or escrow runtime, lacks a canonical solver signature, or outlives the request or capability window. Lightning → BIT requires enough exact prefunded solver-owned BIT plus inbound Lightning capacity. BIT → Lightning requires enough outbound Lightning capacity for the payment and maximum routing fee and admits no solver BIT inventory for that direction.
+After the user selects one blind offer, the coordinator must first atomically reserve that one-use offer and its exact capacity. Only that solver then receives the private settlement request through the authenticated encrypted peer-bound disclosure defined in [`PRIVACY.md`](PRIVACY.md). The solver returns a full executable EIP-712 quote. `finalizeSelectedBlindQuote` independently validates it and requires the offer ID, solver, economic terms, routing cap, capacity epoch, capability, snapshot, endpoint key, escrow runtime, and exact capacities to match the selected blind offer. The executable expiry may become shorter but never longer. The private quote additionally binds chain, escrow, request ID, direction, user, beneficiary, request and offer nonces, and direction-specific invoice fields. A library selection or finalization object is not a durable reservation or funding capability.
 
-For the offers actually received, selection is reproducible:
+A capability-bound full quote received outside that selected-solver transition remains useful for validation but cannot authorize settlement. Copies of a blind selection, delivery collection, capability result, or finalization do not carry module-private provenance.
 
-1. Keep at most one best valid offer per solver.
-2. Compare exact-input cost for the requested exact output.
-3. Break equal-price ties by local receipt time and then offer ID.
-4. Commit the complete verified received set to `receiptDigest`.
-5. Require the user to select and authorize one exact offer.
-6. Require fresh user authorization before any fallback solver is used.
+## Invoice ownership
 
-Input work is bounded before signature verification, duplicate offer IDs are rejected, and a single solver cannot gain extra positions by flooding variants.
+- BIT → Lightning begins with the user's exact amount-bearing standard invoice, but the public pricing stage exposes only its amount and caps. The invoice, digest, payment hash, and payee are disclosed only to the selected solver. The selected solver's executable quote must bind that exact invoice data before BIT is deposited or Lightning is paid.
+- Lightning → BIT uses no invoice during public pricing. The selected solver creates one short-lived hold invoice only after private selection and binds its nonzero payment hash and invoice digest in the executable quote. The client decodes that exact invoice before countersigning or paying it.
+
+This reduces cross-network linkage and avoids creating one hold invoice per unselected solver. A selected solver may still discover that it cannot route or honor the private invoice. It may not reprice or substitute terms; the attempt fails, affects objective reliability under the admission policy, and any next solver requires a fresh private disclosure and exact user authorization.
+
+## Received-set selection
+
+For offers actually received, selection is reproducible:
+
+1. Authenticate the complete configured path plan and locally timestamp each bounded response.
+2. Require at least two relay paths and two distinct direct solver paths to each contribute a retained valid blind offer.
+3. Keep at most one best valid blind offer per solver.
+4. Compare exact-input cost for the requested exact output.
+5. Break equal-price ties by local receipt time and then offer ID.
+6. Commit the path attempts, response digests, safe failures, and complete verified offer set.
+7. Require the user to select one exact blind offer.
+8. Privately finalize only that solver's matching executable quote.
+9. Require fresh user authorization before any fallback solver is used.
+
+Input work is bounded before expensive quote validation. Duplicate offer IDs, path identifiers, origins, keys, operator commitments, identity digests, and direct solver identities reject. An authenticated empty path does not satisfy offer-delivery diversity. See [Authenticated multipath RFQ delivery](./RFQ_DELIVERY.md).
 
 ## What TreeSwap cannot prove
 
-No contract or client can prove that an untrusted relay delivered every quote that existed elsewhere. TreeSwap therefore:
+No contract or client can prove that an untrusted relay delivered every quote that existed elsewhere. Distinct keys and operator commitments do not prove distinct organizations or hosting control. TreeSwap therefore:
 
-- requests offers directly from multiple independent solver identities and, where available, more than one relay;
+- requests blind offers from multiple relay and direct-solver paths;
 - refuses to label a result “global best” or “market best”;
-- displays “Best received quote” and the number of verified solvers and sources;
-- lets the user inspect and choose the signed offer; and
+- displays “Best received quote” with verified solver and path counts;
+- lets the user inspect and choose the signed blind offer;
+- requires an exact matching private finalization before settlement; and
 - excludes order-book rewards from v1.
 
-The `receiptDigest` makes the client's observed set reproducible; it does not turn that observed set into global availability proof.
+The combined receipt makes the client's observed delivery and offer set reproducible. It does not turn that set into global availability proof.
 
 ## Deployment gate
 
-Before testnet swaps, connect at least two independently operated solvers, use short-lived capacity epochs, authenticate the transport, retain privacy-minimized receipt evidence, and measure suppression, latency, expiry, and fill failures. Public rewards or a global-best claim require a separate mechanism and review.
+Before testnet swaps, deploy at least two independently operated relays and two independently operated direct solver endpoints, use short-lived capability epochs, retain privacy-minimized receipt evidence, inspect key and infrastructure control, and measure suppression, duplication, latency, expiry, private-finalization failure, path outage, key rotation, and fill failure. Public rewards or a global-best claim require a separate mechanism and review.
 
-`lib/solver-capability.mjs` binds each short-lived capability to the EVM solver, chain and direction-specific escrow and runtime code hash, Lightning node public key, canonical HTTPS endpoint origin, Ed25519 endpoint key, exact capacities, monotonic epoch, and expiry. The EVM identity signs the full EIP-712 declaration; the endpoint key and LND node key separately prove possession of the exact domain-bound challenge. The verifier accepts capacity only when independent BIT and Lightning observations are fresh, belong to the bound solver/node, and cover the declared amounts. Only a fully successful local verification can issue the quote-binding object consumed by `buildExecutableQuoteBook`; capability expiry is persisted, a firm quote may not outlive it, and legacy records migrate expired rather than gaining authority.
+`lib/solver-capability.mjs` binds each short-lived capability to the EVM solver, chain, direction-specific escrow and runtime code hash, Lightning node public key, canonical HTTPS endpoint origin, Ed25519 endpoint key, exact capacities, monotonic epoch, and expiry. Its EVM, endpoint, and Lightning-node possession proofs plus independent BIT and Lightning observations must all validate before either a blind or executable quote can use the capability.
 
-The durable admission store has no solver allowlist. Unknown BIT → Lightning solvers receive the configured first-fill cap. A separate global in-flight ceiling spans all solver identities to contain Sybil multiplication. The higher established cap requires the configured number of completed settlements, and a completed fill is counted only when the selected offer is already bound to a `COMPLETED` settlement carrying the same independently verified both-assets proof digest. An operator assertion cannot promote a solver.
+The durable admission store has no solver allowlist. Unknown BIT → Lightning solvers receive the configured first-fill cap, and one global in-flight ceiling spans every identity. Higher capacity requires objectively proven completed settlements. A selected solver that cannot privately finalize or execute cannot silently substitute terms and is accounted under the reviewed reliability policy.
 
-`lib/solver-endpoint-transport.mjs` implements the bound endpoint protocol: a random challenge and exact solver/direction are echoed in a response signed by the declared Ed25519 key; short time windows, canonical HTTPS, public-only DNS pinning, TLS hostname verification, no redirects, bounded JSON, and a hard deadline fail closed before capability admission. The pinned regtest campaign independently recovers the declared LND node from four fresh signatures, rejects a mutated challenge, and proves the signer and verifier credentials cannot call each other's RPC. The capacity-reader campaign separately compares exact finalized vault state across two providers and verifies direction-bound signed Lightning aggregates with reserves, budgets, no channel identifiers, and distinct observer keys. This is local transport, node-control, and reader evidence. Production still needs independently operated endpoints/readers, live invoice decoding, and at least two independently operated testnet solvers. See [Solver endpoint protocol](./SOLVER_ENDPOINT.md).
+Production still needs independently operated relays, endpoints and readers, deployed encrypted selected-solver disclosure, live invoice decoding, and at least two independently operated testnet solvers.

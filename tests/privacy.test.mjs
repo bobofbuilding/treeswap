@@ -72,6 +72,41 @@ test("reveals settlement data only to the selected authenticated encrypted peer"
   );
 });
 
+test("discloses an invoice only in the user-invoice direction", () => {
+  const lightningToBit = {
+    ...request,
+    direction: "lightning-to-bit",
+    exactBitOutputWei: 100n * 10n ** 18n,
+    exactLightningOutputSats: 0n,
+    paymentHash: `0x${"00".repeat(32)}`,
+    invoiceDigest: `0x${"00".repeat(32)}`,
+  };
+  const input = {
+    request: lightningToBit,
+    pricingId: request.pricingId,
+    selectedSolver: SOLVER,
+    selectedOfferId: id("lightning-to-bit-offer"),
+    invoice: "",
+    channel: { authenticated: true, encrypted: true, peer: SOLVER },
+    now: NOW,
+  };
+  const packet = buildSelectedSolverDisclosure(input);
+  assert.equal(packet.invoice, "");
+  assert.equal(packet.paymentHash, `0x${"00".repeat(32)}`);
+  assert.throws(
+    () => buildSelectedSolverDisclosure({ ...input, invoice: "lnbc-unselected-invoice" }),
+    /must leave solver invoice fields unbound/,
+  );
+  assert.throws(
+    () => buildSelectedSolverDisclosure({
+      ...input,
+      request: { ...request, paymentHash: `0x${"00".repeat(32)}` },
+      invoice: "lnbc250u1private",
+    }),
+    /commitments are missing/,
+  );
+});
+
 test("redacts cross-network identifiers and supplies deletion deadlines", () => {
   assert.deepEqual(privacySafeAudit("settled", {
     requestId: request.requestId,
