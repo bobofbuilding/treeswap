@@ -32,6 +32,14 @@ Comparison v2 accepts bounded non-symlink inputs only. Both observations must be
 
 These controls make accidental reuse, relabeling, stale capture, input substitution, source drift, and unbound comparison visible. They cannot prove that two provider accounts, signers, companies, or endpoints are independently controlled. Reviewers must retain the real operator identities, control relationships, and provider agreements separately and bind their conclusions into the signed review and promotion records.
 
+### Current v3 capture
+
+Exact clean published commit `fa331ff41bb0a49eab55d968f250959518649ffc` produced one authenticated v3 observation through the configured Alchemy mainnet app at canonical finalized block `25807580` (`0x0dd35c7f6726b60c433e960537d747979efe0cd0c685c0dbcd59941562f24917`) on 2026-08-22. It recorded provider label `alchemy-bobofbuilding-primary` and stable self-asserted identity commitment `0x31406a80d0e83ecabec1a5b4849bf044cb4a42fd18cd8634fee1b6979863eb0f`, reproduced both pinned runtime hashes and the implementation address, and observed `BIT` / `18` / `false`.
+
+Alchemy CLI `0.22.0` separately re-read that exact block by number, proved the current finalized head was later, repeated every EIP-1898 code/storage/call request, recomputed both runtime hashes, decoded the token state, and matched the exact remote-published source and provider-identity commitment. The ignored 1,446-byte file is mode `0600`, passed the endpoint/credential privacy scan, and has raw digest `sha256:448bbd98d68f9b7cb16430fe6a17ce99cffc73fc4ab08872d632eaf7f59d6913`.
+
+Both passes use the same provider account and operator. This capture therefore exercises the v3 handoff and proves current single-provider reproducibility only. It is not a comparison, organizational-independence finding, source review, promotion, or funding authorization.
+
 ## Source reproduction
 
 The proxy is an exact creation and runtime match in [Sourcify](https://repo.sourcify.dev/1/0x57A447E4d5e18A9423408C365963A73F08B9d18C). Sourcify identifies OpenZeppelin `ERC1967Proxy`, compiler `0.8.28+commit.7893614a`, optimizer enabled with 1,000 runs, and Paris EVM output.
