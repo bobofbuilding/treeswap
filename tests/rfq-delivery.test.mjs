@@ -8,15 +8,21 @@ import test from "node:test";
 import { id, Wallet } from "ethers";
 import {
   BLIND_RFQ_OFFER_TYPES,
+  USER_EXECUTION_AUTHORIZATION_TYPES,
+  USER_SELECTION_AUTHORIZATION_TYPES,
   activeBlindQuoteReservationBinding,
+  authorizeFinalizedBlindQuote,
   bindFinalizedSolverInvoice,
   blindRfqDomain,
+  buildBlindQuoteSelectionAuthorization,
+  buildFinalizedQuoteUserAuthorization,
   buildMultipathBlindQuoteBook,
   buildSelectedSolverDisclosure,
   finalizeSelectedBlindQuote,
   reserveSelectedBlindQuote,
   selectBlindQuote,
   validateBlindSolverOffer,
+  verifyBlindQuoteSelectionAuthorization,
   verifiedFinalizedExecutableQuote,
 } from "../lib/blind-rfq.mjs";
 import { CoordinatorStore } from "../lib/coordinator-store.mjs";
@@ -58,6 +64,7 @@ const BIT_TO_LIGHTNING = "0x2222222222222222222222222222222222222222";
 const LIGHTNING_TO_BIT_CODE_HASH = id("delivery-lightning-to-bit-runtime");
 const BIT_TO_LIGHTNING_CODE_HASH = id("delivery-bit-to-lightning-runtime");
 const solvers = [new Wallet(`0x${"31".repeat(32)}`), new Wallet(`0x${"32".repeat(32)}`)];
+const user = new Wallet(`0x${"33".repeat(32)}`);
 const endpointKeys = [generateKeyPairSync("ed25519"), generateKeyPairSync("ed25519")];
 const relayKeys = [generateKeyPairSync("ed25519"), generateKeyPairSync("ed25519"), generateKeyPairSync("ed25519")];
 const privateRequest = {
@@ -65,7 +72,7 @@ const privateRequest = {
   direction: "lightning-to-bit",
   chainId: 1,
   verifyingContract: LIGHTNING_TO_BIT,
-  user: "0x3333333333333333333333333333333333333333",
+  user: user.address,
   beneficiary: "0x4444444444444444444444444444444444444444",
   paymentHash: ZERO_BYTES32,
   invoiceDigest: ZERO_BYTES32,
@@ -87,7 +94,7 @@ const bitToLightningRequest = {
   direction: "bit-to-lightning",
   chainId: 1,
   verifyingContract: BIT_TO_LIGHTNING,
-  user: "0x3333333333333333333333333333333333333333",
+  user: user.address,
   beneficiary: "0x5555555555555555555555555555555555555555",
   paymentHash: id("private-bit-to-lightning-payment"),
   invoiceDigest: invoiceDigest(userInvoice),
@@ -445,6 +452,38 @@ async function preparedDurableStore(t, {
   return { directory, identity, path, store };
 }
 
+async function selectionAuthorization(selection, request = privateRequest, now = NOW) {
+  const prepared = buildBlindQuoteSelectionAuthorization({
+    selection,
+    request,
+    authorizationExpiresAt: Math.min(request.expiresAt, selection.selected.offer.expiresAt),
+  });
+  const signature = await user.signTypedData(prepared.domain, USER_SELECTION_AUTHORIZATION_TYPES, prepared.message);
+  return verifyBlindQuoteSelectionAuthorization({
+    selection,
+    request,
+    authorization: prepared.message,
+    signature,
+    now,
+  });
+}
+
+async function executionAuthorization(request, finalization, now = NOW) {
+  const prepared = buildFinalizedQuoteUserAuthorization({
+    request,
+    finalization,
+    authorizationExpiresAt: finalization.envelope.offer.expiresAt,
+  });
+  const signature = await user.signTypedData(prepared.domain, USER_EXECUTION_AUTHORIZATION_TYPES, prepared.message);
+  return authorizeFinalizedBlindQuote({
+    request,
+    finalization,
+    authorization: prepared.message,
+    signature,
+    now,
+  });
+}
+
 async function durableReservation(t, {
   selection,
   verification,
@@ -457,14 +496,16 @@ async function durableReservation(t, {
     privateSettlementRequest,
     now,
   });
+  const userAuthorization = await selectionAuthorization(selection, privateSettlementRequest, now);
   const reservation = reserveSelectedBlindQuote({
     selection,
+    userAuthorization,
     capabilityVerification: verification,
     coordinatorStore: prepared.store,
     admissionPolicy,
     now,
   });
-  return { ...prepared, reservation };
+  return { ...prepared, reservation, userAuthorization };
 }
 
 test("atomically reserves authenticated blind competition before private disclosure and finalization", async (t) => {
@@ -531,7 +572,7 @@ test("atomically reserves authenticated blind competition before private disclos
     now: NOW,
     quotePolicy,
   });
-  assert.equal(verifiedFinalizedExecutableQuote(finalized), finalized);
+  assert.throws(() => verifiedFinalizedExecutableQuote(finalized), /exact verified user authorization/);
   assert.equal(store.getFirmOffer(reservation.selectedOfferId).privateRequestDigest, finalized.requestDigest);
   assert.equal(store.getFirmOffer(reservation.selectedOfferId).executableOfferDigest, finalized.executableOfferDigest);
   assert.equal(store.getFirmOffer(reservation.selectedOfferId).executionBindingDigest, finalized.executionBindingDigest);
@@ -571,7 +612,13 @@ test("atomically reserves authenticated blind competition before private disclos
     now: NOW,
     quotePolicy,
   }), /already bound to another executable quote/);
-  const intent = bindFinalizedSolverInvoice(privateRequest, finalized);
+  const authorized = await executionAuthorization(privateRequest, finalized);
+  assert.equal(verifiedFinalizedExecutableQuote(authorized, { now: NOW }), authorized);
+  assert.equal(
+    store.getFirmOffer(reservation.selectedOfferId).executionAuthorizationDigest,
+    authorized.userAuthorizationDigest,
+  );
+  const intent = bindFinalizedSolverInvoice(privateRequest, authorized, { now: NOW });
   assert.equal(intent.paymentHash, id("private-payment-0"));
   assert.equal(intent.selectedSolver, solvers[0].address);
   assert.equal(intent.receivedSetDigest, book.receiptDigest);
@@ -676,8 +723,196 @@ test("reserves outbound Lightning plus routing headroom before disclosing the us
     now: NOW,
     quotePolicy,
   });
-  assert.equal(verifiedFinalizedExecutableQuote(finalized), finalized);
-  assert.equal(finalized.envelope.offer.invoiceDigest, bitToLightningRequest.invoiceDigest);
+  assert.throws(() => verifiedFinalizedExecutableQuote(finalized), /exact verified user authorization/);
+  const authorized = await executionAuthorization(bitToLightningRequest, finalized);
+  assert.equal(verifiedFinalizedExecutableQuote(authorized, { now: NOW }), authorized);
+  assert.equal(authorized.envelope.offer.invoiceDigest, bitToLightningRequest.invoiceDigest);
+});
+
+test("requires two exact user signatures before reservation and executable use", async (t) => {
+  assert.throws(() => {
+    USER_SELECTION_AUTHORIZATION_TYPES.UserSelectionAuthorization[0].name = "substituted";
+  }, /read only|Cannot assign/);
+  assert.throws(() => {
+    USER_EXECUTION_AUTHORIZATION_TYPES.UserExecutionAuthorization[0].type = "string";
+  }, /read only|Cannot assign/);
+  const { collection, offers, verifications } = await collect();
+  const book = buildMultipathBlindQuoteBook({
+    pricing,
+    collection,
+    capabilityVerifications: verifications,
+    now: NOW,
+    policy: blindPolicy,
+  });
+  const selection = selectBlindQuote(book, offers[0].envelope.offer.offerId);
+  const preparedStore = await preparedDurableStore(t, { selection, verification: verifications[0] });
+  assert.throws(() => reserveSelectedBlindQuote({
+    selection,
+    capabilityVerification: verifications[0],
+    coordinatorStore: preparedStore.store,
+    admissionPolicy,
+    now: NOW,
+  }), /verified user selection authorization/);
+
+  const preparedSelection = buildBlindQuoteSelectionAuthorization({
+    selection,
+    request: privateRequest,
+    authorizationExpiresAt: selection.selected.offer.expiresAt,
+  });
+  const selectionSignature = await user.signTypedData(
+    preparedSelection.domain,
+    USER_SELECTION_AUTHORIZATION_TYPES,
+    preparedSelection.message,
+  );
+  const changedSelection = {
+    ...preparedSelection.message,
+    beneficiary: "0x9999999999999999999999999999999999999999",
+  };
+  assert.throws(() => verifyBlindQuoteSelectionAuthorization({
+    selection,
+    request: privateRequest,
+    authorization: changedSelection,
+    signature: selectionSignature,
+    now: NOW,
+  }), /changed exact quote terms/);
+  const wrongSelectionSignature = await solvers[1].signTypedData(
+    preparedSelection.domain,
+    USER_SELECTION_AUTHORIZATION_TYPES,
+    preparedSelection.message,
+  );
+  assert.throws(() => verifyBlindQuoteSelectionAuthorization({
+    selection,
+    request: privateRequest,
+    authorization: preparedSelection.message,
+    signature: wrongSelectionSignature,
+    now: NOW,
+  }), /signer does not match/);
+  const selected = verifyBlindQuoteSelectionAuthorization({
+    selection,
+    request: privateRequest,
+    authorization: preparedSelection.message,
+    signature: selectionSignature,
+    now: NOW,
+  });
+  assert.throws(() => reserveSelectedBlindQuote({
+    selection,
+    userAuthorization: { ...selected },
+    capabilityVerification: verifications[0],
+    coordinatorStore: preparedStore.store,
+    admissionPolicy,
+    now: NOW,
+  }), /exact verified user selection authorization/);
+  const reservation = reserveSelectedBlindQuote({
+    selection,
+    userAuthorization: selected,
+    capabilityVerification: verifications[0],
+    coordinatorStore: preparedStore.store,
+    admissionPolicy,
+    now: NOW,
+  });
+  const reverifiedSelection = verifyBlindQuoteSelectionAuthorization({
+    selection,
+    request: privateRequest,
+    authorization: preparedSelection.message,
+    signature: selectionSignature,
+    now: NOW,
+  });
+  assert.equal(reserveSelectedBlindQuote({
+    selection,
+    userAuthorization: reverifiedSelection,
+    capabilityVerification: verifications[0],
+    coordinatorStore: preparedStore.store,
+    admissionPolicy,
+    now: NOW,
+  }), reservation);
+  assert.equal(
+    preparedStore.store.getFirmOffer(reservation.selectedOfferId).selectionAuthorizationDigest,
+    selected.selectionAuthorizationDigest,
+  );
+  assert.equal(
+    preparedStore.store.getFirmOffer(reservation.selectedOfferId).selectionAuthorizationExpiresAt,
+    selected.authorizationExpiresAt,
+  );
+  assert.throws(() => buildSelectedSolverDisclosure({
+    request: { ...privateRequest, beneficiary: "0x9999999999999999999999999999999999999999" },
+    reservation,
+    invoice: "",
+    channel: { authenticated: true, encrypted: true, peer: solvers[0].address },
+    now: NOW,
+  }), /user-authorized private request digest changed/);
+
+  const executable = await executableEnvelope(selection.selected.offer, 0);
+  const finalized = finalizeSelectedBlindQuote({
+    request: privateRequest,
+    reservation,
+    envelope: executable,
+    capabilityVerification: verifications[0],
+    now: NOW,
+    quotePolicy,
+  });
+  assert.throws(
+    () => bindFinalizedSolverInvoice(privateRequest, finalized),
+    /exact verified user authorization/,
+  );
+  const preparedExecution = buildFinalizedQuoteUserAuthorization({
+    request: privateRequest,
+    finalization: finalized,
+    authorizationExpiresAt: finalized.envelope.offer.expiresAt,
+  });
+  const executionSignature = await user.signTypedData(
+    preparedExecution.domain,
+    USER_EXECUTION_AUTHORIZATION_TYPES,
+    preparedExecution.message,
+  );
+  assert.throws(() => authorizeFinalizedBlindQuote({
+    request: privateRequest,
+    finalization: finalized,
+    authorization: { ...preparedExecution.message, invoiceDigest: id("substituted-invoice") },
+    signature: executionSignature,
+    now: NOW,
+  }), /changed exact quote or invoice terms/);
+  const wrongExecutionSignature = await solvers[1].signTypedData(
+    preparedExecution.domain,
+    USER_EXECUTION_AUTHORIZATION_TYPES,
+    preparedExecution.message,
+  );
+  assert.throws(() => authorizeFinalizedBlindQuote({
+    request: privateRequest,
+    finalization: finalized,
+    authorization: preparedExecution.message,
+    signature: wrongExecutionSignature,
+    now: NOW,
+  }), /signer does not match/);
+  const authorized = authorizeFinalizedBlindQuote({
+    request: privateRequest,
+    finalization: finalized,
+    authorization: preparedExecution.message,
+    signature: executionSignature,
+    now: NOW,
+  });
+  assert.equal(authorizeFinalizedBlindQuote({
+    request: privateRequest,
+    finalization: finalized,
+    authorization: preparedExecution.message,
+    signature: executionSignature,
+    now: NOW + 1,
+  }), authorized);
+  assert.equal(
+    preparedStore.store.getFirmOffer(reservation.selectedOfferId).executionAuthorizationDigest,
+    authorized.userAuthorizationDigest,
+  );
+  assert.equal(
+    preparedStore.store.getFirmOffer(reservation.selectedOfferId).executionAuthorizationExpiresAt,
+    authorized.userAuthorizationExpiresAt,
+  );
+  assert.throws(
+    () => verifiedFinalizedExecutableQuote(authorized, { now: authorized.userAuthorizationExpiresAt }),
+    /user execution authorization is expired/,
+  );
+  assert.throws(
+    () => verifiedFinalizedExecutableQuote({ ...authorized }),
+    /exact verified user authorization/,
+  );
 });
 
 test("keeps a flat executable list and copied finalization non-authorizing", async () => {
@@ -698,7 +933,7 @@ test("keeps a flat executable list and copied finalization non-authorizing", asy
   assert.throws(() => bindSelectedSolverInvoice(privateRequest, flat, id("delivery-offer-0")), /selected-offer finalization/);
   assert.throws(
     () => verifiedFinalizedExecutableQuote({ requestId: privateRequest.requestId }),
-    /selected blind-offer finalization/,
+    /exact verified user authorization/,
   );
 });
 
@@ -713,8 +948,10 @@ test("rejects copied provenance, caller-asserted verification, fake stores, and 
   });
   const selection = selectBlindQuote(book, offers[0].envelope.offer.offerId);
   const prepared = await preparedDurableStore(t, { selection, verification: verifications[0] });
+  const userAuthorization = await selectionAuthorization(selection);
   const input = {
     selection,
+    userAuthorization,
     capabilityVerification: verifications[0],
     coordinatorStore: prepared.store,
     admissionPolicy,
@@ -805,7 +1042,7 @@ test("rejects expired, same-ID-mutated, and stale-capacity reservations", async 
   });
   assert.throws(
     () => activeBlindQuoteReservationBinding(expiredDurable.reservation, { now: NOW + 60 }),
-    /no longer active/,
+    /user selection authorization is expired|no longer active/,
   );
 
   const mutated = await build();

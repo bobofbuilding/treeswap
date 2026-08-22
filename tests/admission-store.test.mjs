@@ -74,6 +74,8 @@ function reservation(value, label, overrides = {}) {
   return {
     offerId: hash(`offer:${label}`),
     offerDigest: hash(`offer-digest:${label}`),
+    selectionAuthorizationDigest: hash(`selection-authorization:${label}`),
+    selectionAuthorizationExpiresAt: NOW + 30,
     requestId: value.requestId,
     solverId: SOLVER,
     offer: {
@@ -312,6 +314,7 @@ test("atomically persists firm capacity, fails closed on conflicting snapshots, 
     const refreshed = store.recordSolverCapacity(snapshot(9, { observedAt: NOW + 31 }));
     assert.equal(refreshed.capacityEpoch, 9);
     const admitted = store.reserveVerifiedFirmOffer(reservation(two, "capacity-recovered", {
+      selectionAuthorizationExpiresAt: NOW + 60,
       offer: {
         ...reservation(two, "capacity-recovered").offer,
         capacityEpoch: 9,
@@ -747,6 +750,33 @@ test("refuses to migrate a legacy one-sided ledger while any firm offer is activ
   assert.equal(
     unchanged.prepare("SELECT value FROM coordinator_meta WHERE key = 'schema'").get().value,
     "treeswap.coordinator.v4",
+  );
+  unchanged.close();
+});
+
+test("refuses to invent user authorization while migrating an active v5 offer", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "treeswap-v5-authorization-migration-"));
+  const path = join(directory, "coordinator.sqlite");
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const rfq = request("v5-authorization-migration", 2);
+  const current = await CoordinatorStore.open(path);
+  current.admitRfq({ identity: identity(), request: rfq, policy: policy(), now: NOW });
+  current.recordSolverCapacity(snapshot());
+  current.reserveVerifiedFirmOffer(reservation(rfq, "v5-authorization-migration"));
+  current.close();
+
+  const legacy = new DatabaseSync(path);
+  legacy.prepare("UPDATE coordinator_meta SET value = 'treeswap.coordinator.v5' WHERE key = 'schema'").run();
+  legacy.close();
+
+  await assert.rejects(
+    CoordinatorStore.open(path),
+    /active firm offers and cannot migrate safely/,
+  );
+  const unchanged = new DatabaseSync(path, { readOnly: true });
+  assert.equal(
+    unchanged.prepare("SELECT value FROM coordinator_meta WHERE key = 'schema'").get().value,
+    "treeswap.coordinator.v5",
   );
   unchanged.close();
 });

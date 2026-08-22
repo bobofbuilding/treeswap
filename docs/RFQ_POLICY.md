@@ -1,6 +1,6 @@
 # TreeSwap RFQ and quote-selection policy
 
-Status: blind multipath quote discovery, deterministic signed-offer selection, atomic dual-resource reservation before disclosure, one-use durable executable-quote binding, selected-solver private finalization, open cryptographic repository admission, authenticated endpoint transport, and concrete capacity-reader protocols are implemented locally. Independently operated endpoints/readers, encrypted disclosure deployment, shared persistence, and independent solver/relay operation remain testnet deployment gates. Funded operation is closed.
+Status: blind multipath quote discovery, deterministic signed-offer selection, two-stage exact user authorization, atomic dual-resource reservation before disclosure, one-use durable executable-quote binding, selected-solver private finalization, open cryptographic repository admission, authenticated endpoint transport, and concrete capacity-reader protocols are implemented locally. Independently operated endpoints/readers, encrypted disclosure deployment, shared persistence, wallet integration, and independent solver/relay operation remain testnet deployment gates. Funded operation is closed.
 
 ## Two-stage quote boundary
 
@@ -18,9 +18,11 @@ Each competing solver returns a blind EIP-712 offer bound to:
 
 The blind offer is sufficient to compare price and currently verified capacity. Its fee cap is checked with exact integer cross-multiplication, so basis-point division cannot round an over-cap fee into validity. It cannot authorize an invoice payment, BIT reservation, or settlement because it deliberately omits the private settlement fields.
 
-After the user selects one blind offer, `reserveSelectedBlindQuote` requires the exact module-private selection and capability used during authenticated collection, matches the exact active RFQ and capacity snapshot already in the real coordinator store, and calls its `BEGIN IMMEDIATE` reservation path. Lightning → BIT reserves both gross solver BIT and inbound Lightning sats. BIT → Lightning reserves the exact output plus the solver-signed maximum routing headroom. Only an active, unexpired, unmodified database record can unlock the authenticated encrypted peer-bound disclosure defined in [`PRIVACY.md`](PRIVACY.md); copied objects, fake stores, replaced methods, cancellation, expiry, capacity drift, or record mutation fail closed.
+After the user selects one blind offer, the client prepares a short-lived EIP-712 selection authorization. It displays and binds the selected solver, exact gross BIT, BIT fee, Lightning amount, maximum routing fee, user, beneficiary, request nonce and digest, direction-specific pre-existing invoice commitments, the complete received-set commitment, and both expiries. `reserveSelectedBlindQuote` requires an in-process verification of that exact user signature as well as the exact module-private selection and capability used during authenticated collection. Schema v6 persists the selection-authorization digest in the same `BEGIN IMMEDIATE` transaction as the capacity reservation. Lightning → BIT reserves both gross solver BIT and inbound Lightning sats. BIT → Lightning reserves the exact output plus the solver-signed maximum routing headroom. Only an active, unexpired, unmodified database record and authorization can unlock the authenticated encrypted peer-bound disclosure defined in [`PRIVACY.md`](PRIVACY.md); copied objects, wrong wallets, fake stores, replaced methods, cancellation, expiry, capacity drift, request substitution, or record mutation fail closed.
 
-The solver then returns one full executable EIP-712 quote. `finalizeSelectedBlindQuote` independently validates it and requires the offer ID, solver, economic terms, routing cap, capacity epoch, capability, snapshot, endpoint key, escrow runtime, and exact capacities to match the selected blind offer. The executable expiry may become shorter but never longer. The private quote additionally binds chain, escrow, request ID, direction, user, beneficiary, request and offer nonces, and direction-specific invoice fields. The coordinator atomically binds that exact private-request digest and executable-offer digest to the firm record. A byte-identical retry is idempotent; a second hold invoice, payment hash, quote, or request cannot reuse the reservation. A library selection, reservation copy, or finalization copy is not authority.
+The solver then returns one full executable EIP-712 quote. `finalizeSelectedBlindQuote` independently validates it and requires the offer ID, solver, economic terms, routing cap, capacity epoch, capability, snapshot, endpoint key, escrow runtime, and exact capacities to match the selected blind offer. The executable expiry may become shorter but never longer. The private quote additionally binds chain, escrow, request ID, direction, user, beneficiary, request and offer nonces, and direction-specific invoice fields. The coordinator atomically binds that exact private-request digest and executable-offer digest to the firm record, but this candidate still cannot authorize settlement.
+
+The client must then show the complete invoice and exact executable terms and obtain a second short-lived EIP-712 user signature. That execution authorization binds the first authorization, request, executable offer, durable execution record, selected solver, beneficiary, amounts, routing ceiling, payment hash, invoice digest, and expiry. Schema v6 atomically persists its digest, signed expiry, and verification time. Use rechecks the active durable record and fails at the exact expiry boundary. Only the module-private result of this second verification can bind the solver invoice or enter a value-moving flow. A byte-identical retry is idempotent; a second hold invoice, payment hash, quote, request, or approval cannot reuse the reservation. A library selection, reservation copy, solver-finalization copy, or copied user-verification result is not authority.
 
 A capability-bound full quote received outside that selected-solver transition remains useful for validation but cannot authorize settlement. Copies of a blind selection, delivery collection, capability result, or finalization do not carry module-private provenance.
 
@@ -42,8 +44,10 @@ For offers actually received, selection is reproducible:
 5. Break equal-price ties by local receipt time and then offer ID.
 6. Commit the path attempts, response digests, safe failures, and complete verified offer set.
 7. Require the user to select one exact blind offer.
-8. Privately finalize only that solver's matching executable quote.
-9. Require fresh user authorization before any fallback solver is used.
+8. Require exact user selection authorization before reservation or private disclosure.
+9. Privately finalize only that solver's matching executable quote.
+10. Require a second exact user authorization over the full quote and invoice commitments before execution.
+11. Require both authorizations again before any fallback solver is used.
 
 Input work is bounded before expensive quote validation. Duplicate offer IDs, path identifiers, origins, keys, operator commitments, identity digests, and direct solver identities reject. An authenticated empty path does not satisfy offer-delivery diversity. See [Authenticated multipath RFQ delivery](./RFQ_DELIVERY.md).
 
@@ -55,7 +59,7 @@ No contract or client can prove that an untrusted relay delivered every quote th
 - refuses to label a result “global best” or “market best”;
 - displays “Best received quote” with verified solver and path counts;
 - lets the user inspect and choose the signed blind offer;
-- requires an exact matching private finalization before settlement; and
+- requires an exact matching private finalization plus its second user authorization before settlement; and
 - excludes order-book rewards from v1.
 
 The combined receipt makes the client's observed delivery and offer set reproducible. It does not turn that set into global availability proof.
