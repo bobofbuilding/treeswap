@@ -24,7 +24,7 @@ There is no central limit order book, shared LP pool, market-making reward, or p
 
 The target production architecture opens quote creation and solver competition without opening public pooled custody. See [`PERMISSIONLESS_AUTOMATION.md`](PERMISSIONLESS_AUTOMATION.md). Optional EVM-to-Lightning identity linking is described in [`LIGHTNING_ACCOUNTS.md`](LIGHTNING_ACCOUNTS.md), and immutable version transitions are described in [`UPGRADES.md`](UPGRADES.md).
 
-The RFQ client follows [`RFQ_POLICY.md`](RFQ_POLICY.md) and [`RFQ_DELIVERY.md`](RFQ_DELIVERY.md): it queries at least two authenticated relay paths and two distinct capability-bound direct solver paths with an unlinkable blind pricing request, locally timestamps their complete signed batches, validates every solver-signed blind offer, and commits the delivery and offer receipts before the user selects one quote. Only the selected solver then receives the private settlement fields and must return an exact capability-bound executable quote matching its blind terms. The client never claims that a relay supplied a globally complete market.
+The RFQ client follows [`RFQ_POLICY.md`](RFQ_POLICY.md) and [`RFQ_DELIVERY.md`](RFQ_DELIVERY.md): it queries at least two authenticated relay paths and two distinct capability-bound direct solver paths with an unlinkable blind pricing request, locally timestamps their complete signed batches, validates every solver-signed blind offer, and commits the delivery and offer receipts before the user selects one quote. The coordinator then atomically reserves both capacity dimensions required by that exact offer before only the selected solver receives the private settlement fields. The exact private request and matching capability-bound executable quote are durably bound once. The client never claims that a relay supplied a globally complete market.
 
 ## 3. Selected-quote intent
 
@@ -90,7 +90,7 @@ The public web application never receives a node macaroon, seed, preimage store,
 ### BIT → Lightning
 
 1. The user creates an exact BOLT 11 invoice; the client keeps it private and requests blind quotes using only its exact amount and caps.
-2. The user selects one blind solver quote, privately discloses the exact invoice to that solver, verifies the solver's matching executable quote, and only then deposits or reserves the quoted BIT to the solver-bound escrow.
+2. The user selects one blind solver quote. The coordinator first reserves the exact outbound Lightning output plus signed routing ceiling, then privately discloses the canonical invoice to that solver, durably binds its one matching executable quote, and only then deposits or reserves the quoted BIT to the solver-bound escrow.
 3. The solver waits for the configured Ethereum finality threshold and validates the invoice.
 4. The solver pays the invoice and receives the preimage.
 5. Anyone may relay the preimage, but BIT is paid only to the bound solver beneficiary.
@@ -101,7 +101,7 @@ The public web application never receives a node macaroon, seed, preimage store,
 ### Lightning → BIT
 
 1. Solvers return blind signed quotes against verified pre-funded vault inventory; no hold invoice or user address traverses the relays. The user validates the received set and selects one solver.
-2. Only the selected solver receives the private settlement request, creates one short-lived hold invoice, and returns a full executable quote whose solver, price, capacity, endpoint, and runtime must match the selected blind offer. No other solver, invoice, or price may be substituted without a new selection and authorization.
+2. The coordinator first reserves the selected solver's gross BIT plus inbound Lightning capacity. Only while that exact record remains active does the selected solver receive the private settlement request, create one short-lived hold invoice, and return a full executable quote whose solver, price, capacity, endpoint, and runtime must match the selected blind offer. The coordinator binds that exact request and quote once; no other solver, invoice, or price may reuse it.
 3. The user countersigns and exercises the quote. The vault verifies both signatures, the live-open gate, BIT runtime settings, price and exposure caps, and deadline ordering. The user then verifies the finalized reservation and every supported BOLT 11 field before paying.
 4. The solver settles the hold invoice with the preimage.
 5. The user or a relayer supplies the preimage to claim BIT.

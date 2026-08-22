@@ -1,7 +1,8 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { id, keccak256, toUtf8Bytes } from "ethers";
+import { id } from "ethers";
 import { reserveValidatedPaymentHash, validateFullFillInvoice } from "../lib/invoice-policy.mjs";
+import { invoiceDigest } from "../lib/lnd-rest-client.mjs";
 
 const NOW = 2_000_000_000;
 const INVOICE = "lnbc500u1validsignedinvoiceplaceholder";
@@ -9,7 +10,7 @@ const PAYMENT_HASH = id("invoice-payment-hash");
 const SECRET = id("payment-secret");
 const DESTINATION = `02${"11".repeat(32)}`;
 const request = {
-  invoiceDigest: keccak256(toUtf8Bytes(INVOICE)),
+  invoiceDigest: invoiceDigest(INVOICE),
   paymentHash: PAYMENT_HASH,
   amountSats: 50_000n,
   expectedPayee: DESTINATION,
@@ -57,6 +58,7 @@ test("validates one exact full-fill mainnet invoice and reserves its unique hash
   const result = validate();
   assert.equal(result.valid, true);
   assert.equal(result.canonical.amountSats, 50_000n);
+  assert.equal(result.canonical.invoiceDigest, invoiceDigest(INVOICE));
   assert.equal(result.canonical.multiPartPaymentAllowedOnlyForSingleFullInvoice, true);
   const next = reserveValidatedPaymentHash(registry, result);
   assert.deepEqual(next.reservedPaymentHashes, [PAYMENT_HASH.toLowerCase()]);

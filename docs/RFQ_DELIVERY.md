@@ -1,6 +1,6 @@
 # Authenticated multipath RFQ delivery
 
-Status: the local blind-pricing client protocol, path-diversity gate, authenticated batch merge, selected-solver executable finalization, and adversarial tests are implemented. No relay is deployed, no operator independence has been established, and funded operation remains closed.
+Status: the local blind-pricing client protocol, path-diversity gate, authenticated batch merge, durable pre-disclosure capacity reservation, one-use executable binding, selected-solver finalization, and adversarial tests are implemented. No relay or encrypted disclosure service is deployed, no shared coordinator or operator independence has been established, and funded operation remains closed.
 
 ## Purpose
 
@@ -22,9 +22,11 @@ Identical offers delivered over several paths appear once in the quote book but 
 
 ## Private finalization
 
-The blind offer deliberately cannot move funds. Before private disclosure, the coordinator must atomically reserve that exact one-use offer and capacity; a library selection alone is not a reservation or authority. After selection, the existing privacy boundary discloses addresses and direction-appropriate invoice/hash data only to the selected solver over an authenticated encrypted peer-bound channel. BIT → Lightning discloses the user's fixed invoice; Lightning → BIT leaves invoice fields empty so only the selected solver can create its hold invoice. That solver returns one full capability-bound executable quote. Finalization refuses repricing, solver substitution, capacity or runtime changes, longer expiry, request linkage, or a copied selection.
+The blind offer deliberately cannot move funds. Before private disclosure, the coordinator requires the exact authenticated selection and exact locally verified capability, matches the active RFQ and capacity snapshot, then atomically reserves the record. Lightning → BIT locks gross BIT and inbound Lightning capacity; BIT → Lightning locks output plus maximum routing headroom. A library selection alone is not a reservation or authority. Disclosure re-reads the exact active firm, RFQ, and capacity records, rejects backward time, and sends the complete private request only over an authenticated encrypted channel bound to the selected solver. BIT → Lightning discloses the fixed invoice only after its canonical digest matches; Lightning → BIT leaves invoice fields empty so only the selected solver can create its hold invoice.
 
-A legacy or flat executable envelope list cannot bind an invoice. `bindFinalizedSolverInvoice` accepts only the module-private result of blind selection plus exact private finalization.
+That solver returns one full capability-bound executable quote. Finalization refuses repricing, solver substitution, capacity or runtime changes, longer expiry, request linkage, or copied provenance, then atomically binds the exact private-request and executable EIP-712 digests to the firm record. A byte-identical retry is the only idempotent replay. A second invoice or quote variant fails across coordinator connections, and further private disclosure stops once the executable binding exists.
+
+A legacy or flat executable envelope list cannot bind an invoice. `bindFinalizedSolverInvoice` accepts only the module-private result of active durable reservation plus exact private finalization.
 
 ## Path identity and transport
 

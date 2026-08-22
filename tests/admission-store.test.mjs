@@ -80,6 +80,7 @@ function reservation(value, label, overrides = {}) {
       direction: value.direction,
       bitAmountWei: String(60n * BIT),
       lightningAmountSats: value.notionalSats,
+      maxRoutingFeeSats: "0",
       capacityEpoch: 7,
       expiresAt: NOW + 30,
       signatureVerified: true,
@@ -267,6 +268,7 @@ test("atomically persists firm capacity, fails closed on conflicting snapshots, 
     const first = store.reserveVerifiedFirmOffer(reservation(one, "capacity-one"));
     assert.equal(first.state, "ACTIVE");
     assert.equal(store.getSolverCapacity(SOLVER).committedBitWei, String(60n * BIT));
+    assert.equal(store.getSolverCapacity(SOLVER).committedLightningSats, one.notionalSats);
     assert.equal(store.reserveVerifiedFirmOffer(reservation(one, "capacity-one")).offerId, first.offerId);
     assert.equal(store.getSolverCapacity(SOLVER).activeFirmQuotes, 1);
 
@@ -304,6 +306,7 @@ test("atomically persists firm capacity, fails closed on conflicting snapshots, 
     });
     assert.equal(expired.state, "EXPIRED_UNEXERCISED");
     assert.equal(store.getSolverCapacity(SOLVER).committedBitWei, "0");
+    assert.equal(store.getSolverCapacity(SOLVER).committedLightningSats, "0");
     assert.equal(store.getSolverCapacity(SOLVER).capacityConflict, false);
 
     const refreshed = store.recordSolverCapacity(snapshot(9, { observedAt: NOW + 31 }));
@@ -569,6 +572,84 @@ test("serializes competing firm reservations so capacity cannot be oversubscribe
   }
 });
 
+test("serializes inbound Lightning commitments even when BIT inventory could cover both quotes", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "treeswap-inbound-capacity-race-"));
+  const path = join(directory, "coordinator.sqlite");
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const first = await CoordinatorStore.open(path);
+  const one = request("inbound-capacity-race-one", 2);
+  const two = request("inbound-capacity-race-two", 3);
+  first.admitRfq({ identity: identity(), request: one, policy: policy(), now: NOW });
+  first.admitRfq({ identity: identity(), request: two, policy: policy(), now: NOW });
+  first.recordSolverCapacity(snapshot(7, {
+    availableBitWei: String(200n * BIT),
+    availableLightningSats: "15000",
+  }));
+  const second = await CoordinatorStore.open(path);
+  try {
+    const outcomes = await Promise.allSettled([
+      Promise.resolve().then(() => first.reserveVerifiedFirmOffer(reservation(one, "inbound-capacity-race-one"))),
+      Promise.resolve().then(() => second.reserveVerifiedFirmOffer(reservation(two, "inbound-capacity-race-two"))),
+    ]);
+    assert.equal(outcomes.filter(({ status }) => status === "fulfilled").length, 1);
+    assert.equal(outcomes.filter(({ status }) => status === "rejected").length, 1);
+    assert.match(
+      String(outcomes.find(({ status }) => status === "rejected").reason),
+      /uncommitted capacity \(Lightning\)/,
+    );
+    assert.equal(first.getSolverCapacity(SOLVER).committedBitWei, String(60n * BIT));
+    assert.equal(first.getSolverCapacity(SOLVER).committedLightningSats, "10000");
+  } finally {
+    first.close();
+    second.close();
+  }
+});
+
+test("binds only one executable quote to a firm offer across coordinator connections", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "treeswap-executable-binding-race-"));
+  const path = join(directory, "coordinator.sqlite");
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const first = await CoordinatorStore.open(path);
+  const rfq = request("executable-binding-race", 2);
+  first.admitRfq({ identity: identity(), request: rfq, policy: policy(), now: NOW });
+  first.recordSolverCapacity(snapshot());
+  const firm = first.reserveVerifiedFirmOffer(reservation(rfq, "executable-binding-race"));
+  const second = await CoordinatorStore.open(path);
+  const shared = {
+    offerId: firm.offerId,
+    privateRequestDigest: hash("private-request-binding"),
+    finalizedAt: NOW + 1,
+  };
+  try {
+    const outcomes = await Promise.allSettled([
+      Promise.resolve().then(() => first.bindFirmOfferExecution({
+        ...shared,
+        executableOfferDigest: hash("executable-offer-a"),
+      })),
+      Promise.resolve().then(() => second.bindFirmOfferExecution({
+        ...shared,
+        executableOfferDigest: hash("executable-offer-b"),
+      })),
+    ]);
+    assert.equal(outcomes.filter(({ status }) => status === "fulfilled").length, 1);
+    assert.equal(outcomes.filter(({ status }) => status === "rejected").length, 1);
+    assert.match(
+      String(outcomes.find(({ status }) => status === "rejected").reason),
+      /already bound to another executable quote/,
+    );
+    const bound = first.getFirmOffer(firm.offerId);
+    assert.equal(bound.privateRequestDigest, shared.privateRequestDigest);
+    assert.ok([hash("executable-offer-a"), hash("executable-offer-b")].includes(bound.executableOfferDigest));
+    assert.equal(first.bindFirmOfferExecution({
+      ...shared,
+      executableOfferDigest: bound.executableOfferDigest,
+    }).executionBindingDigest, bound.executionBindingDigest);
+  } finally {
+    first.close();
+    second.close();
+  }
+});
+
 test("stores only opaque identity commitments and exposes aggregate admission metrics", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "treeswap-admission-privacy-"));
   const path = join(directory, "coordinator.sqlite");
@@ -639,4 +720,33 @@ test("migrates v3 solver capabilities as expired instead of extending legacy aut
   } finally {
     migrated.close();
   }
+});
+
+test("refuses to migrate a legacy one-sided ledger while any firm offer is active", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "treeswap-active-ledger-migration-"));
+  const path = join(directory, "coordinator.sqlite");
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const rfq = request("active-ledger-migration", 2);
+  const current = await CoordinatorStore.open(path);
+  current.admitRfq({ identity: identity(), request: rfq, policy: policy(), now: NOW });
+  current.recordSolverCapacity(snapshot());
+  current.reserveVerifiedFirmOffer(reservation(rfq, "active-ledger-migration"));
+  current.close();
+
+  const legacy = new DatabaseSync(path);
+  legacy.exec("ALTER TABLE firm_offer_commitments DROP COLUMN bit_amount_wei");
+  legacy.exec("ALTER TABLE firm_offer_commitments DROP COLUMN lightning_amount_sats");
+  legacy.prepare("UPDATE coordinator_meta SET value = 'treeswap.coordinator.v4' WHERE key = 'schema'").run();
+  legacy.close();
+
+  await assert.rejects(
+    CoordinatorStore.open(path),
+    /active firm offers and cannot migrate safely/,
+  );
+  const unchanged = new DatabaseSync(path, { readOnly: true });
+  assert.equal(
+    unchanged.prepare("SELECT value FROM coordinator_meta WHERE key = 'schema'").get().value,
+    "treeswap.coordinator.v4",
+  );
+  unchanged.close();
 });
