@@ -1,8 +1,20 @@
 #!/usr/bin/env node
 
-import { resolve } from "node:path";
-import { buildBitDeploymentComparisonReport } from "../lib/bit-deployment-observer.mjs";
+import { execFileSync } from "node:child_process";
+import { dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
+import {
+  buildBitDeploymentComparisonReport,
+  validateBitComparisonSourceProvenance,
+  validateBitObservationSourceProvenance,
+} from "../lib/bit-deployment-observer.mjs";
 import { readBoundedJson, writeExclusiveJson } from "../lib/closed-testnet-deployment-files.mjs";
+import {
+  assertTreeSwapCanonicalOrigin,
+  parsePublishedMainReference,
+} from "../lib/published-source.mjs";
+
+const repository = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 function parseArguments(values) {
   const parsed = { inputs: [], out: null };
@@ -28,6 +40,33 @@ async function readObservation(path) {
   }
 }
 
+function git(arguments_) {
+  try {
+    return execFileSync("git", arguments_, {
+      cwd: repository,
+      encoding: "utf8",
+      maxBuffer: 2_000_000,
+      stdio: ["ignore", "pipe", "pipe"],
+    }).trim();
+  } catch {
+    throw new Error("BIT comparison source provenance check failed");
+  }
+}
+
+function currentPublishedSource() {
+  const originUrl = git(["remote", "get-url", "origin"]);
+  assertTreeSwapCanonicalOrigin(originUrl);
+  return {
+    branch: git(["branch", "--show-current"]),
+    head: git(["rev-parse", "HEAD"]),
+    originUrl,
+    published: parsePublishedMainReference(
+      git(["ls-remote", "--exit-code", "origin", "refs/heads/main"]),
+    ),
+    status: git(["status", "--porcelain", "--untracked-files=all"]),
+  };
+}
+
 async function main() {
   const options = parseArguments(process.argv.slice(2));
   if (options.help) {
@@ -36,8 +75,16 @@ async function main() {
   }
   if (options.inputs.length !== 2) throw new TypeError("exactly two observation files are required");
 
+  const sourceBefore = currentPublishedSource();
+  validateBitObservationSourceProvenance(sourceBefore);
   const [left, right] = await Promise.all(options.inputs.map(readObservation));
   const report = buildBitDeploymentComparisonReport(left, right);
+  validateBitComparisonSourceProvenance(report, sourceBefore);
+  const sourceAfter = currentPublishedSource();
+  validateBitComparisonSourceProvenance(report, sourceAfter);
+  if (sourceAfter.head !== sourceBefore.head || sourceAfter.published !== sourceBefore.published) {
+    throw new Error("BIT comparison source changed during provider comparison");
+  }
   const serialized = `${JSON.stringify(report, null, 2)}\n`;
 
   if (options.out) {

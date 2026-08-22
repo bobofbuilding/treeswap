@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -9,6 +9,7 @@ import {
   BIT_DEPLOYMENT_COMPARISON_SCHEMA,
   BIT_DEPLOYMENT_OBSERVATION_SCHEMA,
   BIT_MAINNET_CONTRACT,
+  BIT_RPC_MAXIMUM_RESPONSE_BYTES,
   EIP1967_IMPLEMENTATION_SLOT,
   assessBitDeploymentObservation,
   bitDeploymentObservationValueDigest,
@@ -17,6 +18,7 @@ import {
   createJsonRpcClient,
   normalizeBitDeploymentObservation,
   observeBitDeployment,
+  validateBitComparisonSourceProvenance,
   validateBitObservationSourceProvenance,
 } from "../lib/bit-deployment-observer.mjs";
 
@@ -77,6 +79,36 @@ function observe(rpcCall, overrides = {}) {
     observedAt: OBSERVED_AT,
     ...overrides,
   });
+}
+
+async function fakePublishedGit(directory, {
+  branch = "main",
+  head = SOURCE_COMMIT,
+  origin = "https://github.com/bobofbuilding/treeswap.git",
+  published = head,
+  status = "",
+} = {}) {
+  const bin = join(directory, "bin");
+  await mkdir(bin);
+  await writeFile(join(bin, "git"), `#!/bin/sh
+case "$1:$2:$3" in
+  remote:get-url:origin) printf '%s\\n' "$TREESWAP_TEST_ORIGIN" ;;
+  branch:--show-current:) printf '%s\\n' "$TREESWAP_TEST_BRANCH" ;;
+  rev-parse:HEAD:) printf '%s\\n' "$TREESWAP_TEST_HEAD" ;;
+  ls-remote:--exit-code:origin) printf '%s\\trefs/heads/main\\n' "$TREESWAP_TEST_PUBLISHED" ;;
+  status:--porcelain:--untracked-files=all) printf '%s' "$TREESWAP_TEST_STATUS" ;;
+  *) exit 64 ;;
+esac
+`, { mode: 0o700 });
+  return {
+    ...process.env,
+    PATH: `${bin}:${process.env.PATH}`,
+    TREESWAP_TEST_BRANCH: branch,
+    TREESWAP_TEST_HEAD: head,
+    TREESWAP_TEST_ORIGIN: origin,
+    TREESWAP_TEST_PUBLISHED: published,
+    TREESWAP_TEST_STATUS: status,
+  };
 }
 
 test("records one internally consistent finalized BIT deployment observation", async () => {
@@ -213,6 +245,22 @@ test("binds the exact provider observations into a non-authorizing comparison re
     },
   ]);
   assert.notEqual(report.observations[0].observationDigest, report.observations[1].observationDigest);
+  const publishedSource = {
+    branch: "main",
+    head: SOURCE_COMMIT,
+    originUrl: "https://github.com/bobofbuilding/treeswap.git",
+    published: SOURCE_COMMIT,
+    status: "",
+  };
+  assert.equal(validateBitComparisonSourceProvenance(report, publishedSource), SOURCE_COMMIT);
+  assert.throws(
+    () => validateBitComparisonSourceProvenance(report, {
+      ...publishedSource,
+      head: "b".repeat(40),
+      published: "b".repeat(40),
+    }),
+    /requires observations from the exact clean commit published/,
+  );
 });
 
 test("rejects relabelled, stale, future, and widely separated provider evidence", async () => {
@@ -324,13 +372,14 @@ test("comparison CLI binds bounded inputs and writes one private non-overwriting
       writeFile(leftPath, `${JSON.stringify(left)}\n`, { mode: 0o600 }),
       writeFile(rightPath, `${JSON.stringify(right)}\n`, { mode: 0o600 }),
     ]);
+    const env = await fakePublishedGit(directory);
     execFileSync(process.execPath, [
       "scripts/compare-bit-observations.mjs",
       leftPath,
       rightPath,
       "--out",
       reportPath,
-    ], { cwd: process.cwd(), stdio: ["ignore", "pipe", "pipe"] });
+    ], { cwd: process.cwd(), env, stdio: ["ignore", "pipe", "pipe"] });
     const report = JSON.parse(await readFile(reportPath, "utf8"));
     assert.equal(report.eligible, true);
     assert.equal(report.fundingAuthorization, false);
@@ -342,7 +391,7 @@ test("comparison CLI binds bounded inputs and writes one private non-overwriting
       rightPath,
       "--out",
       reportPath,
-    ], { cwd: process.cwd(), encoding: "utf8" });
+    ], { cwd: process.cwd(), encoding: "utf8", env });
     assert.notEqual(overwrite.status, 0);
 
     const linkPath = join(directory, "linked.json");
@@ -351,9 +400,29 @@ test("comparison CLI binds bounded inputs and writes one private non-overwriting
       "scripts/compare-bit-observations.mjs",
       linkPath,
       rightPath,
-    ], { cwd: process.cwd(), encoding: "utf8" });
+    ], { cwd: process.cwd(), encoding: "utf8", env });
     assert.notEqual(linked.status, 0);
     assert.match(linked.stderr, /bounded non-symlink/);
+
+    const staleReportPath = join(directory, "stale-report.json");
+    const stale = spawnSync(process.execPath, [
+      "scripts/compare-bit-observations.mjs",
+      leftPath,
+      rightPath,
+      "--out",
+      staleReportPath,
+    ], {
+      cwd: process.cwd(),
+      encoding: "utf8",
+      env: {
+        ...env,
+        TREESWAP_TEST_HEAD: "b".repeat(40),
+        TREESWAP_TEST_PUBLISHED: "b".repeat(40),
+      },
+    });
+    assert.notEqual(stale.status, 0);
+    assert.match(stale.stderr, /requires observations from the exact clean commit published/);
+    await assert.rejects(() => stat(staleReportPath), { code: "ENOENT" });
   } finally {
     await rm(directory, { recursive: true, force: true });
   }
@@ -404,12 +473,71 @@ test("JSON-RPC client permits plaintext only for a local fork", () => {
 
 test("JSON-RPC client enforces a bounded transport timeout", async () => {
   let signal;
+  let redirect;
   const rpcCall = createJsonRpcClient("https://rpc.example/secret", async (_url, options) => {
     signal = options.signal;
-    return { ok: true, json: async () => ({ jsonrpc: "2.0", id: 1, result: "0x1" }) };
+    redirect = options.redirect;
+    return new Response(JSON.stringify({ jsonrpc: "2.0", id: 1, result: "0x1" }), {
+      headers: { "content-type": "application/json" },
+    });
   }, { timeoutMs: 25 });
   assert.equal(await rpcCall("eth_chainId", []), "0x1");
   assert.equal(signal instanceof AbortSignal, true);
   assert.equal(signal.aborted, false);
+  assert.equal(redirect, "error");
   assert.throws(() => createJsonRpcClient("https://rpc.example/secret", globalThis.fetch, { timeoutMs: 0 }), /outside policy/);
+});
+
+test("JSON-RPC client bounds and validates the complete response envelope", async () => {
+  const request = (payload, responseOptions = {}, clientOptions = {}) => createJsonRpcClient(
+    "https://rpc.example/secret",
+    async () => new Response(
+      typeof payload === "string" ? payload : JSON.stringify(payload),
+      responseOptions,
+    ),
+    clientOptions,
+  )("eth_chainId", []);
+
+  await assert.rejects(
+    () => request({ jsonrpc: "2.0", id: 2, result: "0x1" }, {
+      headers: { "content-type": "application/json" },
+    }),
+    /response mismatch/,
+  );
+  await assert.rejects(
+    () => request({ jsonrpc: "2.0", id: 1, result: "0x1", error: null }, {
+      headers: { "content-type": "application/json" },
+    }),
+    /invalid result envelope/,
+  );
+  await assert.rejects(
+    () => request({ jsonrpc: "2.0", id: 1, result: "0x1" }, {
+      headers: { "content-type": "text/plain" },
+    }),
+    /non-JSON response/,
+  );
+  await assert.rejects(
+    () => request("x".repeat(65), {
+      headers: { "content-type": "application/json" },
+    }, { maximumResponseBytes: 64 }),
+    /size limit/,
+  );
+  await assert.rejects(
+    () => createJsonRpcClient(
+      "https://rpc.example/secret",
+      async () => ({
+        ok: true,
+        redirected: true,
+        headers: { get: () => null },
+        text: async () => JSON.stringify({ jsonrpc: "2.0", id: 1, result: "0x1" }),
+      }),
+    )("eth_chainId", []),
+    /redirected/,
+  );
+  assert.throws(
+    () => createJsonRpcClient("https://rpc.example/secret", globalThis.fetch, {
+      maximumResponseBytes: BIT_RPC_MAXIMUM_RESPONSE_BYTES + 1,
+    }),
+    /response-size limit is outside policy/,
+  );
 });
