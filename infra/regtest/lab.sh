@@ -41,6 +41,14 @@ ensure_runtime_env() {
     node "$LAB_DIR/../../scripts/generate-lightning-coordinator-key.mjs" \
       "$STATE_DIR/bob-capacity-private.pem" "$STATE_DIR/bob-capacity-public.pem"
   fi
+  if [[ ! -f "$STATE_DIR/alice-close-collector-a-private.pem" || ! -f "$STATE_DIR/alice-close-collector-a-public.pem" ]]; then
+    node "$LAB_DIR/../../scripts/generate-lightning-coordinator-key.mjs" \
+      "$STATE_DIR/alice-close-collector-a-private.pem" "$STATE_DIR/alice-close-collector-a-public.pem"
+  fi
+  if [[ ! -f "$STATE_DIR/alice-close-collector-b-private.pem" || ! -f "$STATE_DIR/alice-close-collector-b-public.pem" ]]; then
+    node "$LAB_DIR/../../scripts/generate-lightning-coordinator-key.mjs" \
+      "$STATE_DIR/alice-close-collector-b-private.pem" "$STATE_DIR/alice-close-collector-b-public.pem"
+  fi
   if ! grep -q '^COORDINATOR_PRIVATE_KEY_PATH=' "$ENV_FILE"; then
     set_runtime_value COORDINATOR_PRIVATE_KEY_PATH "$STATE_DIR/coordinator-private.pem"
   fi
@@ -58,6 +66,21 @@ ensure_runtime_env() {
   fi
   if ! grep -q '^BOB_CAPACITY_PUBLIC_KEY_PATH=' "$ENV_FILE"; then
     set_runtime_value BOB_CAPACITY_PUBLIC_KEY_PATH "$STATE_DIR/bob-capacity-public.pem"
+  fi
+  if ! grep -q '^ALICE_CLOSE_COLLECTOR_A_PRIVATE_KEY_PATH=' "$ENV_FILE"; then
+    set_runtime_value ALICE_CLOSE_COLLECTOR_A_PRIVATE_KEY_PATH "$STATE_DIR/alice-close-collector-a-private.pem"
+  fi
+  if ! grep -q '^ALICE_CLOSE_COLLECTOR_A_PUBLIC_KEY_PATH=' "$ENV_FILE"; then
+    set_runtime_value ALICE_CLOSE_COLLECTOR_A_PUBLIC_KEY_PATH "$STATE_DIR/alice-close-collector-a-public.pem"
+  fi
+  if ! grep -q '^ALICE_CLOSE_COLLECTOR_B_PRIVATE_KEY_PATH=' "$ENV_FILE"; then
+    set_runtime_value ALICE_CLOSE_COLLECTOR_B_PRIVATE_KEY_PATH "$STATE_DIR/alice-close-collector-b-private.pem"
+  fi
+  if ! grep -q '^ALICE_CLOSE_COLLECTOR_B_PUBLIC_KEY_PATH=' "$ENV_FILE"; then
+    set_runtime_value ALICE_CLOSE_COLLECTOR_B_PUBLIC_KEY_PATH "$STATE_DIR/alice-close-collector-b-public.pem"
+  fi
+  if ! grep -q '^ALICE_CLOSE_NODE_COMMITMENT=' "$ENV_FILE"; then
+    set_runtime_value ALICE_CLOSE_NODE_COMMITMENT 0x98f937e103e9f926ab650cb4743cffb2cadb32b3f25162a0e4b28e363e8b40c4
   fi
   if ! grep -q '^ADAPTER_CREDENTIAL_ISSUED_AT=' "$ENV_FILE"; then
     set_runtime_value ADAPTER_CREDENTIAL_ISSUED_AT "$(date +%s)"
@@ -238,6 +261,8 @@ bake_node_credentials() {
   compose exec -T "$node" mkdir -p /root/.lnd/treeswap
   compose exec -T "$node" rm -f \
     /root/.lnd/treeswap/observer.macaroon \
+    /root/.lnd/treeswap/close-observer-a.macaroon \
+    /root/.lnd/treeswap/close-observer-b.macaroon \
     /root/.lnd/treeswap/invoice.macaroon \
     /root/.lnd/treeswap/payer.macaroon
   compose exec -T "$node" lncli --network=regtest bakemacaroon \
@@ -247,6 +272,18 @@ bake_node_credentials() {
     uri:/lnrpc.Lightning/ListChannels \
     uri:/lnrpc.Lightning/PendingChannels \
     uri:/lnrpc.Lightning/ChannelBalance \
+    uri:/walletrpc.WalletKit/PendingSweeps >/dev/null
+  compose exec -T "$node" lncli --network=regtest bakemacaroon \
+    --timeout="$ROLE_CREDENTIAL_LIFETIME_SECONDS" \
+    --root_key_id=106 --save_to=/root/.lnd/treeswap/close-observer-a.macaroon \
+    uri:/lnrpc.Lightning/GetInfo \
+    uri:/lnrpc.Lightning/PendingChannels \
+    uri:/walletrpc.WalletKit/PendingSweeps >/dev/null
+  compose exec -T "$node" lncli --network=regtest bakemacaroon \
+    --timeout="$ROLE_CREDENTIAL_LIFETIME_SECONDS" \
+    --root_key_id=107 --save_to=/root/.lnd/treeswap/close-observer-b.macaroon \
+    uri:/lnrpc.Lightning/GetInfo \
+    uri:/lnrpc.Lightning/PendingChannels \
     uri:/walletrpc.WalletKit/PendingSweeps >/dev/null
   compose exec -T "$node" lncli --network=regtest bakemacaroon \
     --timeout="$ROLE_CREDENTIAL_LIFETIME_SECONDS" \
@@ -276,6 +313,8 @@ role_root_key_id() {
     payer) printf '%s\n' 103 ;;
     solver-node-signer) printf '%s\n' 104 ;;
     node-proof-verifier) printf '%s\n' 105 ;;
+    close-observer-a) printf '%s\n' 106 ;;
+    close-observer-b) printf '%s\n' 107 ;;
     *) echo "unknown credential role" >&2; return 1 ;;
   esac
 }
@@ -287,6 +326,12 @@ role_permissions() {
         uri:/lnrpc.Lightning/ChannelBalance \
         uri:/lnrpc.Lightning/GetInfo \
         uri:/lnrpc.Lightning/ListChannels \
+        uri:/lnrpc.Lightning/PendingChannels \
+        uri:/walletrpc.WalletKit/PendingSweeps
+      ;;
+    close-observer-a|close-observer-b)
+      printf '%s\n' \
+        uri:/lnrpc.Lightning/GetInfo \
         uri:/lnrpc.Lightning/PendingChannels \
         uri:/walletrpc.WalletKit/PendingSweeps
       ;;
@@ -393,7 +438,7 @@ verify_role_negative_matrix() {
   if [[ "$role" != "observer" ]]; then
     assert_role_command_denied "$node" "$role" channelbalance
   fi
-  if [[ "$role" == "observer" ]]; then
+  if [[ "$role" == "observer" || "$role" == close-observer-* ]]; then
     assert_role_command_denied "$node" "$role" getnetworkinfo
   fi
 }
@@ -403,7 +448,7 @@ bake_credentials() {
   bake_node_credentials alice
   bake_node_credentials bob
   for node in alice bob; do
-    for role in observer invoice payer; do
+    for role in observer invoice payer close-observer-a close-observer-b; do
       verify_role_manifest "$node" "$role"
       verify_role_negative_matrix "$node" "$role"
     done
@@ -2290,18 +2335,60 @@ observe_lightning_close_recovery() {
     node "$LAB_DIR/../../scripts/evaluate-lightning-close-recovery.mjs"
 }
 
+prepare_lightning_close_collectors() {
+  if cmp -s "$ALICE_CLOSE_COLLECTOR_A_PUBLIC_KEY_PATH" "$ALICE_CLOSE_COLLECTOR_B_PUBLIC_KEY_PATH"; then
+    echo "Lightning close collectors must not reuse a signing key" >&2
+    return 1
+  fi
+  compose run --rm export-alice-close-collector-a-credential >/dev/null
+  compose run --rm export-alice-close-collector-b-credential >/dev/null
+  compose --profile tools build lightning-close-collector-a >/dev/null
+}
+
+observe_lightning_close_collector_quorum() {
+  local collector_a collector_b now input
+  collector_a=$(compose --profile tools run --rm -T --no-deps lightning-close-collector-a)
+  collector_b=$(compose --profile tools run --rm -T --no-deps lightning-close-collector-b)
+  jq -e '.schema == "treeswap.lightning-close-collector-attestation.v1"' <<<"$collector_a" >/dev/null
+  jq -e '.schema == "treeswap.lightning-close-collector-attestation.v1"' <<<"$collector_b" >/dev/null
+  now=$(date +%s)
+  input=$(jq -cn \
+    --argjson collectorA "$collector_a" \
+    --argjson collectorB "$collector_b" \
+    --argjson now "$now" \
+    '{attestations:[$collectorA,$collectorB],now:$now}')
+  LIGHTNING_CLOSE_COLLECTOR_A_ID=alice-close-a \
+    LIGHTNING_CLOSE_COLLECTOR_A_PUBLIC_KEY_PATH="$ALICE_CLOSE_COLLECTOR_A_PUBLIC_KEY_PATH" \
+    LIGHTNING_CLOSE_COLLECTOR_B_ID=alice-close-b \
+    LIGHTNING_CLOSE_COLLECTOR_B_PUBLIC_KEY_PATH="$ALICE_CLOSE_COLLECTOR_B_PUBLIC_KEY_PATH" \
+    LIGHTNING_NODE_COMMITMENT="$ALICE_CLOSE_NODE_COMMITMENT" \
+    MAXIMUM_COLLECTOR_ATTESTATION_LIFETIME_SECONDS=30 \
+    MAXIMUM_COLLECTOR_CLOCK_SKEW_SECONDS=5 \
+    node "$LAB_DIR/../../scripts/verify-lightning-close-collector-quorum.mjs" <<<"$input"
+}
+
 smoke_force_close_recovery() {
   ensure_runtime_env
   start_lab >/dev/null
   local channel_point miner_address invoice payment_request payment_hash invoice_digest intent_digest
   local request_id operation envelope force_result active_channels pending_state bob_pending_state pending_count maturity_blocks
   local decode_result baseline_close_evidence pending_close_evidence alice_recovery_evidence bob_recovery_evidence
+  local baseline_collector_quorum pending_collector_quorum recovered_collector_quorum
   local recovered=false anchor_count
+
+  prepare_lightning_close_collectors
 
   baseline_close_evidence=$(observe_lightning_close_recovery alice)
   if ! jq -e '.status == "healthy" and (.reasonCodes | length) == 0' <<<"$baseline_close_evidence" >/dev/null; then
     echo "Lightning close monitor did not accept the bounded baseline" >&2
     jq -c '{status,reasonCodes}' <<<"$baseline_close_evidence" >&2
+    return 1
+  fi
+  baseline_collector_quorum=$(observe_lightning_close_collector_quorum)
+  if ! jq -e '.status == "healthy" and (.reasonCodes | length) == 0 and (.collectors | length) == 2' \
+    <<<"$baseline_collector_quorum" >/dev/null; then
+    echo "Signed Lightning close collector quorum rejected the live baseline" >&2
+    jq -c '{status,reasonCodes}' <<<"$baseline_collector_quorum" >&2
     return 1
   fi
 
@@ -2346,6 +2433,13 @@ smoke_force_close_recovery() {
     <<<"$pending_close_evidence" >/dev/null; then
     echo "Lightning close monitor did not halt on the live pending close" >&2
     jq -c '{status,reasonCodes}' <<<"$pending_close_evidence" >&2
+    return 1
+  fi
+  pending_collector_quorum=$(observe_lightning_close_collector_quorum)
+  if ! jq -e '.status == "unsafe" and (.reasonCodes | index("COLLECTOR_REPORTED_UNSAFE")) != null and ([.collectors[].status] | all(. == "unsafe"))' \
+    <<<"$pending_collector_quorum" >/dev/null; then
+    echo "Signed Lightning close collector quorum did not halt on the live pending close" >&2
+    jq -c '{status,reasonCodes,collectors:[.collectors[].status]}' <<<"$pending_collector_quorum" >&2
     return 1
   fi
 
@@ -2429,6 +2523,13 @@ smoke_force_close_recovery() {
     echo "pinned LND did not expose the expected bounded uneconomic anchor exception" >&2
     return 1
   fi
+  recovered_collector_quorum=$(observe_lightning_close_collector_quorum)
+  if ! jq -e '.status == "healthy" and (.reasonCodes | length) == 0 and ([.collectors[].status] | all(. == "healthy"))' \
+    <<<"$recovered_collector_quorum" >/dev/null; then
+    echo "Signed Lightning close collector quorum did not accept the recovered node" >&2
+    jq -c '{status,reasonCodes,collectors:[.collectors[].status]}' <<<"$recovered_collector_quorum" >&2
+    return 1
+  fi
   assert_adapter_payment_not_found "$intent_digest" "$payment_hash" "$invoice_digest" 10000
   request_id="0x$(openssl rand -hex 32)"
   decode_result=$(call_adapter payer-adapter /lnrpc.Lightning/DecodePayReq \
@@ -2438,7 +2539,7 @@ smoke_force_close_recovery() {
     '.result.paymentHash == $paymentHash and .result.amountSats == "10000"' <<<"$decode_result" >/dev/null
 
   unset payment_request envelope
-  echo "Force-close smoke passed: new exposure and the close monitor halted, the CSV close fully swept, bounded anchors remained aggregate-only, and a fresh balanced channel restored service."
+  echo "Force-close smoke passed: two distinct signed collectors and the adapter halted on a genuine close, the CSV close fully swept, aggregate-only bounded anchors remained, and a fresh balanced channel restored service."
 }
 
 smoke_route_and_duplicate_failure() {
