@@ -10,7 +10,7 @@ The lab uses immutable multi-architecture image digests for:
 
 The Docker network is internal and publishes no host ports. Runtime RPC and wallet passwords are generated locally with restrictive permissions under ignored `.state` storage. They are regtest-only and must never be reused.
 
-The persistent lab uses a deliberately high 100,000,000-sat test-only daily ceiling so repeated qualification runs retain replay journals without exhausting the day. This is not a production recommendation. Separate disposable adapters enforce a 10,000-sat live test ceiling, and deterministic journal coverage proves the exact UTC rollover. Production must publish a much smaller reviewed limit.
+Manual lab commands keep their Docker volumes until explicitly destroyed and use a deliberately high 100,000,000-sat test-only daily ceiling so repeated fault campaigns retain replay journals without exhausting the day. The sealed qualifier is different: it destroys the named disposable regtest volumes before its first campaign and again on success or failure, so interrupted-run state cannot contaminate later evidence. This is not a production recommendation. Separate disposable adapters enforce a 10,000-sat live test ceiling, and deterministic journal coverage proves the exact UTC rollover. Production must publish a much smaller reviewed limit.
 
 ## Commands
 
@@ -38,7 +38,10 @@ npm run regtest:coordinator-invoice-smoke
 npm run qualify:local
 npm run regtest:status
 npm run regtest:down
+npm run regtest:destroy
 ```
+
+`regtest:destroy` removes only the `treeswap-regtest` containers, internal network, and Docker volumes. It preserves the ignored local runtime credential file. Use it when resetting the disposable lab; `qualify:local` invokes it automatically before and after the sealed campaign matrix.
 
 `regtest:up` initializes both wallets without printing their test seeds, mines spendable regtest funds, opens and confirms the private channel, and bakes separate 24-hour credentials under distinct root-key IDs:
 
@@ -78,7 +81,7 @@ For all six node/role pairs, the bootstrap reads the baked macaroon back, requir
 
 `regtest:unsynced-chain-smoke` pauses the real Alice LND process, advances Bitcoin regtest by 500 blocks, and resumes Alice into a genuine catch-up state. The campaign observes `synced_to_chain=false` or `wallet_synced=false`, requires the adapter to reject an exact signed payment non-ambiguously, waits for both flags and the channel to recover, and uses read-only tracking to prove zero dispatch. The recovered adapter then decodes the same invoice. Three consecutive warm-state runs pass.
 
-`regtest:force-close-smoke` unilaterally closes Alice's only active channel and requires an exact signed payment to be rejected before dispatch while the channel is in LND's waiting-close state. It confirms the commitment transaction, reads the pinned node's actual CSV maturity, advances through that maturity, confirms the resulting sweep, and requires all pending-close exposure to clear. Only then does it open and confirm a fresh balanced private channel, prove the rejected payment is `NOT_FOUND`, and decode the same invoice through the recovered adapter. Three consecutive warm-state runs pass without accumulating pending closes.
+`regtest:force-close-smoke` unilaterally closes Alice's only active channel and requires an exact signed payment to be rejected before dispatch while the channel is in LND's waiting-close state. It confirms the commitment transaction, reads the pinned node's actual CSV maturity, advances through that maturity, confirms the resulting sweep, and requires all pending-close exposure to clear. Only then does it open and confirm a fresh balanced private channel, prove the rejected payment is `NOT_FOUND`, and decode the same invoice through the recovered adapter. Ten consecutive warm-state runs pass without accumulating pending closes. Pinned LND may retain confirmed 330-sat commitment-anchor entries in its separate sweep queue because an anchor with no time-sensitive HTLC is uneconomic; operators must monitor that queue and pending-close state separately, and deployed recovery evidence remains open.
 
 `regtest:route-fault-smoke` starts a third synced LND node with no channels and obtains a standard 10,000-sat invoice from it. Alice's healthy adapter dispatches exactly once and must receive terminal `FAILED` with `NO_ROUTE`. Pinned LND may subsequently track that attempt as the exact bound `FAILED` payment or return non-ambiguous, hash-redacted `NOT_FOUND`; neither observation permits another send. The exact authorization replay and a fresh authorization that reuses the payment hash must both fail at the adapter. A lab-only administrative count confirms LND still has exactly one matching payment record. The zero-state campaign and five consecutive warm-state campaigns pass.
 

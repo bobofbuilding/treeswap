@@ -8,6 +8,7 @@ import {
   parsePublishedMainReference,
   validatePublishedMainSource,
 } from "../lib/published-source.mjs";
+import { destroyQualificationRegtest } from "../lib/regtest-qualification-lifecycle.mjs";
 
 const repository = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 process.chdir(repository);
@@ -156,6 +157,7 @@ const configurationFiles = [
   "lib/bit-independent-review.mjs",
   "lib/bit-reviewed-manifest.mjs",
   "lib/published-source.mjs",
+  "lib/regtest-qualification-lifecycle.mjs",
   "lib/admission-policy.mjs",
   "lib/capabilities.mjs",
   "lib/invoice-policy.mjs",
@@ -303,16 +305,18 @@ const startedAt = new Date().toISOString();
 const results = [];
 let campaignError = null;
 try {
+  destroyQualificationRegtest({ repository });
   for (const [name, command, args] of campaigns) results.push(runCampaign(name, command, args));
 } catch (error) {
   campaignError = error;
 } finally {
-  const stopped = spawnSync("npm", ["run", "regtest:down"], {
-    cwd: repository,
-    stdio: "inherit",
-    env: process.env,
-  });
-  if (stopped.status !== 0 && !campaignError) campaignError = new Error("regtest cleanup failed");
+  try {
+    destroyQualificationRegtest({ repository });
+  } catch (cleanupError) {
+    campaignError = campaignError
+      ? new AggregateError([campaignError, cleanupError], "qualification campaign and regtest destruction failed")
+      : cleanupError;
+  }
 }
 if (campaignError) throw campaignError;
 if (currentPublishedCommit() !== sourceCommit) throw new Error("qualification source changed during the campaigns");
