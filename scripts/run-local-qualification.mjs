@@ -88,6 +88,7 @@ const configurationFiles = [
   "scripts/prepare-bit-independent-review.mjs",
   "scripts/prepare-bit-independent-review-attestation.mjs",
   "scripts/verify-bit-independent-review.mjs",
+  "scripts/promote-bit-reviewed-manifest.mjs",
   "scripts/verify-published-main.mjs",
   "scripts/run-local-qualification.mjs",
   "scripts/run-live-account-evidence.mjs",
@@ -152,6 +153,7 @@ const configurationFiles = [
   "lib/bit-evidence-source.mjs",
   "lib/bit-provider-evidence.mjs",
   "lib/bit-independent-review.mjs",
+  "lib/bit-reviewed-manifest.mjs",
   "lib/published-source.mjs",
   "lib/admission-policy.mjs",
   "lib/capabilities.mjs",
@@ -230,6 +232,10 @@ const campaigns = [
   ["governance:bit-independent-review", "node", [
     "--test",
     "tests/bit-independent-review.test.mjs",
+  ]],
+  ["governance:bit-reviewed-manifest", "node", [
+    "--test",
+    "tests/bit-reviewed-manifest.test.mjs",
   ]],
   ["evm:escrow-reorgs", "npm", ["run", "test:escrow-reorg"]],
   ["lightning:credential-lifecycle", "npm", ["run", "regtest:credential-smoke"]],

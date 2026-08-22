@@ -23,6 +23,7 @@
     "prepare:bit-independent-review": "node scripts/prepare-bit-independent-review.mjs",
     "prepare:bit-independent-review-attestation": "node scripts/prepare-bit-independent-review-attestation.mjs",
     "verify:bit-independent-review": "node scripts/verify-bit-independent-review.mjs",
+    "promote:bit-reviewed-manifest": "node scripts/promote-bit-reviewed-manifest.mjs",
     "test:fork": "bash scripts/run-mainnet-fork.sh",
     "test:coordinator-evm": "bash scripts/run-coordinator-evm-smoke.sh",
     "test:evm-outbox-faults": "bash scripts/run-evm-outbox-fault-smoke.sh",

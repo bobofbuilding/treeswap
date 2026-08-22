@@ -1,6 +1,6 @@
 # BIT independent review evidence
 
-Status: TreeSwap can bind two separately controlled reviewer approvals to the exact, still-live [signed BIT provider evidence](./BIT_PROVIDER_EVIDENCE.md), source/compiler artifacts, roles and storage analysis, upgrade analysis, provider-independence report, findings disposition, and finalized block. No real provider, reviewer, report, organizational-independence finding, deployment promotion, or funding authorization is included.
+Status: TreeSwap can bind two separately controlled reviewer approvals to the exact, still-live [signed BIT provider evidence](./BIT_PROVIDER_EVIDENCE.md), source/compiler artifacts, roles and storage analysis, upgrade analysis, provider-independence report, findings disposition, and finalized block. That live provenance can now enter the non-authorizing [reviewed BIT deployment manifest](./BIT_REVIEWED_MANIFEST.md). No real provider, reviewer, report, organizational-independence finding, production deployment, or funding authorization is included.
 
 ## Purpose
 
@@ -136,7 +136,7 @@ Every CLI requires the exact clean commit currently published at the canonical T
 
 Unknown or extra fields, legacy or changed schemas, copied provider verification, provider expiry, extended review lifetime, wrong source, chain, contract, finalized block, comparison, provider record, policy or set, reused reviewer/provider control, missing reviewer roles, noncanonical order, duplicated evidence commitments, artifact substitution, critical/high/open findings, wrong or replayed signatures, expiry, future dating, secrets, endpoints, symlinks, oversized inputs, and output overwrite all fail closed.
 
-The verified summary always reports `fundingAuthorization: false` and `providerIndependenceStatus: "reviewer-attested-requires-retained-evidence-audit"`. It is a review handoff only. It cannot deploy contracts, promote a manifest, open a gate, activate release capabilities, or fund a solver.
+The verified summary always reports `fundingAuthorization: false` and `providerIndependenceStatus: "reviewer-attested-requires-retained-evidence-audit"`. It is a review handoff only. A same-process provenance-only function may derive the [reviewed BIT deployment manifest](./BIT_REVIEWED_MANIFEST.md), but the serialized summary cannot. Neither output can deploy contracts, open a gate, activate release capabilities, or fund a solver.
 
 ## Local qualification checkpoint
 
