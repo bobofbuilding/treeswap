@@ -88,7 +88,8 @@
     "prepare:deployment-promotion": "node scripts/prepare-deployment-promotion-approval.mjs",
     "verify:deployment-promotion": "node scripts/verify-deployment-promotion.mjs",
     "regtest:status": "bash infra/regtest/lab.sh status",
-    "regtest:down": "bash infra/regtest/lab.sh down"
+    "regtest:down": "bash infra/regtest/lab.sh down",
+    "regtest:destroy": "bash infra/regtest/lab.sh destroy"
   },
   "dependencies": {
     "drizzle-orm": "0.45.2",
