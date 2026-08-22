@@ -21,7 +21,7 @@ Reviewed surfaces:
 | TS-C01 | Risk, price, inventory, cap, fee, attestation policy, and local actual-gate monitor halt implemented | Live pinned BIT state, independent executable-price inputs, continuous monitor/alerts, review |
 | TS-C02 | Both beneficiary-bound escrows implemented | Independent review |
 | TS-C03 | Ordered-deadline derivation, exact boundaries, integrated local EVM/LND execution, and credentialed pinned-live-BIT combined fork implemented | Public testnet, independent finality, congestion drills |
-| TS-C04 | Multi-solver signed received-set selection implemented | None; global-best availability is explicitly not claimed |
+| TS-C04 | Multi-solver signed selection plus authenticated two-relay/two-direct-path collection implemented | Independent relay/solver deployment and suppression telemetry; global-best availability is explicitly not claimed |
 | TS-H01 | Chain/contract/version/direction/nonce replay protection and ERC-1271 implemented | EOA-only SIWE remains an explicit account limitation |
 | TS-H02 | Dual-signed user exercise plus local atomic admission, capability expiry, authenticated endpoint response, capacity, and last-look accounting implemented | Deployed shared enforcement/readers, live reliability telemetry, objective bond decision |
 | TS-H03 | Closed expiring gate, token runtime checks, local guardian-halt monitor, finalized closed-deployment observer, signed reviewed-manifest promotion, and short-lived signed deployment preflight implemented | Live continuous proxy monitor, genuinely independent observations/reviews, deployed multisigs, public-testnet campaign |
@@ -127,21 +127,22 @@ Both escrows enforce `quoteExpiresAt < lastSafeClaimAt`, a minimum settlement wi
 ### TS-C04 — Relay can suppress or reorder quotes
 
 **Severity:** High for swaps
-**Status:** Direction-correct multi-solver signed validation and deterministic received-set selection implemented; global availability is explicitly not claimed
+**Status:** Direction-correct multi-solver validation and authenticated multipath received-set selection implemented; independent deployment remains open and global availability is explicitly not claimed
 
-An offchain relay can hide a better quote, delay one solver, or fabricate receipt order. The escrow can enforce the exact selected quote but cannot prove that it was globally best.
+An offchain relay can hide a better quote or delay one solver. If source labels or receipt times came from the relay, it could also impersonate several paths or fabricate receipt order. The escrow can enforce the exact selected quote but cannot prove that it was globally best.
 
 Safeguards:
 
 - have users sign the exact selected quote and enforce its output and fee caps onchain;
-- have the client request quotes from multiple independent solvers or relays;
+- have the client request quotes concurrently from at least two relays and two direct solver endpoints;
+- send only unlinkable blind pricing data, authenticate each complete blind-offer batch under a fresh path-bound challenge, and assign receipt time only after local receipt;
 - show “best received quote,” never “global best price”;
 - let the user choose the signed quote rather than letting the relay select it;
-- bind the selected quote's exact output, fee, recipient, hash, and expiry;
-- require one unchanged user invoice across BIT → Lightning offers, but a distinct solver-owned hold invoice for every Lightning → BIT offer;
+- privately disclose addresses and invoice/hash data only to the selected solver, then require its executable quote to match the blind solver, price, capability, capacity, endpoint, and runtime;
+- require one exact user invoice for BIT → Lightning or one selected-solver hold invoice for Lightning → BIT only at private finalization;
 - keep public order-book rewards outside v1.
 
-The escrows verify direction-specific accepted terms onchain. `lib/rfq.mjs` now verifies the solver's complete EIP-712 offer before selection, accepts a bounded response set, retains one best offer per independent solver, orders exact-output offers by input price and receipt time, commits the verified received set, and requires the user to select one exact offer. Every fallback solver requires fresh user authorization. `docs/RFQ_POLICY.md` defines the claim boundary: this proves the selected terms and reproduces the client's received set, but it cannot prove that an untrusted relay delivered every quote available elsewhere. The product therefore says “Best received quote,” requires multiple solver identities, and makes no global-best claim.
+The escrows verify direction-specific accepted terms onchain. `lib/rfq-delivery.mjs` authenticates configured relay and direct-solver paths, rejects reused identities, carries only the blind pricing payload, verifies fresh signed response batches, and commits the complete attempt set using client receipt times. `lib/blind-rfq.mjs` verifies capability-bound blind EIP-712 offers, retains one best offer per solver, orders exact-output offers by price and local receipt time, commits delivery and offer receipts, and brands one explicit selection. Only that solver may receive the private settlement fields; its full quote must pass `lib/rfq.mjs` validation and exactly match the blind economic and capability fields before the invoice can be bound. A flat full-quote list or copied finalization cannot authorize, and every fallback requires fresh private disclosure and user authorization. [`RFQ_POLICY.md`](RFQ_POLICY.md) and [`RFQ_DELIVERY.md`](RFQ_DELIVERY.md) define the claim boundary: this proves the selected terms and reproduces the authenticated received set without exposing private identifiers to relays, but multiple keys do not prove multiple organizations and no client can prove global quote availability. The product therefore says “Best received quote,” requires multiple solver identities and paths, and makes no global-best claim.
 
 ## High-severity findings
 

@@ -1,6 +1,6 @@
 # Permissionless and automatic operation
 
-Status: target architecture with open cryptographic repository admission implemented. Local atomic RFQ persistence, capability-bound executable quotes, authenticated endpoint and one-use private-packet transport, concrete capacity readers, capped unknown-solver exposure, objective fill-history promotion, and a bounded durable-state daemon executor are implemented. No public permissionless service or funded swap is authorized. Independently operated deployments, reviewed private-provider confidentiality and network identity, deployed finality/asset-verification controls, shared persistence, independent solvers/relays, and testnet fault evidence remain required.
+Status: target architecture with open cryptographic repository admission implemented. Local atomic RFQ persistence, authenticated multipath delivery, capability-bound executable quotes, authenticated endpoint and one-use private-packet transport, concrete capacity readers, capped unknown-solver exposure, objective fill-history promotion, and a bounded durable-state daemon executor are implemented. No public permissionless service or funded swap is authorized. Independently operated deployments, reviewed private-provider confidentiality and network identity, deployed finality/asset-verification controls, shared persistence, independent solvers/relays, and testnet fault evidence remain required.
 
 ## Recommended boundary
 
@@ -22,11 +22,11 @@ The contracts should not contain a solver allowlist. Safety comes from signature
 ## Open intent network
 
 1. The client creates a short-lived blind RFQ containing only the direction, exact amount/unit, chain, maximum routing cost, expiry, and an unlinkable request identifier.
-2. It sends the RFQ to several relays and optionally known solver endpoints.
-3. Any solver may return a signed capability declaration and exact offer. BIT → Lightning offers all bind the user's one invoice; each Lightning → BIT solver instead binds its own distinct hold invoice. Relays cannot alter a signature or create an executable quote.
-4. The client bounds work, retains at most one quote per solver, validates capacity freshness and every signed field, and commits the exact received set.
-5. The user selects and signs one quote. For Lightning → BIT, only that offer's hold invoice becomes payable. There is no silent fallback to another solver or invoice.
-6. The appropriate immutable escrow enforces the quote. Anyone may relay the preimage, but only the already-bound beneficiary is paid.
+2. It sends the exact bounded RFQ concurrently through at least two configured relays and to at least two distinct capability-bound solver endpoints. Every path receives a fresh challenge and signs its complete response batch; the client supplies receipt time.
+3. Any solver may return a signed capability declaration and blind price/capacity offer. The relay sees no wallet, beneficiary, private request ID, invoice, digest, hash, payee, or signature-bearing private settlement packet.
+4. The client rejects reused path identities, requires responsive relay and direct-solver diversity that actually contributes valid offers, bounds work, retains at most one quote per solver, validates capacity freshness and every signed field, and commits the exact path attempts and received set.
+5. The user selects one blind offer. Only that solver receives the private settlement packet and must return an exact executable quote matching the selected solver, price, capability, capacity, endpoint, and escrow runtime. For Lightning → BIT, only then does it create the payable hold invoice. There is no silent fallback or repricing.
+6. The user explicitly authorizes the finalized quote and the appropriate immutable escrow enforces it. Anyone may relay the preimage, but only the already-bound beneficiary is paid.
 
 An ERC-7683-compatible resolver can later expose TreeSwap orders to general intent solvers, but it must identify Lightning verification, availability, finality, and node-capacity assumptions explicitly. A resolver does not make those assumptions trustless by itself.
 
