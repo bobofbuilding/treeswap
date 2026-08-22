@@ -87,6 +87,8 @@ The public web application never receives a node macaroon, seed, preimage store,
 
 ## 6. Settlement flows
 
+Each direction uses two readable user confirmations. The first binds the selected blind offer, complete received set, private request, recipient, solver, exact economics, invoice state, nonce, and expiry before scarce solver capacity is reserved or private details are disclosed. It explicitly moves no funds. The second appears only after private finalization and binds the full executable offer, durable execution binding, exact invoice digest and payment hash, recipient, solver, amounts, routing ceiling, and expiry. The client refuses copied prompts, mismatched locally expected digests, implicit wallet connection or chain switching, chain/account changes, malformed or wrong signatures, and expiry. The production prototype demonstrates the meanings without requesting these signatures; deployment evidence is still required.
+
 ### BIT → Lightning
 
 1. The user creates an exact BOLT 11 invoice; the client keeps it private and requests blind quotes using only its exact amount and caps.
