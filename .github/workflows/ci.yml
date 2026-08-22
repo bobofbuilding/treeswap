@@ -100,6 +100,9 @@ jobs:
       - run: node --check lib/safety-monitor.mjs
       - run: node --check lib/cross-chain-deadline-evidence.mjs
       - run: node --check lib/live-bit-cross-chain-deadline-evidence.mjs
+      - run: node --check lib/bit-deployment-observer.mjs
+      - run: node --check lib/bit-evidence-source.mjs
+      - run: node --check lib/bit-provider-evidence.mjs
       - run: node --check infra/coordinator/smoke.mjs
       - run: node --check infra/coordinator/invoice-smoke.mjs
       - run: node --check infra/coordinator/disk-full-smoke.mjs
@@ -115,6 +118,11 @@ jobs:
       - run: bash -n scripts/run-cross-chain-deadline-smoke.sh
       - run: bash -n scripts/run-live-bit-cross-chain-deadline-smoke.sh
       - run: node --check scripts/run-local-qualification.mjs
+      - run: node --check scripts/observe-bit-deployment.mjs
+      - run: node --check scripts/compare-bit-observations.mjs
+      - run: node --check scripts/prepare-bit-provider-evidence.mjs
+      - run: node --check scripts/prepare-bit-provider-attestation.mjs
+      - run: node --check scripts/verify-bit-provider-evidence.mjs
       - run: node --check scripts/prepare-closed-testnet-deployment.mjs
       - run: node --check scripts/verify-closed-testnet-deployment.mjs
       - run: node --check scripts/observe-closed-testnet-deployment-preflight.mjs
@@ -144,6 +152,7 @@ jobs:
       - run: node --check scripts/verify-deployment-promotion.mjs
       - run: forge build --quiet
       - run: node --test tests/closed-testnet-deployment-files.test.mjs tests/closed-testnet-deployment-plan.test.mjs tests/closed-testnet-deployment-preflight.test.mjs tests/closed-testnet-deployment-postflight.test.mjs
+      - run: node --test tests/bit-deployment-observer.test.mjs tests/bit-provider-evidence.test.mjs
       - run: npm run test:coordinator-evm
       - run: npm run test:evm-outbox-faults
       - run: npm run test:safety-monitor

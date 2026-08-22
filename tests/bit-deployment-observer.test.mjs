@@ -143,7 +143,7 @@ test("pins an exact older block only after proving the provider finalized past i
   assert.equal(observation.finalizedBlock.hash, OLDER_BLOCK.hash);
   assert.deepEqual(
     calls.filter(({ method }) => method === "eth_getBlockByNumber").map(({ params }) => params[0]),
-    ["finalized", "0x1200"],
+    ["finalized", "0x1200", "finalized", "0x1200"],
   );
   for (const call of calls.filter(({ method }) => ["eth_getCode", "eth_getStorageAt", "eth_call"].includes(method))) {
     assert.deepEqual(call.params.at(-1), { blockHash: OLDER_BLOCK.hash, requireCanonical: true });
@@ -163,6 +163,42 @@ test("rejects an unfinalized target, a wrong target response, and a changing fin
   await assert.rejects(
     () => observe(changing),
     /finalized head changed/,
+  );
+});
+
+test("rejects chain rotation, finality regression, and target replacement during anchored reads", async () => {
+  let chainReads = 0;
+  const chainBase = fixtureRpc({ targetBlock: OLDER_BLOCK }).rpcCall;
+  await assert.rejects(
+    () => observe(async (method, params) => {
+      if (method === "eth_chainId" && chainReads++ > 0) return "0x2";
+      return chainBase(method, params);
+    }, { targetBlockNumber: 0x1200 }),
+    /chain changed/,
+  );
+
+  let finalizedReads = 0;
+  const finalityBase = fixtureRpc({ targetBlock: OLDER_BLOCK }).rpcCall;
+  await assert.rejects(
+    () => observe(async (method, params) => {
+      if (method === "eth_getBlockByNumber" && params[0] === "finalized" && finalizedReads++ > 0) {
+        return OLDER_BLOCK;
+      }
+      return finalityBase(method, params);
+    }, { targetBlockNumber: 0x1200 }),
+    /finalized head regressed/,
+  );
+
+  let targetReads = 0;
+  const targetBase = fixtureRpc({ targetBlock: OLDER_BLOCK }).rpcCall;
+  await assert.rejects(
+    () => observe(async (method, params) => {
+      if (method === "eth_getBlockByNumber" && params[0] === "0x1200" && targetReads++ > 0) {
+        return { ...OLDER_BLOCK, hash: `0x${"ef".repeat(32)}` };
+      }
+      return targetBase(method, params);
+    }, { targetBlockNumber: 0x1200 }),
+    /target block changed/,
   );
 });
 
@@ -355,6 +391,18 @@ test("requires an exact clean published main source before live capture", () => 
   }
 });
 
+test("observation CLI rejects ambiguous duplicate control flags before any RPC", () => {
+  const result = spawnSync(process.execPath, [
+    "scripts/observe-bit-deployment.mjs",
+    "--block",
+    "1",
+    "--block",
+    "2",
+  ], { cwd: process.cwd(), encoding: "utf8" });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /Usage:/);
+});
+
 test("comparison CLI binds bounded inputs and writes one private non-overwriting report", async () => {
   const observedAt = new Date();
   const left = await observe(fixtureRpc().rpcCall, { observedAt });
@@ -393,6 +441,18 @@ test("comparison CLI binds bounded inputs and writes one private non-overwriting
       reportPath,
     ], { cwd: process.cwd(), encoding: "utf8", env });
     assert.notEqual(overwrite.status, 0);
+
+    const ambiguousOutput = spawnSync(process.execPath, [
+      "scripts/compare-bit-observations.mjs",
+      leftPath,
+      rightPath,
+      "--out",
+      join(directory, "one.json"),
+      "--out",
+      join(directory, "two.json"),
+    ], { cwd: process.cwd(), encoding: "utf8", env });
+    assert.notEqual(ambiguousOutput.status, 0);
+    assert.match(ambiguousOutput.stderr, /Usage:/);
 
     const linkPath = join(directory, "linked.json");
     await symlink(leftPath, linkPath);
