@@ -60,6 +60,12 @@ Operational-readiness schema v2 adds one exact `serviceIsolation` artifact. Prep
 
 The public-testnet and tiny-limit bootstrap release-candidate commands also require the three isolation inputs. The signed isolation Lightning operator must be the exact operational and release-policy Lightning operator, while the signed isolation security reviewer must be the exact release-policy security reviewer. The infrastructure operator may not overlap an operational role, release authority, deployment wallet or attester, or independent reviewer. Their operational composite hashes include both the isolation evidence and participant-set digests, so changing any service, trust domain, credential scope, signer, or validity interval changes the release record and invalidates every release approval.
 
+## Local qualification checkpoint
+
+Clean published source `0bd76995350011fdaf4cdd2f1e22c3db47a2e4f8` passed 388 application/security tests, the production Vercel build, 68 contract tests, and all 37 sealed local campaigns from `2026-08-21T22:58:49.911Z` through `2026-08-22T00:07:59.522Z`; [hosted CI](https://github.com/bobofbuilding/treeswap/actions/runs/32534947589) passed the same exact source. The ignored mode-`0600` artifact independently reconstructs to `sha256:49fe2e48498ac10d251f975663bcdca17c1fd8a68ecb3c12e3502a67b75cc3a7`. All 116 configuration hashes, the exact 37-campaign order, regular-file safety, privacy exclusions, and regtest teardown reproduce independently.
+
+This proves the repository boundary and local campaigns at that commit. It does not prove that twelve deployed services, separate trust domains, scoped production credentials, independent operators, external reviewers, public-testnet infrastructure, or a funding authority exist.
+
 ## Authority boundary
 
 Preparation and verification expose no credential, endpoint, private key, raw signature in a summary, signing authority, broadcast authority, gate-opening authority, or funding capability. A valid record proves only that three keys signed the exact commitments. Production still requires deployed identities and networks, separately scoped secrets, encrypted independently retained backups, rotation/revocation tests, fresh-path restore evidence, witnessed review, and continuous monitoring.
