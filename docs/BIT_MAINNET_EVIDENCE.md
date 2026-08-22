@@ -1,6 +1,6 @@
 # BIT mainnet boundary evidence
 
-Status: reproducible pre-release evidence captured on 2026-08-19 and revalidated on 2026-08-20. This is not a signed deployment manifest, security audit, or permission to fund TreeSwap.
+Status: reproducible pre-release evidence captured on 2026-08-19 and revalidated against the current published source on 2026-08-22. This is not a signed deployment manifest, security audit, or permission to fund TreeSwap.
 
 ## Pinned state
 
@@ -15,6 +15,12 @@ Every state read was anchored with EIP-1898 to canonical Ethereum block `2578885
 | Symbol / decimals / paused | `BIT` / `18` / `false` |
 
 An authenticated Alchemy endpoint and an independently operated public BlockReq archive endpoint returned identical values for every compared field. This is useful diversity evidence, but the public endpoint does not satisfy the release requirement for two authenticated, independently operated providers. Re-run both observations from the published checkpoint with named operators before review.
+
+## Current-source authenticated observation
+
+Exact clean published commit `37fa0044554451b392447ac79c83021c5f41ea02` captured a fresh authenticated Alchemy observation at canonical finalized Ethereum block `25807484` (`0x35f1d60387e9297b483053ca76f68c3da60a8c0c7c212e777068894ca4003cf8`) on 2026-08-22. It reproduced the proxy and implementation runtime hashes above, implementation `0xa27b118c0770939295f052aE1b003366E5eF806F`, and `BIT` / `18` / `false` token state. The ignored evidence file is mode `0600` and has raw digest `sha256:4948f7b8dcf8e05120fc6d506783081f78cdc0d6a01ebec872c2939de34bfeda`.
+
+A separate Alchemy CLI `0.22.0` pass re-read that exact block and every state value through its canonical block-hash anchor, recomputed both code hashes, decoded all three token calls, confirmed the provider still reported the block finalized, matched the exact published commit, and found no endpoint, RPC URL, API-key marker, or credential-like value in the retained JSON. Both passes use the same provider. This checkpoint therefore proves current-source reproducibility and credential-safe collection only; it does not prove provider independence, source review, signed promotion, or funding authorization.
 
 ## Source reproduction
 
