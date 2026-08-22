@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 
-import { readFile, writeFile } from "node:fs/promises";
 import { resolve } from "node:path";
-import { compareBitDeploymentObservations } from "../lib/bit-deployment-observer.mjs";
+import { buildBitDeploymentComparisonReport } from "../lib/bit-deployment-observer.mjs";
+import { readBoundedJson, writeExclusiveJson } from "../lib/closed-testnet-deployment-files.mjs";
 
 function parseArguments(values) {
   const parsed = { inputs: [], out: null };
@@ -22,9 +22,9 @@ function parseArguments(values) {
 
 async function readObservation(path) {
   try {
-    return JSON.parse(await readFile(path, "utf8"));
+    return await readBoundedJson(path, "BIT observation", { maximumBytes: 65_536 });
   } catch {
-    throw new TypeError(`could not read a valid observation from ${path}`);
+    throw new TypeError("could not read one bounded non-symlink BIT observation");
   }
 }
 
@@ -37,25 +37,16 @@ async function main() {
   if (options.inputs.length !== 2) throw new TypeError("exactly two observation files are required");
 
   const [left, right] = await Promise.all(options.inputs.map(readObservation));
-  const comparison = compareBitDeploymentObservations(left, right);
-  const report = {
-    schema: "treeswap.bit-deployment-comparison.v1",
-    evidenceStatus: "unreviewed-provider-comparison",
-    comparedAt: new Date().toISOString(),
-    providers: [left.providerLabel, right.providerLabel],
-    finalizedBlock: left.finalizedBlock,
-    sourceCommit: left.sourceCommit,
-    ...comparison,
-  };
+  const report = buildBitDeploymentComparisonReport(left, right);
   const serialized = `${JSON.stringify(report, null, 2)}\n`;
 
   if (options.out) {
-    await writeFile(options.out, serialized, { flag: "wx", mode: 0o600 });
+    await writeExclusiveJson(options.out, report);
     process.stdout.write(`${options.out}\n`);
   } else {
     process.stdout.write(serialized);
   }
-  if (!comparison.eligible) process.exitCode = 2;
+  if (!report.eligible) process.exitCode = 2;
 }
 
 main().catch((error) => {

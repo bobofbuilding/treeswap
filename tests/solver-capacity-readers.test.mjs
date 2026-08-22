@@ -19,6 +19,8 @@ const USER_ESCROW = getAddress("0x2222222222222222222222222222222222222222");
 const IMPLEMENTATION = getAddress("0x3333333333333333333333333333333333333333");
 const NODE_PUBKEY = `02${"44".repeat(32)}`;
 const CAPABILITY_DIGEST = id("capacity-reader-capability").toLowerCase();
+const PROVIDER_A = id("capacity-provider-a").toLowerCase();
+const PROVIDER_B = id("capacity-provider-b").toLowerCase();
 const FINALIZED_BLOCK = {
   number: "0x1234",
   hash: `0x${"ab".repeat(32)}`,
@@ -119,8 +121,8 @@ function bitRequest(overrides = {}) {
 
 function bitReader(primaryFixture = rpcFixture(), secondaryFixture = rpcFixture(), overrides = {}) {
   return createFinalizedBitVaultInventoryReader({
-    primaryProvider: { label: "provider-a", rpcCall: primaryFixture.rpcCall },
-    secondaryProvider: { label: "provider-b", rpcCall: secondaryFixture.rpcCall },
+    primaryProvider: { identity: PROVIDER_A, label: "provider-a", rpcCall: primaryFixture.rpcCall },
+    secondaryProvider: { identity: PROVIDER_B, label: "provider-b", rpcCall: secondaryFixture.rpcCall },
     expectedVaultAddress: VAULT,
     expectedBitToLightningContract: USER_ESCROW,
     expectedVaultCodeHash: VAULT_CODE_HASH,
@@ -155,6 +157,14 @@ test("reads only segregated, solvent BIT vault inventory at one two-provider fin
       && params[0].data.startsWith(VAULT_INTERFACE.getFunction("availableBalance").selector));
     assert.ok(availableCall, "solver-specific availableBalance was not read");
   }
+});
+
+test("requires distinct provider identity commitments before inventory observation", () => {
+  const left = rpcFixture();
+  const right = rpcFixture();
+  assert.throws(() => bitReader(left, right, {
+    secondaryProvider: { identity: PROVIDER_A, label: "provider-b", rpcCall: right.rpcCall },
+  }), /distinctly identified/);
 });
 
 test("requires zero solver BIT inventory in the user-funded direction", async () => {

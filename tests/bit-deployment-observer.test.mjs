@@ -1,13 +1,23 @@
 import assert from "node:assert/strict";
+import { execFileSync, spawnSync } from "node:child_process";
+import { mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 import { Interface, getAddress, keccak256 } from "ethers";
 import {
+  BIT_DEPLOYMENT_COMPARISON_SCHEMA,
+  BIT_DEPLOYMENT_OBSERVATION_SCHEMA,
   BIT_MAINNET_CONTRACT,
   EIP1967_IMPLEMENTATION_SLOT,
   assessBitDeploymentObservation,
+  bitDeploymentObservationValueDigest,
+  buildBitDeploymentComparisonReport,
   compareBitDeploymentObservations,
   createJsonRpcClient,
+  normalizeBitDeploymentObservation,
   observeBitDeployment,
+  validateBitObservationSourceProvenance,
 } from "../lib/bit-deployment-observer.mjs";
 
 const TOKEN_INTERFACE = new Interface([
@@ -28,6 +38,10 @@ const OLDER_BLOCK = {
 };
 const PROXY_CODE = "0x6001600055";
 const IMPLEMENTATION_CODE = "0x6002600055";
+const SOURCE_COMMIT = "a".repeat(40);
+const OBSERVED_AT = new Date("2026-08-19T12:00:00.000Z");
+const PROVIDER_A = `0x${"11".repeat(32)}`;
+const PROVIDER_B = `0x${"22".repeat(32)}`;
 
 function fixtureRpc({ chainId = "0x1", paused = false, decimals = 18, symbol = "BIT", targetBlock = FINALIZED_BLOCK } = {}) {
   const calls = [];
@@ -54,17 +68,24 @@ function fixtureRpc({ chainId = "0x1", paused = false, decimals = 18, symbol = "
   return { rpcCall, calls };
 }
 
+function observe(rpcCall, overrides = {}) {
+  return observeBitDeployment({
+    rpcCall,
+    providerLabel: "provider-a",
+    providerIdentity: PROVIDER_A,
+    sourceCommit: SOURCE_COMMIT,
+    observedAt: OBSERVED_AT,
+    ...overrides,
+  });
+}
+
 test("records one internally consistent finalized BIT deployment observation", async () => {
   const { rpcCall, calls } = fixtureRpc();
-  const observation = await observeBitDeployment({
-    rpcCall,
-    providerLabel: "test-provider",
-    sourceCommit: "a".repeat(40),
-    observedAt: new Date("2026-08-19T12:00:00.000Z"),
-  });
+  const observation = await observe(rpcCall, { providerLabel: "test-provider" });
 
   assert.equal(observation.chainId, 1);
-  assert.equal(observation.schema, "treeswap.bit-deployment-observation.v2");
+  assert.equal(observation.schema, BIT_DEPLOYMENT_OBSERVATION_SCHEMA);
+  assert.equal(observation.providerIdentity, PROVIDER_A);
   assert.equal(observation.providerFinalizedHead.number, 0x1234);
   assert.equal(observation.finalizedBlock.number, 0x1234);
   assert.deepEqual(observation.stateAnchor, { blockHash: FINALIZED_BLOCK.hash, requireCanonical: true });
@@ -83,7 +104,7 @@ test("records one internally consistent finalized BIT deployment observation", a
 
 test("pins an exact older block only after proving the provider finalized past it", async () => {
   const { rpcCall, calls } = fixtureRpc({ targetBlock: OLDER_BLOCK });
-  const observation = await observeBitDeployment({ rpcCall, targetBlockNumber: "4608" });
+  const observation = await observe(rpcCall, { targetBlockNumber: "4608" });
 
   assert.equal(observation.providerFinalizedHead.number, 0x1234);
   assert.equal(observation.finalizedBlock.number, 0x1200);
@@ -99,28 +120,38 @@ test("pins an exact older block only after proving the provider finalized past i
 
 test("rejects an unfinalized target, a wrong target response, and a changing finalized hash", async () => {
   await assert.rejects(
-    () => observeBitDeployment({ rpcCall: fixtureRpc().rpcCall, targetBlockNumber: 0x1235 }),
+    () => observe(fixtureRpc().rpcCall, { targetBlockNumber: 0x1235 }),
     /newer than.*finalized head/,
   );
   await assert.rejects(
-    () => observeBitDeployment({ rpcCall: fixtureRpc({ targetBlock: OLDER_BLOCK }).rpcCall, targetBlockNumber: 0x1100 }),
+    () => observe(fixtureRpc({ targetBlock: OLDER_BLOCK }).rpcCall, { targetBlockNumber: 0x1100 }),
     /wrong target block number/,
   );
   const changing = fixtureRpc({ targetBlock: { ...FINALIZED_BLOCK, hash: `0x${"ef".repeat(32)}` } }).rpcCall;
   await assert.rejects(
-    () => observeBitDeployment({ rpcCall: changing }),
+    () => observe(changing),
     /finalized head changed/,
   );
 });
 
 test("compares two providers at one exact finalized block and rejects drift", async () => {
   const common = {
-    sourceCommit: "a".repeat(40),
-    observedAt: new Date("2026-08-19T12:00:00.000Z"),
+    sourceCommit: SOURCE_COMMIT,
+    observedAt: OBSERVED_AT,
   };
-  const left = await observeBitDeployment({ ...common, rpcCall: fixtureRpc().rpcCall, providerLabel: "provider-a" });
-  const right = await observeBitDeployment({ ...common, rpcCall: fixtureRpc().rpcCall, providerLabel: "provider-b" });
-  assert.deepEqual(compareBitDeploymentObservations(left, right), {
+  const left = await observeBitDeployment({
+    ...common,
+    rpcCall: fixtureRpc().rpcCall,
+    providerLabel: "provider-a",
+    providerIdentity: PROVIDER_A,
+  });
+  const right = await observeBitDeployment({
+    ...common,
+    rpcCall: fixtureRpc().rpcCall,
+    providerLabel: "provider-b",
+    providerIdentity: PROVIDER_B,
+  });
+  assert.deepEqual(compareBitDeploymentObservations(left, right, { comparedAt: OBSERVED_AT }), {
     eligible: true,
     reasons: [],
     comparedFields: [
@@ -145,47 +176,213 @@ test("compares two providers at one exact finalized block and rejects drift", as
 
   const drifted = structuredClone(right);
   drifted.implementation.codeHash = `0x${"00".repeat(32)}`;
-  const comparison = compareBitDeploymentObservations(left, drifted);
+  const comparison = compareBitDeploymentObservations(left, drifted, { comparedAt: OBSERVED_AT });
   assert.equal(comparison.eligible, false);
   assert.deepEqual(comparison.reasons, ["implementation.codeHash differs between providers"]);
 
   const unbound = structuredClone(right);
   unbound.sourceCommit = null;
   unbound.stateAnchor.blockHash = `0x${"11".repeat(32)}`;
-  const unboundComparison = compareBitDeploymentObservations(left, unbound);
+  const unboundComparison = compareBitDeploymentObservations(left, unbound, { comparedAt: OBSERVED_AT });
   assert.equal(unboundComparison.eligible, false);
-  assert.deepEqual(unboundComparison.reasons, [
-    "second observation is not bound to a full source commit",
-    "sourceCommit differs between providers",
-    "stateAnchor.blockHash differs between providers",
-    "second observation is not canonically anchored to its recorded block",
+  assert.match(unboundComparison.reasons.join("; "), /sourceCommit must be full lowercase hex/);
+});
+
+test("binds the exact provider observations into a non-authorizing comparison report", async () => {
+  const left = await observe(fixtureRpc().rpcCall);
+  const right = await observe(fixtureRpc().rpcCall, {
+    providerLabel: "provider-b",
+    providerIdentity: PROVIDER_B,
+  });
+  const report = buildBitDeploymentComparisonReport(left, right, { comparedAt: OBSERVED_AT });
+
+  assert.equal(report.schema, BIT_DEPLOYMENT_COMPARISON_SCHEMA);
+  assert.equal(report.eligible, true);
+  assert.equal(report.fundingAuthorization, false);
+  assert.equal(report.independenceStatus, "requires-external-organizational-verification");
+  assert.deepEqual(report.observations, [
+    {
+      providerIdentity: PROVIDER_A,
+      providerLabel: "provider-a",
+      observationDigest: bitDeploymentObservationValueDigest(left),
+    },
+    {
+      providerIdentity: PROVIDER_B,
+      providerLabel: "provider-b",
+      observationDigest: bitDeploymentObservationValueDigest(right),
+    },
   ]);
+  assert.notEqual(report.observations[0].observationDigest, report.observations[1].observationDigest);
+});
+
+test("rejects relabelled, stale, future, and widely separated provider evidence", async () => {
+  const left = await observe(fixtureRpc().rpcCall);
+  const sameIdentity = await observe(fixtureRpc().rpcCall, {
+    providerLabel: "provider-b",
+    providerIdentity: PROVIDER_A,
+  });
+  assert.match(
+    compareBitDeploymentObservations(left, sameIdentity, { comparedAt: OBSERVED_AT }).reasons.join("; "),
+    /distinct identity commitments/,
+  );
+
+  const sameLabel = await observe(fixtureRpc().rpcCall, {
+    providerLabel: "PROVIDER-A",
+    providerIdentity: PROVIDER_B,
+  });
+  assert.match(
+    compareBitDeploymentObservations(left, sameLabel, { comparedAt: OBSERVED_AT }).reasons.join("; "),
+    /distinct labels/,
+  );
+
+  const later = new Date(OBSERVED_AT.getTime() + 1_801_000);
+  const separated = await observe(fixtureRpc().rpcCall, {
+    providerLabel: "provider-b",
+    providerIdentity: PROVIDER_B,
+    observedAt: later,
+  });
+  assert.match(
+    compareBitDeploymentObservations(left, separated, { comparedAt: later }).reasons.join("; "),
+    /allowed window/,
+  );
+  assert.match(
+    compareBitDeploymentObservations(left, separated, {
+      comparedAt: new Date(OBSERVED_AT.getTime() + 3_601_000),
+    }).reasons.join("; "),
+    /first observation is stale/,
+  );
+  assert.match(
+    compareBitDeploymentObservations(left, separated, {
+      comparedAt: new Date(OBSERVED_AT.getTime() - 61_000),
+    }).reasons.join("; "),
+    /future-dated/,
+  );
+});
+
+test("rejects noncanonical, unknown-field, endpoint-bearing, and mismatched safety evidence", async () => {
+  const value = await observe(fixtureRpc().rpcCall);
+  assert.deepEqual(normalizeBitDeploymentObservation(value), value);
+  assert.throws(
+    () => normalizeBitDeploymentObservation({ ...value, rpcUrl: "https://secret.invalid" }),
+    /fields are not exact/,
+  );
+  assert.throws(
+    () => normalizeBitDeploymentObservation({ ...value, providerLabel: "https://rpc.invalid" }),
+    /credential-free provider label/,
+  );
+  assert.throws(
+    () => normalizeBitDeploymentObservation({ ...value, providerIdentity: `0x${"00".repeat(32)}` }),
+    /nonzero lowercase bytes32/,
+  );
+  assert.throws(
+    () => normalizeBitDeploymentObservation({ ...value, safety: { eligible: false, reasons: [] } }),
+    /does not match/,
+  );
+});
+
+test("requires an exact clean published main source before live capture", () => {
+  assert.equal(validateBitObservationSourceProvenance({
+    branch: "main",
+    head: SOURCE_COMMIT,
+    originUrl: "https://github.com/bobofbuilding/treeswap.git",
+    published: SOURCE_COMMIT,
+    status: "",
+  }), SOURCE_COMMIT);
+  for (const mutation of [
+    { branch: "feature", head: SOURCE_COMMIT, published: SOURCE_COMMIT, status: "" },
+    { branch: "main", head: "b".repeat(40), published: SOURCE_COMMIT, status: "" },
+    { branch: "main", head: SOURCE_COMMIT, published: SOURCE_COMMIT, status: "?? file" },
+    {
+      branch: "main",
+      head: SOURCE_COMMIT,
+      originUrl: "https://github.com/example/treeswap.git",
+      published: SOURCE_COMMIT,
+      status: "",
+    },
+  ]) {
+    assert.throws(() => validateBitObservationSourceProvenance({
+      originUrl: "https://github.com/bobofbuilding/treeswap.git",
+      ...mutation,
+    }), /exact clean commit published/);
+  }
+});
+
+test("comparison CLI binds bounded inputs and writes one private non-overwriting report", async () => {
+  const observedAt = new Date();
+  const left = await observe(fixtureRpc().rpcCall, { observedAt });
+  const right = await observe(fixtureRpc().rpcCall, {
+    observedAt,
+    providerLabel: "provider-b",
+    providerIdentity: PROVIDER_B,
+  });
+  const directory = await mkdtemp(join(tmpdir(), "treeswap-bit-comparison-"));
+  try {
+    const leftPath = join(directory, "left.json");
+    const rightPath = join(directory, "right.json");
+    const reportPath = join(directory, "report.json");
+    await Promise.all([
+      writeFile(leftPath, `${JSON.stringify(left)}\n`, { mode: 0o600 }),
+      writeFile(rightPath, `${JSON.stringify(right)}\n`, { mode: 0o600 }),
+    ]);
+    execFileSync(process.execPath, [
+      "scripts/compare-bit-observations.mjs",
+      leftPath,
+      rightPath,
+      "--out",
+      reportPath,
+    ], { cwd: process.cwd(), stdio: ["ignore", "pipe", "pipe"] });
+    const report = JSON.parse(await readFile(reportPath, "utf8"));
+    assert.equal(report.eligible, true);
+    assert.equal(report.fundingAuthorization, false);
+    assert.equal((await stat(reportPath)).mode & 0o777, 0o600);
+
+    const overwrite = spawnSync(process.execPath, [
+      "scripts/compare-bit-observations.mjs",
+      leftPath,
+      rightPath,
+      "--out",
+      reportPath,
+    ], { cwd: process.cwd(), encoding: "utf8" });
+    assert.notEqual(overwrite.status, 0);
+
+    const linkPath = join(directory, "linked.json");
+    await symlink(leftPath, linkPath);
+    const linked = spawnSync(process.execPath, [
+      "scripts/compare-bit-observations.mjs",
+      linkPath,
+      rightPath,
+    ], { cwd: process.cwd(), encoding: "utf8" });
+    assert.notEqual(linked.status, 0);
+    assert.match(linked.stderr, /bounded non-symlink/);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
 });
 
 test("rejects the wrong chain, missing code, empty implementation, and malformed finality", async () => {
-  await assert.rejects(() => observeBitDeployment({ rpcCall: fixtureRpc({ chainId: "0xaa36a7" }).rpcCall }), /mainnet/);
+  await assert.rejects(() => observe(fixtureRpc({ chainId: "0xaa36a7" }).rpcCall), /mainnet/);
 
   const noCode = fixtureRpc().rpcCall;
   await assert.rejects(
-    () => observeBitDeployment({ rpcCall: async (method, params) => method === "eth_getCode" ? "0x" : noCode(method, params) }),
+    () => observe(async (method, params) => method === "eth_getCode" ? "0x" : noCode(method, params)),
     /no deployed bytecode/,
   );
 
   const emptySlot = fixtureRpc().rpcCall;
   await assert.rejects(
-    () => observeBitDeployment({ rpcCall: async (method, params) => method === "eth_getStorageAt" ? `0x${"0".repeat(64)}` : emptySlot(method, params) }),
+    () => observe(async (method, params) => method === "eth_getStorageAt" ? `0x${"0".repeat(64)}` : emptySlot(method, params)),
     /slot is empty/,
   );
 
   const noFinality = fixtureRpc().rpcCall;
   await assert.rejects(
-    () => observeBitDeployment({ rpcCall: async (method, params) => method === "eth_getBlockByNumber" ? null : noFinality(method, params) }),
+    () => observe(async (method, params) => method === "eth_getBlockByNumber" ? null : noFinality(method, params)),
     /finalized block hash/,
   );
 });
 
 test("marks an unsafe token state without discarding the evidence", async () => {
-  const observation = await observeBitDeployment({ rpcCall: fixtureRpc({ paused: true, decimals: 8, symbol: "CHANGED" }).rpcCall });
+  const observation = await observe(fixtureRpc({ paused: true, decimals: 8, symbol: "CHANGED" }).rpcCall);
   assert.equal(observation.safety.eligible, false);
   assert.match(observation.safety.reasons.join("; "), /symbol changed|decimals changed|paused/);
   assert.deepEqual(assessBitDeploymentObservation(observation), observation.safety);
