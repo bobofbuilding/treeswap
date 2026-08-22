@@ -89,7 +89,7 @@ function claimTemplate(value) {
 function packetClient(value) {
   let reads = 0;
   const authenticated = createAuthenticatedPrivatePacketClient({
-    providerOrigin: "http://packet-provider.internal",
+    providerOrigin: "https://packet-provider.internal",
     requesterPrivateKey: packetRequesterKeys.privateKey,
     requesterKeyId: "daemon-requester-test",
     providerPublicKey: packetProviderKeys.publicKey,
@@ -136,7 +136,10 @@ function packetClient(value) {
         expiresAt: NOW + 20,
         minimumEvmSafetySeconds: 600,
       });
-      return new Response(JSON.stringify(signed), { status: 200, headers: { "content-type": "application/json" } });
+      return new Response(JSON.stringify(signed), {
+        status: 200,
+        headers: { "cache-control": "no-store", "content-type": "application/json" },
+      });
     },
   });
   return {

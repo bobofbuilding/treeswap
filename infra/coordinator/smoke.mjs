@@ -93,7 +93,7 @@ store.recordReservation(observedReservation);
 const packetRequesterKeys = generateKeyPairSync("ed25519");
 const packetProviderKeys = generateKeyPairSync("ed25519");
 const packetClient = createAuthenticatedPrivatePacketClient({
-  providerOrigin: "http://private-packet-provider.internal",
+  providerOrigin: "https://private-packet-provider.internal",
   requesterPrivateKey: packetRequesterKeys.privateKey,
   requesterKeyId: "coordinator-regtest",
   providerPublicKey: packetProviderKeys.publicKey,
@@ -139,7 +139,10 @@ const packetClient = createAuthenticatedPrivatePacketClient({
       expiresAt: servedAt + 10,
       minimumEvmSafetySeconds: 600,
     });
-    return new Response(JSON.stringify(signed), { status: 200, headers: { "content-type": "application/json" } });
+    return new Response(JSON.stringify(signed), {
+      status: 200,
+      headers: { "cache-control": "no-store", "content-type": "application/json" },
+    });
   },
 });
 
