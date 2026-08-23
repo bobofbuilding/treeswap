@@ -218,6 +218,7 @@ const configurationFiles = [
   "lib/solver-daemon-planner.mjs",
   "lib/solver-daemon-evidence.mjs",
   "lib/solver-daemon-runtime.mjs",
+  "lib/active-solver-daemon-runtime.mjs",
   "lib/solver-private-packet.mjs",
   "lib/safety-monitor.mjs",
   "lib/settlement-policy.mjs",

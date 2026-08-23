@@ -29,6 +29,13 @@ import {
 } from "./fixtures/verified-operational-readiness.mjs";
 import { createVerifiedServiceIsolationFixture } from "./fixtures/verified-service-isolation.mjs";
 import { createVerifiedSolverCapabilityFixture } from "./fixtures/verified-solver-capability.mjs";
+import {
+  SOLVER_DAEMON_EVIDENCE_POLICY_SCHEMA,
+  solverDaemonEvidencePolicyDigest,
+} from "../lib/solver-daemon-evidence.mjs";
+import { verifiedSolverCapacityRecord, verifiedSolverQuoteBinding } from "../lib/solver-capability.mjs";
+import { executeActiveSolverDaemonStep } from "../lib/active-solver-daemon-runtime.mjs";
+import { CoordinatorStore } from "../lib/coordinator-store.mjs";
 import { verifyPublicTestnetBootstrapEvidence } from "../lib/public-testnet-bootstrap-evidence.mjs";
 import { verifyIndependentReviewEvidence } from "../lib/independent-review-evidence.mjs";
 import { verifyOperationalReadinessEvidence } from "../lib/operational-readiness-evidence.mjs";
@@ -51,7 +58,9 @@ import {
   activatePublicTestnetRelease,
   authorizeSolverFunding,
   buildPublicTestnetRuntimeReconciliationApproval,
+  createActiveSolverDaemonContext,
   publicTestnetReleaseOpenRiskDigest,
+  verifiedActiveSolverDaemonContext,
 } from "../lib/capabilities.mjs";
 
 const ZERO = `0x${"00".repeat(32)}`;
@@ -541,6 +550,280 @@ test("activates funding only after same-process evidence, approvals, reconciliat
     capabilities: activation.capabilities,
     now,
   }), { allowed: true, reasons: [] });
+  const solverBinding = verifiedSolverQuoteBinding(solverCapability.verification);
+  const evidencePolicy = {
+    schema: SOLVER_DAEMON_EVIDENCE_POLICY_SCHEMA,
+    releaseRecordDigest: candidate.recordDigest,
+    chainId: candidate.record.chainId,
+    settlementContract: solverBinding.settlementContract,
+    settlementContractCodeHash: solverBinding.settlementContractCodeHash,
+    solver: solverBinding.solverId,
+    direction: solverBinding.direction,
+    approvers: {
+      lightningOperator: candidate.policy.approvers.lightningOperator.address,
+      securityReviewer: candidate.policy.approvers.securityReviewer.address,
+    },
+    maxEvidenceAgeSeconds: 15,
+    maxEvidenceLifetimeSeconds: 15,
+    maxClockSkewSeconds: 2,
+  };
+  const executionContext = createActiveSolverDaemonContext({
+    solverCapabilityVerification: solverCapability.verification,
+    deployment: activation.deployment,
+    capabilities: activation.capabilities,
+    evidencePolicy,
+    now,
+  });
+  assert.deepEqual(verifiedActiveSolverDaemonContext(executionContext, { now }), {
+    capacityEpoch: solverBinding.capacityEpoch,
+    direction: solverBinding.direction,
+    evidencePolicyDigest: solverDaemonEvidencePolicyDigest(evidencePolicy),
+    releaseRecordDigest: candidate.recordDigest,
+    solverCapabilityDigest: solverBinding.capabilityDigest,
+    solverId: solverBinding.solverId,
+  });
+  assert.equal(JSON.stringify(executionContext).match(/signature|private|endpoint|invoice|preimage/i), null);
+  assert.throws(
+    () => verifiedActiveSolverDaemonContext(structuredClone(executionContext), { now }),
+    /same-process release activation/,
+  );
+  assert.throws(() => createActiveSolverDaemonContext({
+    solverCapabilityVerification: solverCapability.verification,
+    deployment: activation.deployment,
+    capabilities: activation.capabilities,
+    evidencePolicy: { ...evidencePolicy, releaseRecordDigest: id("another release").toLowerCase() },
+    now,
+  }), /not bound to the active release and solver/);
+  assert.throws(() => createActiveSolverDaemonContext({
+    solverCapabilityVerification: solverCapability.verification,
+    deployment: activation.deployment,
+    capabilities: activation.capabilities,
+    evidencePolicy: {
+      ...evidencePolicy,
+      approvers: {
+        ...evidencePolicy.approvers,
+        securityReviewer: INCIDENT_COMMANDER.address,
+      },
+    },
+    now,
+  }), /approvers do not match/);
+  assert.throws(() => createActiveSolverDaemonContext({
+    solverCapabilityVerification: solverCapability.verification,
+    deployment: activation.deployment,
+    capabilities: activation.capabilities,
+    evidencePolicy: { ...evidencePolicy, maxEvidenceAgeSeconds: 31 },
+    now,
+  }), /freshness exceeds/);
+  assert.throws(() => createActiveSolverDaemonContext({
+    solverCapabilityVerification: solverCapability.verification,
+    deployment: activation.deployment,
+    capabilities: activation.capabilities,
+    evidencePolicy: { ...evidencePolicy, maxClockSkewSeconds: 31 },
+    now,
+  }), /clock skew|freshness exceeds/);
+  let releaseDigestReads = 0;
+  const changingPolicy = { ...evidencePolicy };
+  Object.defineProperty(changingPolicy, "releaseRecordDigest", {
+    enumerable: true,
+    get: () => {
+      releaseDigestReads += 1;
+      return releaseDigestReads === 1 ? id("getter-substituted release").toLowerCase() : candidate.recordDigest;
+    },
+  });
+  assert.throws(() => createActiveSolverDaemonContext({
+    solverCapabilityVerification: solverCapability.verification,
+    deployment: activation.deployment,
+    capabilities: activation.capabilities,
+    evidencePolicy: changingPolicy,
+    now,
+  }), /not bound to the active release and solver/);
+  assert.equal(releaseDigestReads, 1);
+  assert.throws(
+    () => verifiedActiveSolverDaemonContext(executionContext, {
+      now: solverBinding.expiresAt,
+      requireFundingAuthorization: true,
+    }),
+    /funding authorization is inactive/,
+  );
+  assert.deepEqual(verifiedActiveSolverDaemonContext(executionContext, {
+    now: solverBinding.expiresAt,
+    requireFundingAuthorization: false,
+  }), {
+    capacityEpoch: solverBinding.capacityEpoch,
+    direction: solverBinding.direction,
+    evidencePolicyDigest: solverDaemonEvidencePolicyDigest(evidencePolicy),
+    releaseRecordDigest: candidate.recordDigest,
+    solverCapabilityDigest: solverBinding.capabilityDigest,
+    solverId: solverBinding.solverId,
+  });
+  const wrapperSettlementId = id("active wrapper settlement").toLowerCase();
+  const waitingSettlement = {
+    settlementId: wrapperSettlementId,
+    pricingId: id("active wrapper RFQ").toLowerCase(),
+    direction: solverBinding.direction,
+    nonceAuthorityDigest: id("active wrapper nonce authority").toLowerCase(),
+    intentNonce: "1",
+    intentDigest: id("active wrapper intent").toLowerCase(),
+    paymentHash: id("active wrapper payment hash").toLowerCase(),
+    invoiceDigest: id("active wrapper invoice").toLowerCase(),
+    amountSats: "10000",
+    quoteReceiptDigest: id("active wrapper quote receipt").toLowerCase(),
+    selectedSetDigest: id("active wrapper selected set").toLowerCase(),
+    selectedOfferId: id("active wrapper offer").toLowerCase(),
+    capacityEpoch: solverBinding.capacityEpoch,
+    createdAt: now + 2,
+  };
+  const admissionPolicy = {
+    minimumNotionalSats: "1000",
+    maxRfqTtlSeconds: 120,
+    maxActiveRequestsPerIdentity: 10,
+    maxRequestsPerWindow: 10,
+    maxCancellationsPerWindow: 10,
+    quotaWindowSeconds: 60,
+    maxFirmQuoteTtlSeconds: 120,
+    maxCapacityAgeSeconds: 30,
+    maxActiveFirmQuotesPerSolver: 4,
+    maxConsecutiveFailures: 2,
+    minimumReliabilitySample: "4",
+    minimumReliabilityBps: "9000",
+    minimumCompletedFillsForEstablished: "3",
+    unknownSolverMaxBitToLightningSats: "5000",
+    establishedSolverMaxBitToLightningSats: "100000",
+    maxGlobalBitToLightningInFlightSats: "500000",
+  };
+  const waitingStore = await CoordinatorStore.open(":memory:", { allowMemory: true });
+  waitingStore.admitRfq({
+    identity: {
+      authenticated: true,
+      commitment: id("active wrapper identity").toLowerCase(),
+      key: "active-wrapper-user",
+    },
+    request: {
+      requestId: waitingSettlement.pricingId,
+      user: "active-wrapper-user",
+      direction: waitingSettlement.direction,
+      notionalSats: waitingSettlement.amountSats,
+      nonce: "1",
+      expiresAt: now + 30,
+    },
+    policy: admissionPolicy,
+    now,
+  });
+  waitingStore.recordSolverCapacity(verifiedSolverCapacityRecord(solverCapability.verification));
+  const firm = waitingStore.reserveVerifiedFirmOffer({
+    offerId: waitingSettlement.selectedOfferId,
+    offerDigest: id("active wrapper blind offer").toLowerCase(),
+    selectionAuthorizationDigest: id("active wrapper selection authorization").toLowerCase(),
+    selectionAuthorizationExpiresAt: now + 25,
+    requestId: waitingSettlement.pricingId,
+    solverId: solverBinding.solverId,
+    offer: {
+      direction: waitingSettlement.direction,
+      bitAmountWei: String(10n ** 18n),
+      lightningAmountSats: waitingSettlement.amountSats,
+      maxRoutingFeeSats: "0",
+      capacityEpoch: waitingSettlement.capacityEpoch,
+      expiresAt: now + 25,
+      signatureVerified: true,
+    },
+    policy: admissionPolicy,
+    now,
+  });
+  const bound = waitingStore.bindFirmOfferExecution({
+    offerId: firm.offerId,
+    privateRequestDigest: id("active wrapper private request").toLowerCase(),
+    executableOfferDigest: id("active wrapper executable offer").toLowerCase(),
+    finalizedAt: now + 1,
+  });
+  waitingStore.bindFirmOfferUserAuthorization({
+    offerId: firm.offerId,
+    executionBindingDigest: bound.executionBindingDigest,
+    executionAuthorizationDigest: id("active wrapper user authorization").toLowerCase(),
+    authorizationExpiresAt: now + 20,
+    authorizedAt: now + 2,
+  });
+  waitingStore.acceptSettlement(waitingSettlement);
+  const originalDateNow = Date.now;
+  try {
+    Date.now = () => (now + 3) * 1_000;
+    assert.deepEqual(await executeActiveSolverDaemonStep({
+      executionContext,
+      store: waitingStore,
+      settlementId: wrapperSettlementId,
+    }), {
+      settlementId: wrapperSettlementId,
+      stepKind: "WAIT_FOR_RESERVATION",
+      outcome: "WAITING",
+    });
+    waitingStore.recordReservation({
+      settlementId: wrapperSettlementId,
+      reservationId: id("active wrapper reservation").toLowerCase(),
+      reservationTxHash: id("active wrapper reservation transaction").toLowerCase(),
+      reservationBlockNumber: 100,
+      reservationBlockHash: id("active wrapper reservation block").toLowerCase(),
+      reservationIntentDigest: waitingSettlement.intentDigest,
+      observedAt: now + 3,
+    });
+    waitingStore.planAction({
+      actionId: id("active wrapper pending Lightning action").toLowerCase(),
+      settlementId: wrapperSettlementId,
+      method: "/invoicesrpc.Invoices/SettleInvoice",
+      requestId: id("active wrapper action request").toLowerCase(),
+      payloadDigest: id("active wrapper action payload").toLowerCase(),
+      intentDigest: waitingSettlement.intentDigest,
+      paymentHash: waitingSettlement.paymentHash,
+      invoiceDigest: waitingSettlement.invoiceDigest,
+      amountSats: waitingSettlement.amountSats,
+      capacityEpoch: waitingSettlement.capacityEpoch,
+      plannedAt: now + 3,
+    });
+    Date.now = () => solverBinding.expiresAt * 1_000;
+    const closed = await executeActiveSolverDaemonStep({
+      executionContext,
+      store: waitingStore,
+      settlementId: wrapperSettlementId,
+    });
+    assert.equal(closed.outcome, "GATE_CLOSED");
+    assert.equal(closed.stepKind, "AUTHORIZE_AND_DISPATCH_LIGHTNING");
+    assert.match(closed.reason, /funding authorization is inactive/);
+    await assert.rejects(executeActiveSolverDaemonStep({
+      executionContext,
+      store: {
+        getSettlement: () => waitingSettlement,
+        getFirmOffer: () => waitingStore.getFirmOffer(waitingSettlement.selectedOfferId),
+      },
+      settlementId: wrapperSettlementId,
+    }), /original coordinator store/);
+    const prototypeSpoof = Object.create(CoordinatorStore.prototype);
+    prototypeSpoof.getSettlement = () => waitingSettlement;
+    prototypeSpoof.getFirmOffer = () => waitingStore.getFirmOffer(waitingSettlement.selectedOfferId);
+    prototypeSpoof.listSettlementActions = () => [];
+    await assert.rejects(executeActiveSolverDaemonStep({
+      executionContext,
+      store: prototypeSpoof,
+      settlementId: wrapperSettlementId,
+    }), /original coordinator store/);
+  } finally {
+    Date.now = originalDateNow;
+    waitingStore.close();
+  }
+  await assert.rejects(executeActiveSolverDaemonStep({
+    executionContext: structuredClone(executionContext),
+    store: null,
+    settlementId: ZERO,
+  }), /same-process release activation/);
+  await assert.rejects(executeActiveSolverDaemonStep({
+    executionContext,
+    store: null,
+    settlementId: ZERO,
+    expectedEvidencePolicyDigest: solverDaemonEvidencePolicyDigest(evidencePolicy),
+  }), /cannot be supplied by its caller/);
+  await assert.rejects(executeActiveSolverDaemonStep({
+    executionContext,
+    store: null,
+    settlementId: ZERO,
+    nowSeconds: () => now,
+  }), /execution time cannot be supplied/);
   const expiredReconciliation = authorizeSolverFunding({
     solverCapabilityVerification: solverCapability.verification,
     deployment: activation.deployment,
