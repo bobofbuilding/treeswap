@@ -31,7 +31,7 @@ The record contains distinct nonzero commitments for:
 - the verified service-isolation release binding;
 - solver operations;
 - support and escalation policy; and
-- the exact test-qualification artifact.
+- the exact independently reviewed test-qualification evidence digest.
 
 It also requires at least two canonically ordered alert-channel delivery digests. Every required drill has bounded start and finish times, one named primary operator, at least two distinct retained observers, passed status, and its own evidence digest. The exact drill set covers alert delivery, backup/restore, BIT implementation change, BIT pause, credential compromise, EVM finality rollback, provider disagreement, provider outage, gate halt with preserved exits, inventory mismatch, LND outage, monitoring outage, suspected preimage leakage, and price-source disagreement.
 
@@ -85,7 +85,7 @@ Both public-testnet release-candidate commands require `--operations-record`, `-
 - every release cap and reserve to equal the exact adoption policy; and
 - every adoption-policy admission/risk/fee digest to match signed upstream evidence, with every named fee below both deployed immutable escrow ceilings.
 
-Operational-readiness v1 and v2 are rejected. The former release-record template v2 and prepared candidate v2/v3 schemas are rejected. Template v3 accepts no operator-entered loss-allocation, support-policy, or service-isolation hashes. Candidate v4 derives those commitments and every operational release digest only from live verifier provenance and retains the exact adoption-policy digest.
+Operational-readiness v1 and v2 are rejected. The former release-record template v2 and prepared candidate v2/v3 schemas are rejected. Template v3 accepts no operator-entered loss-allocation, support-policy, or service-isolation hashes. Candidate v5 derives those commitments and every operational release digest only from live verifier provenance, retains the exact adoption-policy digest, and independently requires the original [qualification review](./QUALIFICATION_REVIEW_EVIDENCE.md) provenance that matches this signed operational artifact.
 
 ## Authority boundary
 

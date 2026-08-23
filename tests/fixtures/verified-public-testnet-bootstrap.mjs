@@ -10,7 +10,11 @@ export function canonical(values, selector) {
   return [...values].sort((left, right) => selector(left).localeCompare(selector(right)));
 }
 
-export function fixture({ deployment, preparedAt }) {
+export function fixture({
+  deployment,
+  preparedAt,
+  testQualification = id("bootstrap qualification evidence").toLowerCase(),
+}) {
   if (!deployment?.verification || !Number.isSafeInteger(preparedAt)) {
     throw new TypeError("verified deployment and preparedAt are required");
   }
@@ -63,7 +67,7 @@ export function fixture({ deployment, preparedAt }) {
       providerQuorum: id("bootstrap provider quorum evidence").toLowerCase(),
       riskPolicy: id("bootstrap risk policy").toLowerCase(),
       solverOperations: id("bootstrap solver operations").toLowerCase(),
-      testQualification: id("bootstrap qualification evidence").toLowerCase(),
+      testQualification,
     },
     features: {
       lpShares: false,
@@ -118,8 +122,13 @@ export async function sign(value) {
   return value;
 }
 
-export async function createVerifiedPublicTestnetBootstrapFixture({ deployment, preparedAt, now = preparedAt + 60 }) {
-  const candidate = await sign(fixture({ deployment, preparedAt }));
+export async function createVerifiedPublicTestnetBootstrapFixture({
+  deployment,
+  preparedAt,
+  testQualification,
+  now = preparedAt + 60,
+}) {
+  const candidate = await sign(fixture({ deployment, preparedAt, testQualification }));
   const verification = verifyPublicTestnetBootstrapEvidence({ ...candidate, now });
   return Object.freeze({ candidate, verification });
 }

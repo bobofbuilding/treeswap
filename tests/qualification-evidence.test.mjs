@@ -5,6 +5,7 @@ import {
   assertQualificationEvidenceIsSecretFree,
   buildQualificationEvidence,
   hashQualificationFile,
+  verifyQualificationEvidence,
 } from "../lib/qualification-evidence.mjs";
 import { buildProductionDurationEvidence } from "../lib/production-duration-evidence.mjs";
 import {
@@ -58,6 +59,11 @@ test("builds one deterministic secret-free qualification record", () => {
   assert.equal(first.productionDuration.controls.targetPaymentDispatches, 0);
   assert.equal(assertQualificationEvidenceIsSecretFree(first), true);
   assert.equal(hashQualificationFile(Buffer.from("exact config")), "sha256:e51a29cdb4a0e7193635ae370ec012104a0682936579e459c1d8fde3586e9c73");
+  assert.deepEqual(verifyQualificationEvidence(first), first);
+  assert.throws(
+    () => verifyQualificationEvidence({ ...first, evidenceDigest: `sha256:${"f".repeat(64)}` }),
+    /digest or content/,
+  );
 });
 
 test("rejects failed campaigns, mutable images, and secret-bearing fields", () => {
@@ -75,6 +81,12 @@ test("rejects failed campaigns, mutable images, and secret-bearing fields", () =
     ...input(),
     configurationHashes: { "../outside config": `sha256:${"4".repeat(64)}` },
   }), /configuration hash entry is invalid/);
+  for (const name of ["../outside", "/absolute/path", "path//empty", "path/./dot"]) {
+    assert.throws(() => buildQualificationEvidence({
+      ...input(),
+      configurationHashes: { [name]: `sha256:${"4".repeat(64)}` },
+    }), /configuration hash entry is invalid/);
+  }
   assert.throws(() => buildQualificationEvidence({
     ...input(),
     campaigns: [{ name: "lightning:invoice-faults", status: "passed" }],

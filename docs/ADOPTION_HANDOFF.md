@@ -41,6 +41,7 @@ Cryptographic identity separation does not prove competence, hardware custody, s
 ### 1. Freeze the release boundary
 
 - Select one clean commit already published on `origin/main`.
+- Run the complete sealed qualification on that exact commit and have a non-overlapping reviewer reconstruct and sign its exact bytes through [qualification review evidence](./QUALIFICATION_REVIEW_EVIDENCE.md).
 - Keep `V1_CAPABILITIES.webSolverFunding` disabled and the onchain gate closed.
 - Agree the public [adoption policy](./ADOPTION_POLICY.md), including directional fees, caps, reserves, privacy retention, loss allocation, support ownership, and immutable-upgrade response.
 - Make no inventory deposit and collect no public funds.
@@ -87,6 +88,7 @@ Complete and retain:
 
 - the independently signed [bootstrap operator roster](./PUBLIC_TESTNET_BOOTSTRAP_EVIDENCE.md);
 - the five-report, five-signer [independent review package](./INDEPENDENT_REVIEW_EVIDENCE.md), with every finding closed or safely dispositioned and no accepted critical/high risk;
+- the exact artifact and independent signer package required by [qualification review evidence](./QUALIFICATION_REVIEW_EVIDENCE.md);
 - the three-role [service-isolation package](./SERVICE_ISOLATION_EVIDENCE.md);
 - the five-role [operational-readiness package](./OPERATIONAL_READINESS_EVIDENCE.md), including alert delivery, backup/restore, every required incident drill, support, loss allocation, and zero unreconciled liabilities; and
 - the exact public adoption policy used by every package and release limit.
@@ -96,6 +98,7 @@ Raw reports, credentials, endpoints, invoices, preimages, private identity evide
 ### 6. Prepare and approve the tiny release
 
 1. Prepare the evidence-derived bootstrap candidate through [public-testnet release candidates](./PUBLIC_TESTNET_RELEASE_CANDIDATES.md).
+   Candidate v5 reconstructs the original qualification artifact and reviewer signature in-process; a copied verification summary or opaque test digest is rejected.
 2. Have all five release roles independently reconstruct the candidate from original evidence and compare both candidate digests out of band.
 3. Prepare each role's exact payload without exposing a private key.
 4. Collect controller and guardian ERC-1271 approvals from the reviewed Safes plus the three exact EIP-712 role approvals.
