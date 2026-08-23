@@ -372,6 +372,7 @@ services:
       context: ../..
       dockerfile: infra/coordinator/Dockerfile
     image: treeswap/coordinator:regtest
+    command: ["node", "infra/coordinator/smoke.mjs"]
     profiles: [tools]
     read_only: true
     cap_drop: [ALL]
