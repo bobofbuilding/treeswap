@@ -36,6 +36,7 @@ The prototype assumes a business par value of **1 BIT = 100 sats**. This value i
 - Five-role signed review evidence with exact finding accounting in [`docs/INDEPENDENT_REVIEW_EVIDENCE.md`](docs/INDEPENDENT_REVIEW_EVIDENCE.md)
 - Five-role signed operational-readiness evidence with exact drills, alerts, backup, reconciliation, support, and loss-allocation commitments in [`docs/OPERATIONAL_READINESS_EVIDENCE.md`](docs/OPERATIONAL_READINESS_EVIDENCE.md)
 - Exact public adoption policy for fees, caps, solver liveness, privacy, loss allocation, support, and immutable upgrades in [`docs/ADOPTION_POLICY.md`](docs/ADOPTION_POLICY.md)
+- Single ordered staffing, deployment, evidence, approval, activation, and campaign handoff for a tiny operator-owned Sepolia adoption in [`docs/ADOPTION_HANDOFF.md`](docs/ADOPTION_HANDOFF.md)
 - Three-role signed service-isolation evidence with exact service, trust-domain, ingress, transport, and credential-scope commitments in [`docs/SERVICE_ISOLATION_EVIDENCE.md`](docs/SERVICE_ISOLATION_EVIDENCE.md)
 - Evidence-derived tiny-bootstrap and campaign-qualified release preparation in [`docs/PUBLIC_TESTNET_RELEASE_CANDIDATES.md`](docs/PUBLIC_TESTNET_RELEASE_CANDIDATES.md)
 - Guarded five-role payload and live contract-wallet approval verification in [`docs/PUBLIC_TESTNET_RELEASE_APPROVALS.md`](docs/PUBLIC_TESTNET_RELEASE_APPROVALS.md)
@@ -87,6 +88,8 @@ MAINNET_RPC_URL=<secret> npm run test:live-bit-reorg
 ```
 
 ## Production work still required
+
+Start with the ordered [TreeSwap adoption handoff](docs/ADOPTION_HANDOFF.md). It keeps the bridge closed while real operators, reviewers, signers, and infrastructure complete the external evidence chain for a tiny operator-owned Sepolia bootstrap.
 
 - Repeat the passing EVM outbox/reorg campaigns on public testnet using two independently operated authenticated providers and genuine finality transitions
 - Obtain matching signed observations from two genuinely independent authenticated Ethereum providers, complete the two-role BIT review with retained reports, and derive the short-lived reviewed BIT manifest
