@@ -6,6 +6,7 @@ import {
   buildQualificationEvidence,
   hashQualificationFile,
 } from "../lib/qualification-evidence.mjs";
+import { buildProductionDurationEvidence } from "../lib/production-duration-evidence.mjs";
 import {
   TREESWAP_CANONICAL_ORIGIN,
   assertTreeSwapCanonicalOrigin,
@@ -14,11 +15,12 @@ import {
 } from "../lib/published-source.mjs";
 
 function input() {
+  const sourceCommit = "a".repeat(40);
   return {
     branch: "main",
-    sourceCommit: "a".repeat(40),
+    sourceCommit,
     startedAt: "2026-08-19T16:00:00.000Z",
-    finishedAt: "2026-08-19T16:01:00.000Z",
+    finishedAt: "2026-08-19T17:02:00.000Z",
     runtimeVersions: { node: "v22.22.0", docker: "28.0.0", dockerCompose: "2.30.0", forge: "forge 1.4.0" },
     pinnedImages: [
       `bitcoin/bitcoin:31.1@sha256:${"1".repeat(64)}`,
@@ -29,7 +31,16 @@ function input() {
       "infra/regtest/compose.yml": `sha256:${"4".repeat(64)}`,
       "infra/coordinator/Dockerfile": `sha256:${"5".repeat(64)}`,
     },
-    campaigns: [{ name: "lightning:invoice-faults", status: "passed" }],
+    campaigns: [{ name: "lightning:production-duration-chain-delay", status: "passed" }],
+    productionDurationEvidence: buildProductionDurationEvidence({
+      sourceCommit,
+      startedAtEpochSeconds: Date.parse("2026-08-19T16:00:30.000Z") / 1000,
+      finishedAtEpochSeconds: Date.parse("2026-08-19T17:00:31.000Z") / 1000,
+      maximumObservationGapSeconds: 31,
+      monotonicElapsedSeconds: 3601,
+      observationCount: 119,
+      restartElapsedSeconds: 1806,
+    }),
   };
 }
 
@@ -38,10 +49,13 @@ test("builds one deterministic secret-free qualification record", () => {
   const second = buildQualificationEvidence(input());
   assert.deepEqual(first, second);
   assert.match(first.evidenceDigest, /^sha256:[0-9a-f]{64}$/);
+  assert.equal(first.schema, "treeswap.local-qualification-evidence.v2");
   assert.equal(first.source.clean, true);
   assert.equal(first.source.published, true);
   assert.equal(first.privacy.commandOutputIncluded, false);
   assert.equal(first.limitations.publicTestnetIncluded, false);
+  assert.equal(first.productionDuration.measurements.monotonicElapsedSeconds, 3601);
+  assert.equal(first.productionDuration.controls.targetPaymentDispatches, 0);
   assert.equal(assertQualificationEvidenceIsSecretFree(first), true);
   assert.equal(hashQualificationFile(Buffer.from("exact config")), "sha256:e51a29cdb4a0e7193635ae370ec012104a0682936579e459c1d8fde3586e9c73");
 });
@@ -49,7 +63,7 @@ test("builds one deterministic secret-free qualification record", () => {
 test("rejects failed campaigns, mutable images, and secret-bearing fields", () => {
   assert.throws(() => buildQualificationEvidence({
     ...input(),
-    campaigns: [{ name: "lightning:invoice-faults", status: "failed" }],
+    campaigns: [{ name: "lightning:production-duration-chain-delay", status: "failed" }],
   }), /must have a safe name and pass/);
   assert.throws(() => buildQualificationEvidence({
     ...input(),
@@ -61,6 +75,17 @@ test("rejects failed campaigns, mutable images, and secret-bearing fields", () =
     ...input(),
     configurationHashes: { "../outside config": `sha256:${"4".repeat(64)}` },
   }), /configuration hash entry is invalid/);
+  assert.throws(() => buildQualificationEvidence({
+    ...input(),
+    campaigns: [{ name: "lightning:invoice-faults", status: "passed" }],
+  }), /exactly one production-duration campaign/);
+  assert.throws(() => buildQualificationEvidence({
+    ...input(),
+    productionDurationEvidence: {
+      ...input().productionDurationEvidence,
+      source: { ...input().productionDurationEvidence.source, commit: "b".repeat(40) },
+    },
+  }), /source does not match/);
 });
 
 test("requires the exact clean commit currently published at the canonical TreeSwap origin", () => {
