@@ -64,7 +64,9 @@ There is intentionally no command that writes an “active release” JSON file.
 3. load the five signatures and configure independent providers;
 4. obtain the two fresh reconciliation signatures;
 5. call `activatePublicTestnetRelease` without restarting; and
-6. pass the returned capability and runtime snapshot objects directly to `authorizeSolverFunding` for each solver-funding decision.
+6. pass the returned capability and runtime snapshot objects plus the exact live `verifySolverCapability` result directly to `authorizeSolverFunding` for each solver-funding decision.
+
+The final decision accepts no `authenticated`, `role`, or `capabilityVerified` boolean. It reopens the module-private solver proof, requires its independently observed capacity to remain within the release runtime freshness window, fails at the exact capability-expiry boundary, and binds its chain, direction-specific escrow address, and escrow runtime code hash to the same deployment manifest used by live release activation. A copied proof, a proof for another chain or escrow, stale capacity, or an otherwise valid capability from a different release cannot authorize.
 
 Restart, reconciliation expiry, runtime staleness, release expiry, or any monitoring halt requires a fresh activation. The coordinator must never persist the returned objects as authority. Persist only secret-free audit digests and the non-authorizing approval receipt.
 

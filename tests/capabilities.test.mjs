@@ -27,7 +27,7 @@ test("opens cryptographic solver admission while keeping public execution and po
 
 test("cannot authorize web funding even with a nominal solver session", () => {
   const result = authorizeSolverFunding({
-    session: { authenticated: true, role: "solver", capabilityVerified: true },
+    solverCapabilityVerification: null,
     deployment: { audited: true, testnetCampaignPassed: true, openGateHealthy: true, balancesReconciled: true },
   });
   assert.equal(result.allowed, false);
@@ -36,7 +36,7 @@ test("cannot authorize web funding even with a nominal solver session", () => {
 });
 
 test("denies a public user before any deployment condition matters", () => {
-  const result = authorizeSolverFunding({ session: { authenticated: true, role: "user" }, deployment: {} });
+  const result = authorizeSolverFunding({ solverCapabilityVerification: null, deployment: {} });
   assert.equal(result.allowed, false);
-  assert.match(result.reasons.join("; "), /verified capability/);
+  assert.match(result.reasons.join("; "), /locally verified solver capability/);
 });

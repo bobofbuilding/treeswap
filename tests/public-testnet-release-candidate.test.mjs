@@ -28,6 +28,7 @@ import {
   sign as signOperationsFixture,
 } from "./fixtures/verified-operational-readiness.mjs";
 import { createVerifiedServiceIsolationFixture } from "./fixtures/verified-service-isolation.mjs";
+import { createVerifiedSolverCapabilityFixture } from "./fixtures/verified-solver-capability.mjs";
 import { verifyPublicTestnetBootstrapEvidence } from "../lib/public-testnet-bootstrap-evidence.mjs";
 import { verifyIndependentReviewEvidence } from "../lib/independent-review-evidence.mjs";
 import { verifyOperationalReadinessEvidence } from "../lib/operational-readiness-evidence.mjs";
@@ -505,18 +506,43 @@ test("activates funding only after same-process evidence, approvals, reconciliat
     reconciliationApprovals: reconciliation.approvals,
     now,
   });
+  const solverCapability = await createVerifiedSolverCapabilityFixture({
+    now,
+    chainId: candidate.record.chainId,
+    lightningToBitContract: deployment.verification.manifest.vault.address,
+    lightningToBitContractCodeHash: deployment.verification.manifest.vault.codeHash,
+    bitToLightningContract: deployment.verification.manifest.userEscrow.address,
+    bitToLightningContractCodeHash: deployment.verification.manifest.userEscrow.codeHash,
+  });
+  const inverseSolverCapability = await createVerifiedSolverCapabilityFixture({
+    now,
+    chainId: candidate.record.chainId,
+    lightningToBitContract: deployment.verification.manifest.vault.address,
+    lightningToBitContractCodeHash: deployment.verification.manifest.vault.codeHash,
+    bitToLightningContract: deployment.verification.manifest.userEscrow.address,
+    bitToLightningContractCodeHash: deployment.verification.manifest.userEscrow.codeHash,
+    direction: "bit-to-lightning",
+    endpointOrigin: "https://inverse-solver.example",
+    solverPrivateKey: `0x${"93".repeat(32)}`,
+  });
   assert.equal(activation.status, "same-process-release-and-runtime-verification-active");
   assert.equal(activation.receipt.authorizations.funding, false);
   assert.equal(activation.runtimeBlockNumber, 1_200);
   const decision = authorizeSolverFunding({
-    session: { authenticated: true, role: "solver", capabilityVerified: true },
+    solverCapabilityVerification: solverCapability.verification,
     deployment: activation.deployment,
     capabilities: activation.capabilities,
     now,
   });
   assert.deepEqual(decision, { allowed: true, reasons: [] });
+  assert.deepEqual(authorizeSolverFunding({
+    solverCapabilityVerification: inverseSolverCapability.verification,
+    deployment: activation.deployment,
+    capabilities: activation.capabilities,
+    now,
+  }), { allowed: true, reasons: [] });
   const expiredReconciliation = authorizeSolverFunding({
-    session: { authenticated: true, role: "solver", capabilityVerified: true },
+    solverCapabilityVerification: solverCapability.verification,
     deployment: activation.deployment,
     capabilities: activation.capabilities,
     now: activation.validUntil + 1,
@@ -525,7 +551,7 @@ test("activates funding only after same-process evidence, approvals, reconciliat
   assert.match(expiredReconciliation.reasons.join("; "), /runtime reconciliation is expired/);
 
   const copiedSnapshot = authorizeSolverFunding({
-    session: { authenticated: true, role: "solver", capabilityVerified: true },
+    solverCapabilityVerification: solverCapability.verification,
     deployment: structuredClone(activation.deployment),
     capabilities: activation.capabilities,
     now,
@@ -533,13 +559,119 @@ test("activates funding only after same-process evidence, approvals, reconciliat
   assert.equal(copiedSnapshot.allowed, false);
   assert.match(copiedSnapshot.reasons.join("; "), /same-process live runtime activation/);
   const copiedCapability = authorizeSolverFunding({
-    session: { authenticated: true, role: "solver", capabilityVerified: true },
+    solverCapabilityVerification: solverCapability.verification,
     deployment: activation.deployment,
     capabilities: { ...activation.capabilities },
     now,
   });
   assert.equal(copiedCapability.allowed, false);
   assert.match(copiedCapability.reasons.join("; "), /cryptographically verified release capability/);
+});
+
+test("funding authorization rejects nominal flags, copied proofs, expiry, stale capacity, and wrong release bindings", async () => {
+  const { campaign, candidate, deployment } = await fixture();
+  const now = candidate.record.approvalBlockTimestamp + 120;
+  const approvalBundle = await releaseApprovalBundle(candidate);
+  const providerSet = providerSetFor({ candidate, campaign, deployment, now });
+  const reconciliation = await runtimeReconciliation(candidate, now);
+  const activation = await activatePublicTestnetRelease({
+    candidate,
+    approvalBundle,
+    providerSet,
+    reconciliation: reconciliation.reconciliation,
+    reconciliationApprovals: reconciliation.approvals,
+    now,
+  });
+  const manifest = deployment.verification.manifest;
+  const capabilityInput = {
+    now,
+    chainId: candidate.record.chainId,
+    lightningToBitContract: manifest.vault.address,
+    lightningToBitContractCodeHash: manifest.vault.codeHash,
+    bitToLightningContract: manifest.userEscrow.address,
+    bitToLightningContractCodeHash: manifest.userEscrow.codeHash,
+  };
+  const nominal = await createVerifiedSolverCapabilityFixture(capabilityInput);
+
+  const callerFlags = authorizeSolverFunding({
+    session: { authenticated: true, role: "solver", capabilityVerified: true },
+    deployment: activation.deployment,
+    capabilities: activation.capabilities,
+    now,
+  });
+  assert.equal(callerFlags.allowed, false);
+  assert.match(callerFlags.reasons.join("; "), /locally verified solver capability/);
+
+  const copied = authorizeSolverFunding({
+    solverCapabilityVerification: { ...nominal.verification },
+    deployment: activation.deployment,
+    capabilities: activation.capabilities,
+    now,
+  });
+  assert.equal(copied.allowed, false);
+  assert.match(copied.reasons.join("; "), /locally verified solver capability/);
+
+  const expiring = await createVerifiedSolverCapabilityFixture({ ...capabilityInput, expiresAt: now + 1 });
+  const expired = authorizeSolverFunding({
+    solverCapabilityVerification: expiring.verification,
+    deployment: activation.deployment,
+    capabilities: activation.capabilities,
+    now: now + 1,
+  });
+  assert.equal(expired.allowed, false);
+  assert.match(expired.reasons.join("; "), /solver capability is expired/);
+
+  const wrongChain = await createVerifiedSolverCapabilityFixture({ ...capabilityInput, chainId: "1" });
+  const wrongChainDecision = authorizeSolverFunding({
+    solverCapabilityVerification: wrongChain.verification,
+    deployment: activation.deployment,
+    capabilities: activation.capabilities,
+    now,
+  });
+  assert.equal(wrongChainDecision.allowed, false);
+  assert.match(wrongChainDecision.reasons.join("; "), /not bound to the active release escrow/);
+
+  const wrongContract = await createVerifiedSolverCapabilityFixture({
+    ...capabilityInput,
+    lightningToBitContract: "0x9999999999999999999999999999999999999999",
+    lightningToBitContractCodeHash: id("wrong release escrow runtime").toLowerCase(),
+  });
+  const wrongContractDecision = authorizeSolverFunding({
+    solverCapabilityVerification: wrongContract.verification,
+    deployment: activation.deployment,
+    capabilities: activation.capabilities,
+    now,
+  });
+  assert.equal(wrongContractDecision.allowed, false);
+  assert.match(wrongContractDecision.reasons.join("; "), /not bound to the active release escrow/);
+
+  const wrongRuntime = await createVerifiedSolverCapabilityFixture({
+    ...capabilityInput,
+    lightningToBitContractCodeHash: id("wrong code at the reviewed escrow").toLowerCase(),
+  });
+  const wrongRuntimeDecision = authorizeSolverFunding({
+    solverCapabilityVerification: wrongRuntime.verification,
+    deployment: activation.deployment,
+    capabilities: activation.capabilities,
+    now,
+  });
+  assert.equal(wrongRuntimeDecision.allowed, false);
+  assert.match(wrongRuntimeDecision.reasons.join("; "), /not bound to the active release escrow/);
+
+  const freshnessSeconds = candidate.policy.maximumRuntimeObservationAgeSeconds;
+  const longLived = await createVerifiedSolverCapabilityFixture({
+    ...capabilityInput,
+    expiresAt: now + freshnessSeconds + 30,
+    maxCapabilityTtlSeconds: freshnessSeconds + 60,
+  });
+  const staleCapacity = authorizeSolverFunding({
+    solverCapabilityVerification: longLived.verification,
+    deployment: activation.deployment,
+    capabilities: activation.capabilities,
+    now: now + freshnessSeconds + 1,
+  });
+  assert.equal(staleCapacity.allowed, false);
+  assert.match(staleCapacity.reasons.join("; "), /solver capacity observation is stale or invalid/);
 });
 
 test("release activation rejects copied provenance, stale or bad signatures, provider disagreement, and unsafe live state", async () => {
