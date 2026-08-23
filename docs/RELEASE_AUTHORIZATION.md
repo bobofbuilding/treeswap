@@ -40,15 +40,17 @@ The low-level `activateReleaseCapabilities` can derive a release profile only wh
 `authorizeSolverFunding` then requires:
 
 - the provenance-bound release profile;
-- an authenticated solver session whose cryptographic solver capability passed;
+- the original module-private `verifySolverCapability` result, with no caller-supplied authentication, role, or verification flag;
 - the exact capability/snapshot pair created by that same activation call, bound to the signed release-record digest, signed release-policy digest, deployment-manifest digest, verified postflight digest, and verified promotion digest;
+- the solver proof's exact chain, direction-specific escrow address, and escrow runtime code hash to match that active release manifest;
+- the solver capability to remain unexpired and its independently observed capacity to remain inside the release runtime-freshness window;
 - a fresh observation inside the signed policy's maximum age;
 - an open gate whose active digest commits to that exact release and deployment;
 - current provider agreement on the gate, registry, escrow, and BIT code and state;
 - reconciled onchain BIT accounting, reserve, and in-flight limits; and
 - a currently valid two-party reconciliation with zero unexplained liabilities and signed Lightning limits.
 
-Nominal booleans such as `audited: true`, an arbitrary `webSolverFunding: true`, a plain or copied runtime snapshot, a copied capability object, stale state, expired reconciliation, or a different manifest cannot authorize funding.
+Nominal booleans such as `authenticated: true`, `capabilityVerified: true`, or `audited: true`, an arbitrary `webSolverFunding: true`, a plain or copied runtime snapshot, a copied release or solver capability object, stale state or capacity, exact-boundary expiry, a cross-chain/cross-escrow solver proof, expired reconciliation, or a different manifest cannot authorize funding.
 
 ## Local qualification evidence
 

@@ -20,6 +20,8 @@ One fresh filesystem lease excludes a second supervisor. A crashed owner remains
 
 This process is intentionally not an activation or settlement daemon. It proves the image can be deployed persistently and fail closed around durable state; it cannot create an intent, reserve inventory, call Lightning, broadcast EVM transactions, open the gate, or authorize funding. The future production activation loop must freshly reconstruct and verify all signed release evidence in one process and must enforce leader ownership before each side effect. Multi-replica funding remains unsupported.
 
+The local same-process funding predicate no longer accepts nominal solver-session flags. It requires the original module-private solver-capability verification and the original active release capability/runtime snapshot pair; then it rechecks exact capability expiry, fresh independently observed capacity, chain, direction-specific escrow address, and escrow runtime code hash against the live release manifest. Copies, cross-release capabilities, wrong-direction contracts, stale capacity, and exact-boundary expiry fail closed. This closes a local authorization gap but does not turn the packaged closed supervisor into a funded activation service.
+
 ## Atomic record
 
 `lib/coordinator-store.mjs` binds one private settlement identifier to all of the durable settlement commitments:

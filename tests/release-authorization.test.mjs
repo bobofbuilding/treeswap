@@ -261,7 +261,7 @@ test("a signed release record alone cannot activate operator funding", async () 
     observedAt: NOW - 2,
   };
   const decision = authorizeSolverFunding({
-    session: { authenticated: true, role: "solver", capabilityVerified: true },
+    solverCapabilityVerification: null,
     deployment,
     capabilities,
     now: NOW,
@@ -397,7 +397,7 @@ test("release and runtime funding require the exact promotion and postflight dig
     observedAt: NOW,
   };
   const decision = authorizeSolverFunding({
-    session: { authenticated: true, role: "solver", capabilityVerified: true },
+    solverCapabilityVerification: null,
     deployment: runtime,
     capabilities,
     now: NOW,
@@ -513,7 +513,7 @@ test("enforces independent-operator counts, caps, reserves, lifetime, and curren
   const good = await verify();
   const capabilities = activateReleaseCapabilities({ verification: good, now: NOW });
   const nominal = authorizeSolverFunding({
-    session: { authenticated: true, role: "solver", capabilityVerified: true },
+    solverCapabilityVerification: null,
     deployment: { audited: true, testnetCampaignPassed: true, openGateHealthy: true, balancesReconciled: true },
     capabilities,
     now: NOW,
@@ -555,7 +555,7 @@ test("copied verification objects, copied capabilities, stale observations, and 
     observedAt: NOW - 16,
   };
   const copied = authorizeSolverFunding({
-    session: { authenticated: true, role: "solver", capabilityVerified: true },
+    solverCapabilityVerification: null,
     deployment: { ...snapshot, observedAt: NOW },
     capabilities: { ...capabilities },
     now: NOW,
@@ -564,7 +564,7 @@ test("copied verification objects, copied capabilities, stale observations, and 
   assert.match(copied.reasons.join("; "), /cryptographically verified release capability/);
 
   const stale = authorizeSolverFunding({
-    session: { authenticated: true, role: "solver", capabilityVerified: true },
+    solverCapabilityVerification: null,
     deployment: snapshot,
     capabilities,
     now: NOW,
@@ -573,7 +573,7 @@ test("copied verification objects, copied capabilities, stale observations, and 
   assert.match(stale.reasons.join("; "), /stale or invalid/);
 
   const zeroDigests = authorizeSolverFunding({
-    session: { authenticated: true, role: "solver", capabilityVerified: true },
+    solverCapabilityVerification: null,
     deployment: {
       ...snapshot,
       observedAt: NOW,
@@ -587,7 +587,7 @@ test("copied verification objects, copied capabilities, stale observations, and 
   assert.match(zeroDigests.reasons.join("; "), /risk gate and reconciled balances/);
 
   const arbitrary = authorizeSolverFunding({
-    session: { authenticated: true, role: "solver", capabilityVerified: true },
+    solverCapabilityVerification: null,
     deployment: { ...snapshot, observedAt: NOW },
     capabilities: { webSolverFunding: true },
     now: NOW,
