@@ -111,9 +111,10 @@ test("writer creates one private non-overwriting record", async (t) => {
 });
 
 test("the qualification runner binds and removes the companion only after fail-closed checks", async () => {
-  const [lab, runner] = await Promise.all([
+  const [lab, runner, plan] = await Promise.all([
     readFile(new URL("../infra/regtest/lab.sh", import.meta.url), "utf8"),
     readFile(new URL("../scripts/run-local-qualification.mjs", import.meta.url), "utf8"),
+    readFile(new URL("../lib/qualification-plan.mjs", import.meta.url), "utf8"),
   ]);
   const start = lab.indexOf("smoke_production_duration_chain_delay() {");
   const end = lab.indexOf("\nsmoke_stale_chain_header() {", start);
@@ -127,7 +128,8 @@ test("the qualification runner binds and removes the companion only after fail-c
   assert.match(runner, /TREESWAP_PRODUCTION_DURATION_EVIDENCE_PATH: productionDurationCompanionPath/);
   assert.match(runner, /verifyProductionDurationEvidence\(parsed, \{ expectedSourceCommit \}\)/);
   assert.match(runner, /await unlink\(productionDurationCompanionPath\)/);
-  assert.match(runner, /"lib\/qualification-evidence\.mjs"/);
-  assert.match(runner, /"lib\/production-duration-evidence\.mjs"/);
-  assert.match(runner, /"scripts\/write-production-duration-evidence\.mjs"/);
+  assert.match(runner, /RELEASE_QUALIFICATION_CONFIGURATION_FILES/);
+  assert.match(plan, /"lib\/qualification-evidence\.mjs"/);
+  assert.match(plan, /"lib\/production-duration-evidence\.mjs"/);
+  assert.match(plan, /"scripts\/write-production-duration-evidence\.mjs"/);
 });

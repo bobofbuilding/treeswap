@@ -52,6 +52,7 @@ The prototype assumes a business par value of **1 BIT = 100 sats**. This value i
 - Deterministic static preflight for the short-lived two-provider/two-reviewer ceremony in [`docs/BIT_CEREMONY_PREFLIGHT.md`](docs/BIT_CEREMONY_PREFLIGHT.md)
 - Provenance-only reviewed BIT token-deployment manifest derivation in [`docs/BIT_REVIEWED_MANIFEST.md`](docs/BIT_REVIEWED_MANIFEST.md)
 - Hermetic clean-published-commit local qualification with secret-free schema-v2 evidence via `npm run qualify:local`; the one-hour Lightning measurements are digest-bound and disposable regtest volumes are destroyed before and after every sealed run
+- Exact final-artifact reconstruction and independent reviewer binding via [`docs/QUALIFICATION_REVIEW_EVIDENCE.md`](docs/QUALIFICATION_REVIEW_EVIDENCE.md); candidate v5 rejects opaque qualification digests and copied provenance
 - Deterministic two-direction execution-client reorg evidence via `npm run test:escrow-reorg`
 
 The bridge interface remains a swap simulation: it does not lock BIT, pay a swap invoice, create a payable solver invoice, or publish quotes. The separate **Send** tool can move real funds only after a second review and explicit confirmation in the user's wallet. BIT sends call the token's standard `transfer` function directly and never request an allowance. Lightning sends pass an exact, amount-bearing mainnet BOLT 11 invoice to an available WebLN provider, with a `lightning:` wallet link as the fallback. These direct payments bypass TreeSwap solvers, liquidity, fees, and swap protections.

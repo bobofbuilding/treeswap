@@ -26,6 +26,7 @@ export function fixture({
   reviewedBuildCommit = COMMIT,
   verifyingContract = VERIFYING_CONTRACT,
   deploymentManifestDigest = id("public testnet deployment manifest"),
+  testQualification = id("test qualification artifact"),
 } = {}) {
   const startedAt = finishedAt - 604_800;
   const wallets = new Map();
@@ -132,7 +133,7 @@ export function fixture({
       monitoring: id("monitoring artifact"),
       providerQuorum: id("provider quorum artifact"),
       solverOperations: id("solver operations artifact"),
-      testQualification: id("test qualification artifact"),
+      testQualification,
     },
     features: {
       lpShares: false,

@@ -59,6 +59,8 @@
     "regtest:solver-node-proof-smoke": "bash infra/regtest/lab.sh solver-node-proof-smoke",
     "regtest:solver-capacity-smoke": "bash infra/regtest/lab.sh solver-capacity-smoke",
     "qualify:local": "node scripts/run-local-qualification.mjs",
+    "prepare:qualification-review-attestation": "node scripts/prepare-qualification-review-attestation.mjs",
+    "verify:qualification-review-evidence": "node scripts/verify-qualification-review-evidence.mjs",
     "qualify:live-account": "node scripts/run-live-account-evidence.mjs",
     "qualify:live-account-maintenance": "node scripts/run-live-account-maintenance-evidence.mjs",
     "manage:testnet-campaign": "node scripts/manage-public-testnet-campaign.mjs",

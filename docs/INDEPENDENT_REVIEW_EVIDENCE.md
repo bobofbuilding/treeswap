@@ -64,7 +64,7 @@ Both bootstrap and campaign-qualified candidate preparation re-run this verifier
 - rejects a reviewer signer that is also a deployment wallet, deployment-wallet owner, deployment-promotion attester, bootstrap/campaign operator, signed operational-readiness role, or release approver; and
 - rejects copied verification JSON because module-private verifier provenance does not survive serialization.
 
-Release-candidate schema v4 is the only accepted candidate artifact. Candidate v1/template v1 are rejected because they accepted unsigned review hashes; candidate v2/template v2 lacked the separate provenance-bound operational-readiness package; candidate v3 lacked the exact public adoption-policy boundary.
+Release-candidate schema v5 is the only accepted candidate artifact. Candidate v1/template v1 are rejected because they accepted unsigned review hashes; candidate v2/template v2 lacked the separate provenance-bound operational-readiness package; candidate v3 lacked the exact public adoption-policy boundary; candidate v4 lacked the separate provenance-bound final [qualification review](./QUALIFICATION_REVIEW_EVIDENCE.md).
 
 ## Remaining external boundary
 
