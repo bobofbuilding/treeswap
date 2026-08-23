@@ -1946,9 +1946,9 @@ smoke_production_duration_chain_delay() {
   local stale_invoice stale_request stale_hash="" stale_digest stale_intent stale_id stale_operation stale_result
   local baseline_info current_info baseline_height baseline_block_hash baseline_header
   local current_height current_block_hash current_header bitcoin_height bitcoin_block_hash
-  local baseline_time target_time now last_check remaining sleep_seconds next_report=300
-  local baseline_monotonic target_monotonic monotonic_now last_monotonic monotonic_elapsed
-  local observations=0 restart_done=false restart_elapsed=0 payment_count
+  local baseline_time target_time finished_time now last_check wall_gap remaining sleep_seconds next_report=300
+  local baseline_monotonic target_monotonic monotonic_now last_monotonic monotonic_gap monotonic_elapsed
+  local observations=0 maximum_observation_gap=0 restart_done=false restart_elapsed=0 payment_count
 
   suffix=$(openssl rand -hex 8)
   payer_container="treeswap-regtest-production-duration-payer-$suffix"
@@ -2051,11 +2051,14 @@ smoke_production_duration_chain_delay() {
   while true; do
     now=$(date +%s)
     monotonic_now=$(read_monotonic_seconds)
-    if (( now < last_check || now - last_check > 45 \
-      || monotonic_now < last_monotonic || monotonic_now - last_monotonic > 45 )); then
+    wall_gap=$((now - last_check))
+    monotonic_gap=$((monotonic_now - last_monotonic))
+    if (( wall_gap < 0 || wall_gap > 45 || monotonic_gap < 0 || monotonic_gap > 45 )); then
       echo "production-duration observation cadence or wall clock was interrupted" >&2
       return 1
     fi
+    (( wall_gap > maximum_observation_gap )) && maximum_observation_gap=$wall_gap
+    (( monotonic_gap > maximum_observation_gap )) && maximum_observation_gap=$monotonic_gap
     current_info=$(compose exec -T alice lncli --network=regtest getinfo)
     if ! jq -e '.synced_to_chain == true and .wallet_synced == true and (.num_active_channels | tonumber) > 0' \
       <<<$current_info >/dev/null; then
@@ -2157,6 +2160,24 @@ smoke_production_duration_chain_delay() {
   trap - EXIT INT TERM
 
   monotonic_elapsed=$(( $(read_monotonic_seconds) - baseline_monotonic ))
+  if [[ -n "${TREESWAP_PRODUCTION_DURATION_EVIDENCE_PATH:-}" \
+    || -n "${TREESWAP_QUALIFICATION_SOURCE_COMMIT:-}" ]]; then
+    if [[ -z "${TREESWAP_PRODUCTION_DURATION_EVIDENCE_PATH:-}" \
+      || -z "${TREESWAP_QUALIFICATION_SOURCE_COMMIT:-}" ]]; then
+      echo "production-duration evidence requires both output path and qualification source commit" >&2
+      return 1
+    fi
+    finished_time=$(date +%s)
+    node "$LAB_DIR/../../scripts/write-production-duration-evidence.mjs" \
+      --output "$TREESWAP_PRODUCTION_DURATION_EVIDENCE_PATH" \
+      --source-commit "$TREESWAP_QUALIFICATION_SOURCE_COMMIT" \
+      --started-at-epoch-seconds "$baseline_time" \
+      --finished-at-epoch-seconds "$finished_time" \
+      --maximum-observation-gap-seconds "$maximum_observation_gap" \
+      --monotonic-elapsed-seconds "$monotonic_elapsed" \
+      --observation-count "$observations" \
+      --restart-elapsed-seconds "$restart_elapsed"
+  fi
   echo "Production-duration chain-delay smoke passed: ${monotonic_elapsed}s monotonic duration without a block, ${observations} continuous observations, restart persistence, deterministic rejection, and zero dispatch."
 }
 

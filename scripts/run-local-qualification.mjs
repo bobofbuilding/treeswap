@@ -1,8 +1,10 @@
 import { spawnSync } from "node:child_process";
-import { chmod, lstat, mkdir, readFile, writeFile } from "node:fs/promises";
+import { randomBytes } from "node:crypto";
+import { chmod, lstat, mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { buildQualificationEvidence, hashQualificationFile } from "../lib/qualification-evidence.mjs";
+import { verifyProductionDurationEvidence } from "../lib/production-duration-evidence.mjs";
 import {
   assertTreeSwapCanonicalOrigin,
   parsePublishedMainReference,
@@ -19,11 +21,40 @@ function capture(command, args) {
   return result.stdout.trim();
 }
 
-function runCampaign(name, command, args) {
+function runCampaign(name, command, args, environment = {}) {
   process.stdout.write(`\n[qualification] ${name}\n`);
-  const result = spawnSync(command, args, { cwd: repository, stdio: "inherit", env: process.env });
+  const result = spawnSync(command, args, {
+    cwd: repository,
+    stdio: "inherit",
+    env: { ...process.env, ...environment },
+  });
   if (result.status !== 0) throw new Error(`qualification campaign failed: ${name}`);
   return Object.freeze({ name, status: "passed" });
+}
+
+async function ensureOutputDirectory(outputDirectory) {
+  try {
+    const state = await lstat(outputDirectory);
+    if (!state.isDirectory() || state.isSymbolicLink()) throw new Error("outputs must be a real directory");
+  } catch (error) {
+    if (error?.code !== "ENOENT") throw error;
+    await mkdir(outputDirectory, { mode: 0o700 });
+  }
+  await chmod(outputDirectory, 0o700);
+}
+
+async function readProductionDurationEvidence(path, expectedSourceCommit) {
+  const state = await lstat(path);
+  if (!state.isFile() || state.isSymbolicLink() || (state.mode & 0o777) !== 0o600 || state.size > 65_536) {
+    throw new Error("production-duration companion evidence is not one bounded mode-0600 regular file");
+  }
+  let parsed;
+  try {
+    parsed = JSON.parse(await readFile(path, "utf8"));
+  } catch {
+    throw new Error("production-duration companion evidence is not valid JSON");
+  }
+  return verifyProductionDurationEvidence(parsed, { expectedSourceCommit });
 }
 
 function outputName() {
@@ -53,6 +84,8 @@ function currentPublishedCommit() {
 const requestedOutputName = outputName();
 const branch = "main";
 const sourceCommit = currentPublishedCommit();
+const outputDirectory = join(repository, "outputs");
+await ensureOutputDirectory(outputDirectory);
 
 const configurationFiles = [
   "package.json",
@@ -95,6 +128,7 @@ const configurationFiles = [
   "scripts/promote-bit-reviewed-manifest.mjs",
   "scripts/verify-published-main.mjs",
   "scripts/run-local-qualification.mjs",
+  "scripts/write-production-duration-evidence.mjs",
   "scripts/evaluate-lightning-close-recovery.mjs",
   "scripts/verify-lightning-close-collector-quorum.mjs",
   "scripts/run-live-account-evidence.mjs",
@@ -160,6 +194,8 @@ const configurationFiles = [
   "lib/bit-provider-evidence.mjs",
   "lib/bit-independent-review.mjs",
   "lib/bit-reviewed-manifest.mjs",
+  "lib/qualification-evidence.mjs",
+  "lib/production-duration-evidence.mjs",
   "lib/published-source.mjs",
   "lib/regtest-qualification-lifecycle.mjs",
   "lib/admission-policy.mjs",
@@ -201,6 +237,9 @@ const configurationFiles = [
   "lib/cross-chain-deadline-evidence.mjs",
   "lib/live-bit-cross-chain-deadline-evidence.mjs",
 ];
+if (new Set(configurationFiles).size !== configurationFiles.length) {
+  throw new Error("qualification configuration file paths must be unique");
+}
 const configurationHashes = {};
 for (const path of configurationFiles) {
   configurationHashes[path] = hashQualificationFile(await readFile(join(repository, path)));
@@ -310,10 +349,29 @@ const campaigns = [
 ];
 const startedAt = new Date().toISOString();
 const results = [];
+const productionDurationCompanionPath = join(
+  outputDirectory,
+  `production-duration-${randomBytes(16).toString("hex")}.json`,
+);
+let productionDurationEvidence = null;
 let campaignError = null;
 try {
   destroyQualificationRegtest({ repository });
-  for (const [name, command, args] of campaigns) results.push(runCampaign(name, command, args));
+  for (const [name, command, args] of campaigns) {
+    const environment = name === "lightning:production-duration-chain-delay"
+      ? {
+        TREESWAP_PRODUCTION_DURATION_EVIDENCE_PATH: productionDurationCompanionPath,
+        TREESWAP_QUALIFICATION_SOURCE_COMMIT: sourceCommit,
+      }
+      : {};
+    results.push(runCampaign(name, command, args, environment));
+    if (name === "lightning:production-duration-chain-delay") {
+      productionDurationEvidence = await readProductionDurationEvidence(
+        productionDurationCompanionPath,
+        sourceCommit,
+      );
+    }
+  }
 } catch (error) {
   campaignError = error;
 } finally {
@@ -324,8 +382,18 @@ try {
       ? new AggregateError([campaignError, cleanupError], "qualification campaign and regtest destruction failed")
       : cleanupError;
   }
+  try {
+    await unlink(productionDurationCompanionPath);
+  } catch (cleanupError) {
+    if (cleanupError?.code !== "ENOENT") {
+      campaignError = campaignError
+        ? new AggregateError([campaignError, cleanupError], "qualification campaign and companion cleanup failed")
+        : cleanupError;
+    }
+  }
 }
 if (campaignError) throw campaignError;
+if (!productionDurationEvidence) throw new Error("qualification did not retain production-duration evidence");
 if (currentPublishedCommit() !== sourceCommit) throw new Error("qualification source changed during the campaigns");
 
 const evidence = buildQualificationEvidence({
@@ -342,17 +410,9 @@ const evidence = buildQualificationEvidence({
   pinnedImages,
   configurationHashes,
   campaigns: results,
+  productionDurationEvidence,
 });
 
-const outputDirectory = join(repository, "outputs");
-try {
-  const state = await lstat(outputDirectory);
-  if (!state.isDirectory() || state.isSymbolicLink()) throw new Error("outputs must be a real directory");
-} catch (error) {
-  if (error?.code !== "ENOENT") throw error;
-  await mkdir(outputDirectory, { mode: 0o700 });
-}
-await chmod(outputDirectory, 0o700);
 const outputPath = join(outputDirectory, requestedOutputName);
 await writeFile(outputPath, `${JSON.stringify(evidence, null, 2)}\n`, { flag: "wx", mode: 0o600 });
 await chmod(outputPath, 0o600);
