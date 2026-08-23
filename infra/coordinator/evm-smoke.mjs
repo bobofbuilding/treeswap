@@ -27,6 +27,27 @@ const directory = await mkdtemp(join(tmpdir(), "treeswap-evm-smoke-"));
 const databasePath = join(directory, "coordinator.sqlite");
 let store;
 
+async function reconcileUntilIncluded({ actionId, contractCodeHash, now }) {
+  const maximumAttempts = 40;
+  for (let attempt = 0; attempt < maximumAttempts; attempt += 1) {
+    const result = await reconcileEvmClaimAction({
+      store,
+      actionId,
+      rpcUrl: RPC_URL,
+      expectedContractCodeHash: contractCodeHash,
+      nowSeconds: () => now + attempt,
+    });
+    assert.equal(result.disposition, "unresolved");
+    const transactionState = store.getEvmTransaction(actionId).state;
+    if (transactionState === "INCLUDED") return result;
+    assert.equal(transactionState, "UNKNOWN");
+    if (attempt + 1 < maximumAttempts) {
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, 50));
+    }
+  }
+  throw new Error("EVM smoke transaction was not included within the bounded reconciliation window");
+}
+
 try {
   const network = await provider.getNetwork();
   assert.equal(network.chainId, 31_337n);
@@ -123,12 +144,10 @@ try {
   assert.equal(dispatched.action.state, "UNKNOWN");
   assert.equal(dispatched.transaction.broadcastCount, 1);
 
-  const included = await reconcileEvmClaimAction({
-    store,
+  const included = await reconcileUntilIncluded({
     actionId: action.actionId,
-    rpcUrl: RPC_URL,
-    expectedContractCodeHash: contractCodeHash,
-    nowSeconds: () => now + 5,
+    contractCodeHash,
+    now: now + 5,
   });
   assert.equal(included.disposition, "unresolved");
   assert.equal(store.getEvmTransaction(action.actionId).state, "INCLUDED");

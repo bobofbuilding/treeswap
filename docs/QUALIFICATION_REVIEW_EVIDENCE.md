@@ -9,7 +9,7 @@ The release path no longer accepts an opaque `testQualification` digest. Candida
 - the exact raw qualification file bytes and both SHA-256 commitments;
 - the exact clean published source commit in the artifact;
 - all 41 mandatory campaign names in canonical order;
-- the exact versioned 159-file configuration manifest shared by the qualification runner and verifier, including the qualification, release-candidate, active-daemon, and reviewer boundaries;
+- the exact versioned 160-file configuration manifest shared by the qualification runner and verifier, including the qualification, release-candidate, active-daemon, coordinator fault-smoke, and reviewer boundaries;
 - at least three unique immutable container image pins;
 - validated uncompressed production-duration Lightning evidence;
 - a bounded public-testnet policy naming one reviewer, organization commitment, identity-evidence commitment, deployment, protocol version, and funding mode;
