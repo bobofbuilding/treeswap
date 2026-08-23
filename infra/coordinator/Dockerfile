@@ -7,9 +7,15 @@ RUN npm ci --omit=dev --ignore-scripts \
 COPY lib ./lib
 COPY infra/coordinator ./infra/coordinator
 COPY infra/lightning-adapter/capacity-smoke.mjs ./infra/lightning-adapter/capacity-smoke.mjs
-RUN mkdir -p /data /run/treeswap/credentials \
-  && chown node:node /data /run/treeswap/credentials \
+RUN mkdir -p /data /run/treeswap/credentials /run/treeswap/state \
+  && chown node:node /data /run/treeswap/credentials /run/treeswap/state \
   && node -e "import('./lib/evm-action-runner.mjs')"
 
+ENV COORDINATOR_MODE=closed \
+  COORDINATOR_DATABASE_PATH=/data/coordinator.sqlite \
+  COORDINATOR_RUNTIME_DIRECTORY=/run/treeswap/state
+
 USER node
-CMD ["node", "infra/coordinator/smoke.mjs"]
+HEALTHCHECK --interval=15s --timeout=5s --start-period=10s --retries=4 \
+  CMD ["node", "infra/coordinator/healthcheck.mjs"]
+CMD ["node", "infra/coordinator/service.mjs"]
