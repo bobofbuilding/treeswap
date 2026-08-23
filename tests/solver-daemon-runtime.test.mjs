@@ -8,6 +8,14 @@ import { Transaction, Wallet, id, keccak256, sha256 } from "ethers";
 import { CoordinatorStore } from "../lib/coordinator-store.mjs";
 import { evmClaimActionCommitment } from "../lib/evm-action-runner.mjs";
 import { invoiceDigest } from "../lib/lnd-rest-client.mjs";
+import {
+  SOLVER_DAEMON_EVIDENCE_POLICY_SCHEMA,
+  SOLVER_DAEMON_EVIDENCE_SCHEMA,
+  SOLVER_DAEMON_ZERO_BYTES32,
+  buildSolverDaemonEvidenceApproval,
+  solverDaemonEvidencePolicyDigest,
+  verifySolverDaemonEvidence,
+} from "../lib/solver-daemon-evidence.mjs";
 import { createAuthenticatedPrivatePacketClient, executeSolverDaemonStep } from "../lib/solver-daemon-runtime.mjs";
 import { nextSolverDaemonStep } from "../lib/solver-daemon-planner.mjs";
 import { buildSignedPrivatePacketResponse } from "../lib/solver-private-packet.mjs";
@@ -28,6 +36,8 @@ const CLAIMED_TOPIC = id("Claimed(bytes32,address,uint256,uint256)").toLowerCase
 const lightningKeys = generateKeyPairSync("ed25519");
 const packetRequesterKeys = generateKeyPairSync("ed25519");
 const packetProviderKeys = generateKeyPairSync("ed25519");
+const evidenceLightningOperator = new Wallet(`0x${"31".repeat(32)}`);
+const evidenceSecurityReviewer = new Wallet(`0x${"32".repeat(32)}`);
 
 function hash(label) {
   return id(label).toLowerCase();
@@ -186,22 +196,98 @@ function lightningAdapter() {
   return { config, get calls() { return calls; } };
 }
 
-function authorization(action, settlementValue, packetResponseDigest, packet, overrides = {}) {
+function evidencePolicy(direction) {
   return {
-    authorized: true,
-    settlementId: settlementValue.settlementId,
-    reservationId: settlementValue.reservationId,
-    reservationBlockHash: settlementValue.reservationBlockHash,
+    schema: SOLVER_DAEMON_EVIDENCE_POLICY_SCHEMA,
+    releaseRecordDigest: hash("solver daemon test release"),
+    chainId: CHAIN_ID.toString(),
+    settlementContract: CONTRACT,
+    settlementContractCodeHash: CONTRACT_CODE_HASH,
+    solver: signer.address,
+    direction,
+    approvers: {
+      lightningOperator: evidenceLightningOperator.address,
+      securityReviewer: evidenceSecurityReviewer.address,
+    },
+    maxEvidenceAgeSeconds: 120,
+    maxEvidenceLifetimeSeconds: 120,
+    maxClockSkewSeconds: 2,
+  };
+}
+
+async function verifiedEvidence(value, evidencePolicyValue, { verifyAt = NOW + 10 } = {}) {
+  const payload = buildSolverDaemonEvidenceApproval({ record: value, policy: evidencePolicyValue });
+  const approvals = await Promise.all([
+    ["lightningOperator", evidenceLightningOperator],
+    ["securityReviewer", evidenceSecurityReviewer],
+  ].map(async ([role, wallet]) => ({
+    role,
+    signer: wallet.address,
+    signature: await wallet.signTypedData(payload.domain, payload.types, payload.message),
+  })));
+  return verifySolverDaemonEvidence({ record: value, policy: evidencePolicyValue, approvals, now: verifyAt });
+}
+
+function baseEvidence(kind, settlementValue, overrides = {}) {
+  const policy = evidencePolicy(settlementValue.direction);
+  const dispatch = kind === "LIGHTNING_DISPATCH" || kind === "EVM_CLAIM_DISPATCH";
+  return {
+    policy,
+    record: {
+      schema: SOLVER_DAEMON_EVIDENCE_SCHEMA,
+      kind,
+      releaseRecordDigest: policy.releaseRecordDigest,
+      evidencePolicyDigest: solverDaemonEvidencePolicyDigest(policy),
+      chainId: policy.chainId,
+      settlementContract: policy.settlementContract,
+      settlementContractCodeHash: policy.settlementContractCodeHash,
+      solver: policy.solver,
+      direction: settlementValue.direction,
+      settlementId: settlementValue.settlementId,
+      reservationId: settlementValue.reservationId,
+      reservationTxHash: settlementValue.reservationTxHash,
+      reservationBlockNumber: settlementValue.reservationBlockNumber,
+      reservationBlockHash: settlementValue.reservationBlockHash,
+      actionId: dispatch ? hash(`${settlementValue.settlementId}:placeholder-action`) : SOLVER_DAEMON_ZERO_BYTES32,
+      intentDigest: settlementValue.intentDigest,
+      packetResponseDigest: dispatch ? hash(`${settlementValue.settlementId}:placeholder-packet`) : SOLVER_DAEMON_ZERO_BYTES32,
+      quoteExpiresAt: dispatch ? NOW + 1_500 : 0,
+      lightningActionDeadline: dispatch ? NOW + 1_000 : 0,
+      evmRefundAt: dispatch ? NOW + 2_000 : 0,
+      terminalState: kind === "TERMINAL_COMPLETED" ? "COMPLETED"
+        : kind === "TERMINAL_REFUNDED" ? "REFUNDED" : "NONE",
+      proofDigest: hash(`${settlementValue.settlementId}:${kind}:evidence`),
+      observedAt: NOW + 9,
+      expiresAt: NOW + 100,
+      ...overrides,
+    },
+  };
+}
+
+async function authorization(
+  action,
+  settlementValue,
+  packetResponseDigest,
+  packet,
+  overrides = {},
+  evidenceKind = "LIGHTNING_DISPATCH",
+) {
+  const evidence = baseEvidence(evidenceKind, settlementValue, {
     actionId: action.actionId,
     intentDigest: action.intentDigest,
     packetResponseDigest,
     quoteExpiresAt: packet.quoteExpiresAt,
     lightningActionDeadline: packet.lightningActionDeadline,
     evmRefundAt: packet.evmRefundAt,
-    expiresAt: NOW + 100,
-    evidenceDigest: hash(`${action.actionId}:authorization`),
     ...overrides,
-  };
+  });
+  return verifiedEvidence(evidence.record, evidence.policy);
+}
+
+async function terminalEvidence(settlementValue, terminalState, overrides = {}) {
+  const kind = terminalState === "COMPLETED" ? "TERMINAL_COMPLETED" : "TERMINAL_REFUNDED";
+  const evidence = baseEvidence(kind, settlementValue, overrides);
+  return verifiedEvidence(evidence.record, evidence.policy);
 }
 
 function randomSource() {
@@ -216,6 +302,7 @@ function runtimeArgs(fixture, extras = {}) {
   return {
     store: fixture.store,
     settlementId: fixture.value.settlementId,
+    expectedEvidencePolicyDigest: solverDaemonEvidencePolicyDigest(evidencePolicy(fixture.value.direction)),
     nowSeconds: () => NOW + 10,
     randomBytesImpl: randomSource(),
     ...extras,
@@ -306,7 +393,9 @@ test("runs Lightning-to-BIT through exact packet dispatch and terminal asset pro
     authorizeLightning: async ({ action, settlement: current, packet, packetResponseDigest }) => authorization(
       action, current, packetResponseDigest, packet,
     ),
-    verifyAssets: async () => ({ assetsReconciled: true, terminalState: "COMPLETED", proofDigest: hash("invoice:complete") }),
+    verifyAssets: async ({ settlement: current }) => terminalEvidence(current, "COMPLETED", {
+      proofDigest: hash("invoice:complete"),
+    }),
   };
 
   const planned = await executeSolverDaemonStep(runtimeArgs(fixture, { packetClient: packets, lightning: adapter.config, controls }));
@@ -338,9 +427,11 @@ test("recovers an unbound EVM action, broadcasts exact bytes, reconciles finalit
       action, current, packetResponseDigest, packet,
     ),
     authorizeEvmClaim: async ({ action, settlement: current, packet, packetResponseDigest }) => authorization(
-      action, current, packetResponseDigest, packet,
+      action, current, packetResponseDigest, packet, {}, "EVM_CLAIM_DISPATCH",
     ),
-    verifyAssets: async () => ({ assetsReconciled: true, terminalState: "COMPLETED", proofDigest: hash("payment:complete") }),
+    verifyAssets: async ({ settlement: current }) => terminalEvidence(current, "COMPLETED", {
+      proofDigest: hash("payment:complete"),
+    }),
   };
   const common = { packetClient: packets, lightning: adapter.config, evm: evm.config, controls };
 
@@ -406,6 +497,105 @@ test("halts before dispatch when an authorization changes the action binding", a
   assert.equal(halted.haltCode, "DAEMON_AUTH_MISMATCH");
   assert.equal(adapter.calls, 0);
   assert.equal(fixture.store.getSettlement(fixture.value.settlementId).haltCode, "DAEMON_AUTH_MISMATCH");
+});
+
+test("rejects nominal, copied, and exactly expired dispatch evidence before any adapter call", async (t) => {
+  for (const mode of ["nominal", "copied", "expired", "wrong-policy"]) {
+    const fixture = await openStore(`dispatch-provenance-${mode}`, "lightning-to-bit");
+    t.after(() => fixture.store.close());
+    const packets = packetClient(fixture.value);
+    const adapter = lightningAdapter();
+    await executeSolverDaemonStep(runtimeArgs(fixture, { packetClient: packets, lightning: adapter.config }));
+    const controls = {
+      authorizeLightning: async ({ action, settlement: current, packet, packetResponseDigest }) => {
+        const evidence = baseEvidence("LIGHTNING_DISPATCH", current, {
+          actionId: action.actionId,
+          intentDigest: action.intentDigest,
+          packetResponseDigest,
+          quoteExpiresAt: packet.quoteExpiresAt,
+          lightningActionDeadline: packet.lightningActionDeadline,
+          evmRefundAt: packet.evmRefundAt,
+          ...(mode === "expired" ? { observedAt: NOW + 8, expiresAt: NOW + 10 } : {}),
+        });
+        if (mode === "nominal") return evidence.record;
+        if (mode === "wrong-policy") {
+          const wrongPolicy = {
+            ...evidence.policy,
+            releaseRecordDigest: hash("wrong active daemon release"),
+          };
+          const wrongRecord = {
+            ...evidence.record,
+            releaseRecordDigest: wrongPolicy.releaseRecordDigest,
+            evidencePolicyDigest: solverDaemonEvidencePolicyDigest(wrongPolicy),
+          };
+          return verifiedEvidence(wrongRecord, wrongPolicy);
+        }
+        const verified = await verifiedEvidence(evidence.record, evidence.policy, {
+          verifyAt: mode === "expired" ? NOW + 9 : NOW + 10,
+        });
+        return mode === "copied" ? { ...verified } : verified;
+      },
+    };
+    const halted = await executeSolverDaemonStep(runtimeArgs(fixture, {
+      packetClient: packets,
+      lightning: adapter.config,
+      controls,
+    }));
+    assert.equal(halted.outcome, "HALTED");
+    assert.equal(halted.haltCode, "DAEMON_AUTH_MISMATCH");
+    assert.equal(adapter.calls, 0);
+  }
+});
+
+test("records only original dual-signed reservation evidence and rejects a nominal copy", async (t) => {
+  for (const valid of [true, false]) {
+    const store = await CoordinatorStore.open(":memory:", { allowMemory: true });
+    t.after(() => store.close());
+    const value = settlement(`reservation-evidence-${valid}`, "lightning-to-bit");
+    store.acceptSettlement(value);
+    const observed = reservation(value);
+    const bound = { ...value, ...observed };
+    const controls = {
+      observeReservation: async () => {
+        const evidence = baseEvidence("RESERVATION", bound, { proofDigest: hash(`reservation-proof-${valid}`) });
+        return valid ? verifiedEvidence(evidence.record, evidence.policy) : evidence.record;
+      },
+    };
+    const result = await executeSolverDaemonStep({
+      store,
+      settlementId: value.settlementId,
+      controls,
+      expectedEvidencePolicyDigest: solverDaemonEvidencePolicyDigest(evidencePolicy(value.direction)),
+      nowSeconds: () => NOW + 10,
+    });
+    if (valid) {
+      assert.equal(result.outcome, "RESERVATION_RECORDED");
+      assert.equal(store.getSettlement(value.settlementId).reservationId, observed.reservationId);
+    } else {
+      assert.equal(result.outcome, "HALTED");
+      assert.equal(result.haltCode, "DAEMON_RESERVATION_EVIDENCE");
+      assert.equal(store.getSettlement(value.settlementId).reservationId, null);
+    }
+  }
+});
+
+test("rejects nominal both-assets completion evidence and does not create completed history", async (t) => {
+  const fixture = await openStore("nominal-terminal-proof", "lightning-to-bit");
+  t.after(() => fixture.store.close());
+  const packets = packetClient(fixture.value);
+  const adapter = lightningAdapter();
+  const controls = {
+    authorizeLightning: async ({ action, settlement: current, packet, packetResponseDigest }) => authorization(
+      action, current, packetResponseDigest, packet,
+    ),
+    verifyAssets: async ({ settlement: current }) => baseEvidence("TERMINAL_COMPLETED", current).record,
+  };
+  await executeSolverDaemonStep(runtimeArgs(fixture, { packetClient: packets, lightning: adapter.config, controls }));
+  await executeSolverDaemonStep(runtimeArgs(fixture, { packetClient: packets, lightning: adapter.config, controls }));
+  const halted = await executeSolverDaemonStep(runtimeArgs(fixture, { packetClient: packets, lightning: adapter.config, controls }));
+  assert.equal(halted.outcome, "HALTED");
+  assert.equal(halted.haltCode, "DAEMON_ASSET_MISMATCH");
+  assert.equal(fixture.store.getSettlement(fixture.value.settlementId).terminalState, null);
 });
 
 test("rejects an unverified packet result before planning any action", async (t) => {

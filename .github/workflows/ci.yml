@@ -99,6 +99,7 @@ jobs:
       - run: node --check lib/solver-capacity-readers.mjs
       - run: node --check lib/lightning-capacity-protocol.mjs
       - run: node --check lib/solver-daemon-planner.mjs
+      - run: node --check lib/solver-daemon-evidence.mjs
       - run: node --check lib/solver-daemon-runtime.mjs
       - run: node --check lib/solver-private-packet.mjs
       - run: node --check lib/safety-monitor.mjs

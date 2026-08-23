@@ -216,6 +216,7 @@ const configurationFiles = [
   "lib/lightning-close-collector.mjs",
   "lib/lightning-close-collector-runtime.mjs",
   "lib/solver-daemon-planner.mjs",
+  "lib/solver-daemon-evidence.mjs",
   "lib/solver-daemon-runtime.mjs",
   "lib/solver-private-packet.mjs",
   "lib/safety-monitor.mjs",

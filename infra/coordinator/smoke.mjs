@@ -3,8 +3,16 @@ import { readFile } from "node:fs/promises";
 import { readConfirmedLightningPaymentProof } from "../../lib/coordinator-action-runner.mjs";
 import { CoordinatorStore, coordinatorCommitmentDigest } from "../../lib/coordinator-store.mjs";
 import { invoiceDigest } from "../../lib/lnd-rest-client.mjs";
+import {
+  SOLVER_DAEMON_EVIDENCE_POLICY_SCHEMA,
+  SOLVER_DAEMON_EVIDENCE_SCHEMA,
+  buildSolverDaemonEvidenceApproval,
+  solverDaemonEvidencePolicyDigest,
+  verifySolverDaemonEvidence,
+} from "../../lib/solver-daemon-evidence.mjs";
 import { createAuthenticatedPrivatePacketClient, executeSolverDaemonStep } from "../../lib/solver-daemon-runtime.mjs";
 import { buildSignedPrivatePacketResponse } from "../../lib/solver-private-packet.mjs";
+import { Wallet, id } from "ethers";
 
 const BYTES32 = /^0x[0-9a-f]{64}$/;
 
@@ -92,6 +100,24 @@ store.recordReservation(observedReservation);
 
 const packetRequesterKeys = generateKeyPairSync("ed25519");
 const packetProviderKeys = generateKeyPairSync("ed25519");
+const evidenceLightningOperator = Wallet.createRandom();
+const evidenceSecurityReviewer = Wallet.createRandom();
+const evidencePolicy = {
+  schema: SOLVER_DAEMON_EVIDENCE_POLICY_SCHEMA,
+  releaseRecordDigest: randomHash(),
+  chainId: "31337",
+  settlementContract: "0x1111111111111111111111111111111111111111",
+  settlementContractCodeHash: randomHash(),
+  solver: Wallet.createRandom().address,
+  direction: settlement.direction,
+  approvers: {
+    lightningOperator: evidenceLightningOperator.address,
+    securityReviewer: evidenceSecurityReviewer.address,
+  },
+  maxEvidenceAgeSeconds: 30,
+  maxEvidenceLifetimeSeconds: 30,
+  maxClockSkewSeconds: 2,
+};
 const packetClient = createAuthenticatedPrivatePacketClient({
   providerOrigin: "https://private-packet-provider.internal",
   requesterPrivateKey: packetRequesterKeys.privateKey,
@@ -147,25 +173,50 @@ const packetClient = createAuthenticatedPrivatePacketClient({
 });
 
 const controls = {
-  authorizeLightning: async ({ action, packet, packetResponseDigest }) => ({
-    authorized: true,
-    settlementId: settlement.settlementId,
-    reservationId: observedReservation.reservationId,
-    reservationBlockHash: observedReservation.reservationBlockHash,
-    actionId: action.actionId,
-    intentDigest: settlement.intentDigest,
-    packetResponseDigest,
-    quoteExpiresAt: packet.quoteExpiresAt,
-    lightningActionDeadline: packet.lightningActionDeadline,
-    evmRefundAt: packet.evmRefundAt,
-    expiresAt: Math.floor(Date.now() / 1_000) + 10,
-    evidenceDigest: coordinatorCommitmentDigest({
-      settlementId: settlement.settlementId,
-      reservationBlockHash: observedReservation.reservationBlockHash,
+  authorizeLightning: async ({ action, settlement: current, packet, packetResponseDigest }) => {
+    const observedAt = Math.floor(Date.now() / 1_000);
+    const record = {
+      schema: SOLVER_DAEMON_EVIDENCE_SCHEMA,
+      kind: "LIGHTNING_DISPATCH",
+      releaseRecordDigest: evidencePolicy.releaseRecordDigest,
+      evidencePolicyDigest: solverDaemonEvidencePolicyDigest(evidencePolicy),
+      chainId: evidencePolicy.chainId,
+      settlementContract: evidencePolicy.settlementContract,
+      settlementContractCodeHash: evidencePolicy.settlementContractCodeHash,
+      solver: evidencePolicy.solver,
+      direction: current.direction,
+      settlementId: current.settlementId,
+      reservationId: current.reservationId,
+      reservationTxHash: current.reservationTxHash,
+      reservationBlockNumber: current.reservationBlockNumber,
+      reservationBlockHash: current.reservationBlockHash,
       actionId: action.actionId,
+      intentDigest: action.intentDigest,
       packetResponseDigest,
-    }),
-  }),
+      quoteExpiresAt: packet.quoteExpiresAt,
+      lightningActionDeadline: packet.lightningActionDeadline,
+      evmRefundAt: packet.evmRefundAt,
+      terminalState: "NONE",
+      proofDigest: id(JSON.stringify({
+        settlementId: current.settlementId,
+        reservationBlockHash: current.reservationBlockHash,
+        actionId: action.actionId,
+        packetResponseDigest,
+      })).toLowerCase(),
+      observedAt,
+      expiresAt: observedAt + 10,
+    };
+    const payload = buildSolverDaemonEvidenceApproval({ record, policy: evidencePolicy });
+    const approvals = await Promise.all([
+      ["lightningOperator", evidenceLightningOperator],
+      ["securityReviewer", evidenceSecurityReviewer],
+    ].map(async ([role, wallet]) => ({
+      role,
+      signer: wallet.address,
+      signature: await wallet.signTypedData(payload.domain, payload.types, payload.message),
+    })));
+    return verifySolverDaemonEvidence({ record, policy: evidencePolicy, approvals, now: observedAt });
+  },
 };
 
 let responseWasLost = false;
@@ -189,6 +240,7 @@ const lightning = {
 const planned = await executeSolverDaemonStep({
   store,
   settlementId: settlement.settlementId,
+  expectedEvidencePolicyDigest: solverDaemonEvidencePolicyDigest(evidencePolicy),
   packetClient,
   controls,
   lightning,
@@ -198,6 +250,7 @@ const action = store.getAction(planned.actionId);
 const ambiguous = await executeSolverDaemonStep({
   store,
   settlementId: settlement.settlementId,
+  expectedEvidencePolicyDigest: solverDaemonEvidencePolicyDigest(evidencePolicy),
   packetClient,
   controls,
   lightning,
@@ -217,6 +270,7 @@ for (let attempt = 0; attempt < 40; attempt += 1) {
   reconciled = await executeSolverDaemonStep({
     store,
     settlementId: settlement.settlementId,
+    expectedEvidencePolicyDigest: solverDaemonEvidencePolicyDigest(evidencePolicy),
     packetClient,
     controls,
     lightning,
@@ -263,6 +317,7 @@ const evidence = {
   reconciliationState: "CONFIRMED",
   dispatchCount: 1,
   daemonRuntime: true,
+  dualSignedDaemonEvidence: true,
   authenticatedPrivatePacket: true,
   rawInvoicePersisted: false,
   rawPreimagePersisted: false,
@@ -272,6 +327,7 @@ const evidence = {
     amountSats: input.amountSats,
     dispatchCount: 1,
     daemonRuntime: true,
+    dualSignedDaemonEvidence: true,
     authenticatedPrivatePacket: true,
     rawInvoicePersisted: false,
     rawPreimagePersisted: false,
