@@ -35,7 +35,11 @@ import {
   solverDaemonEvidencePolicyDigest,
 } from "../lib/solver-daemon-evidence.mjs";
 import { verifiedSolverCapacityRecord, verifiedSolverQuoteBinding } from "../lib/solver-capability.mjs";
-import { executeActiveSolverDaemonStep } from "../lib/active-solver-daemon-runtime.mjs";
+import {
+  bindActiveSolverSettlementExecutionPolicy,
+  executeActiveSolverDaemonStep,
+  executeRecoverySolverDaemonStep,
+} from "../lib/active-solver-daemon-runtime.mjs";
 import { CoordinatorStore } from "../lib/coordinator-store.mjs";
 import {
   acquireCoordinatorServiceLease,
@@ -60,17 +64,24 @@ import {
   inspectPreparedPublicTestnetReleaseCandidate,
 } from "../lib/public-testnet-release-approval.mjs";
 import {
+  activatePublicTestnetRecovery,
   activatePublicTestnetRelease,
   authorizeSolverFunding,
   buildPublicTestnetRuntimeReconciliationApproval,
   createActiveSolverDaemonContext,
+  createRecoverySolverDaemonContext,
+  deactivatePublicTestnetRecovery,
   deactivatePublicTestnetRelease,
+  isPublicTestnetRecoveryActive,
   isPublicTestnetReleaseActive,
   publicTestnetReleaseOpenRiskDigest,
   verifiedActiveSolverDaemonContext,
+  verifiedRecoverySolverDaemonContext,
 } from "../lib/capabilities.mjs";
 import {
+  activatePublicTestnetRecoveryFromManifest,
   activatePublicTestnetReleaseFromManifest,
+  buildPublicTestnetRecoveryActivationSummary,
   buildPublicTestnetReleaseActivationPreflightSummary,
 } from "../lib/public-testnet-release-activation.mjs";
 import { createCoordinatorReleaseVerificationSupervisor } from "../lib/coordinator-release-supervisor.mjs";
@@ -607,6 +618,12 @@ test("activates funding only after same-process evidence, approvals, reconciliat
     reconciliationApprovals: reconciliation.approvals,
     now,
   });
+  const recoveryActivation = await activatePublicTestnetRecovery({
+    candidate,
+    approvalBundle,
+    providerSet,
+    now,
+  });
   const solverCapability = await createVerifiedSolverCapabilityFixture({
     now,
     chainId: candidate.record.chainId,
@@ -626,6 +643,15 @@ test("activates funding only after same-process evidence, approvals, reconciliat
     endpointOrigin: "https://inverse-solver.example",
     solverPrivateKey: `0x${"93".repeat(32)}`,
   });
+  const rotatedRecoverySolverCapability = await createVerifiedSolverCapabilityFixture({
+    now,
+    chainId: candidate.record.chainId,
+    lightningToBitContract: deployment.verification.manifest.vault.address,
+    lightningToBitContractCodeHash: deployment.verification.manifest.vault.codeHash,
+    bitToLightningContract: deployment.verification.manifest.userEscrow.address,
+    bitToLightningContractCodeHash: deployment.verification.manifest.userEscrow.codeHash,
+    capacityEpoch: "8",
+  });
   assert.equal(activation.status, "same-process-release-and-runtime-verification-active");
   assert.equal(activation.receipt.authorizations.funding, false);
   assert.equal(activation.runtimeBlockNumber, 1_200);
@@ -643,6 +669,7 @@ test("activates funding only after same-process evidence, approvals, reconciliat
     now,
   }), { allowed: true, reasons: [] });
   const solverBinding = verifiedSolverQuoteBinding(solverCapability.verification);
+  const rotatedRecoveryBinding = verifiedSolverQuoteBinding(rotatedRecoverySolverCapability.verification);
   const evidencePolicy = {
     schema: SOLVER_DAEMON_EVIDENCE_POLICY_SCHEMA,
     releaseRecordDigest: candidate.recordDigest,
@@ -666,6 +693,12 @@ test("activates funding only after same-process evidence, approvals, reconciliat
     evidencePolicy,
     now,
   });
+  const recoveryContext = createRecoverySolverDaemonContext({
+    solverCapabilityVerification: rotatedRecoverySolverCapability.verification,
+    deployment: recoveryActivation.deployment,
+    evidencePolicy,
+    now,
+  });
   assert.deepEqual(verifiedActiveSolverDaemonContext(executionContext, { now }), {
     capacityEpoch: solverBinding.capacityEpoch,
     direction: solverBinding.direction,
@@ -675,6 +708,26 @@ test("activates funding only after same-process evidence, approvals, reconciliat
     solverId: solverBinding.solverId,
   });
   assert.equal(JSON.stringify(executionContext).match(/signature|private|endpoint|invoice|preimage/i), null);
+  assert.deepEqual(verifiedRecoverySolverDaemonContext(recoveryContext, { now }), {
+    capacityEpoch: rotatedRecoveryBinding.capacityEpoch,
+    direction: rotatedRecoveryBinding.direction,
+    evidencePolicyDigest: solverDaemonEvidencePolicyDigest(evidencePolicy),
+    evmClaimWorkAllowed: true,
+    releaseRecordDigest: candidate.recordDigest,
+    solverCapabilityDigest: rotatedRecoveryBinding.capabilityDigest,
+    solverId: rotatedRecoveryBinding.solverId,
+  });
+  assert.equal(JSON.stringify(recoveryContext).match(/signature|private|endpoint|invoice|preimage/i), null);
+  assert.equal(recoveryContext.authorizations.funding, false);
+  assert.equal(recoveryContext.authorizations.lightningDispatch, false);
+  assert.throws(
+    () => verifiedRecoverySolverDaemonContext(structuredClone(recoveryContext), { now }),
+    /same-process recovery activation/,
+  );
+  assert.throws(
+    () => verifiedRecoverySolverDaemonContext(executionContext, { now }),
+    /same-process recovery activation/,
+  );
   assert.throws(
     () => verifiedActiveSolverDaemonContext(structuredClone(executionContext), { now }),
     /same-process release activation/,
@@ -811,6 +864,7 @@ test("activates funding only after same-process evidence, approvals, reconciliat
     solverId: solverBinding.solverId,
     offer: {
       direction: waitingSettlement.direction,
+      capabilityDigest: solverBinding.capabilityDigest,
       bitAmountWei: String(10n ** 18n),
       lightningAmountSats: waitingSettlement.amountSats,
       maxRoutingFeeSats: "0",
@@ -850,6 +904,47 @@ test("activates funding only after same-process evidence, approvals, reconciliat
     Date.now = () => (now + 3) * 1_000;
     await assert.rejects(executeActiveSolverDaemonStep({
       executionContext,
+      serviceLease,
+      store: waitingStore,
+      settlementId: wrapperSettlementId,
+    }), /not bound to the authorized solver offer and capacity epoch/);
+    await assert.rejects(bindActiveSolverSettlementExecutionPolicy({
+      executionContext: structuredClone(executionContext),
+      serviceLease,
+      store: waitingStore,
+      settlementId: wrapperSettlementId,
+    }), /same-process release activation/);
+    const executionPolicyBinding = await bindActiveSolverSettlementExecutionPolicy({
+      executionContext,
+      serviceLease,
+      store: waitingStore,
+      settlementId: wrapperSettlementId,
+    });
+    assert.equal(executionPolicyBinding.releaseRecordDigest, candidate.recordDigest);
+    assert.equal(executionPolicyBinding.evidencePolicyDigest, solverDaemonEvidencePolicyDigest(evidencePolicy));
+    assert.equal(executionPolicyBinding.solverCapabilityDigest, solverBinding.capabilityDigest);
+    assert.equal(executionPolicyBinding.executionPolicyBoundAt, now + 3);
+    assert.equal(
+      (await bindActiveSolverSettlementExecutionPolicy({
+        executionContext,
+        serviceLease,
+        store: waitingStore,
+        settlementId: wrapperSettlementId,
+      })).executionPolicyBindingDigest,
+      executionPolicyBinding.executionPolicyBindingDigest,
+    );
+    const originalGetSettlement = waitingStore.getSettlement;
+    waitingStore.getSettlement = () => executionPolicyBinding;
+    await assert.rejects(executeActiveSolverDaemonStep({
+      executionContext,
+      serviceLease,
+      store: waitingStore,
+      settlementId: wrapperSettlementId,
+    }), /unmodified original coordinator store methods/);
+    delete waitingStore.getSettlement;
+    assert.equal(waitingStore.getSettlement, originalGetSettlement);
+    await assert.rejects(executeActiveSolverDaemonStep({
+      executionContext,
       store: waitingStore,
       settlementId: wrapperSettlementId,
     }), /original same-process service lease/);
@@ -861,6 +956,16 @@ test("activates funding only after same-process evidence, approvals, reconciliat
     }), /original same-process service lease/);
     assert.deepEqual(await executeActiveSolverDaemonStep({
       executionContext,
+      serviceLease,
+      store: waitingStore,
+      settlementId: wrapperSettlementId,
+    }), {
+      settlementId: wrapperSettlementId,
+      stepKind: "WAIT_FOR_RESERVATION",
+      outcome: "WAITING",
+    });
+    assert.deepEqual(await executeRecoverySolverDaemonStep({
+      executionContext: recoveryContext,
       serviceLease,
       store: waitingStore,
       settlementId: wrapperSettlementId,
@@ -890,6 +995,17 @@ test("activates funding only after same-process evidence, approvals, reconciliat
       amountSats: waitingSettlement.amountSats,
       capacityEpoch: waitingSettlement.capacityEpoch,
       plannedAt: now + 3,
+    });
+    assert.deepEqual(await executeRecoverySolverDaemonStep({
+      executionContext: recoveryContext,
+      serviceLease,
+      store: waitingStore,
+      settlementId: wrapperSettlementId,
+    }), {
+      settlementId: wrapperSettlementId,
+      stepKind: "AUTHORIZE_AND_DISPATCH_LIGHTNING",
+      outcome: "GATE_CLOSED",
+      reason: "recovery-only daemon context cannot dispatch a Lightning action or open new exposure",
     });
     Date.now = () => solverBinding.expiresAt * 1_000;
     const closed = await executeActiveSolverDaemonStep({
@@ -996,6 +1112,131 @@ test("activates funding only after same-process evidence, approvals, reconciliat
     verifiedActiveSolverDaemonContext(executionContext, { now, requireFundingAuthorization: false }).solverId,
     solverBinding.solverId,
   );
+  assert.equal(isPublicTestnetRecoveryActive(recoveryActivation), true);
+  assert.equal(deactivatePublicTestnetRecovery(recoveryActivation), true);
+  assert.equal(isPublicTestnetRecoveryActive(recoveryActivation), false);
+  assert.equal(deactivatePublicTestnetRecovery(recoveryActivation), false);
+  assert.throws(
+    () => verifiedRecoverySolverDaemonContext(recoveryContext, { now, requireActive: true }),
+    /inactive or stale/,
+  );
+});
+
+test("recovery activation survives release expiry and closed incident state without authorizing new exposure", async () => {
+  const { campaign, candidate, deployment } = await fixture();
+  const now = candidate.record.validUntil + 120;
+  const approvalBundle = await releaseApprovalBundle(candidate);
+  const incidentOverrides = {
+    gateOpen: false,
+    emergencyHalted: true,
+    bitPaused: true,
+    vaultAvailableWei: "0",
+    vaultLockedWei: candidate.record.limits.minBitReserveWei,
+    vaultAccountedBalanceWei: candidate.record.limits.minBitReserveWei,
+    vaultBitBalanceWei: candidate.record.limits.minBitReserveWei,
+  };
+  const providerSet = providerSetFor({ candidate, campaign, deployment, now, overrides: incidentOverrides });
+  const activation = await activatePublicTestnetRecovery({
+    candidate,
+    approvalBundle,
+    providerSet,
+    now,
+  });
+  assert.equal(activation.status, "same-process-recovery-only-runtime-verification-active");
+  assert.equal(activation.scope.includes("recovery-only"), true);
+  assert.equal(activation.authorizations.funding, false);
+  assert.equal(activation.authorizations.newExposure, false);
+  assert.equal(activation.authorizations.lightningDispatch, false);
+  assert.equal(activation.deployment.gateOpen, false);
+  assert.equal(activation.deployment.emergencyHalted, true);
+  assert.equal(activation.deployment.bitPaused, true);
+  assert.equal(activation.deployment.balancesReconciled, true);
+  assert.equal(isPublicTestnetRecoveryActive(activation), true);
+  const solverCapability = await createVerifiedSolverCapabilityFixture({
+    now,
+    chainId: candidate.record.chainId,
+    lightningToBitContract: deployment.verification.manifest.vault.address,
+    lightningToBitContractCodeHash: deployment.verification.manifest.vault.codeHash,
+    bitToLightningContract: deployment.verification.manifest.userEscrow.address,
+    bitToLightningContractCodeHash: deployment.verification.manifest.userEscrow.codeHash,
+  });
+  const solverBinding = verifiedSolverQuoteBinding(solverCapability.verification);
+  const recoveryContext = createRecoverySolverDaemonContext({
+    solverCapabilityVerification: solverCapability.verification,
+    deployment: activation.deployment,
+    evidencePolicy: {
+      schema: SOLVER_DAEMON_EVIDENCE_POLICY_SCHEMA,
+      releaseRecordDigest: candidate.recordDigest,
+      chainId: candidate.record.chainId,
+      settlementContract: solverBinding.settlementContract,
+      settlementContractCodeHash: solverBinding.settlementContractCodeHash,
+      solver: solverBinding.solverId,
+      direction: solverBinding.direction,
+      approvers: {
+        lightningOperator: candidate.policy.approvers.lightningOperator.address,
+        securityReviewer: candidate.policy.approvers.securityReviewer.address,
+      },
+      maxEvidenceAgeSeconds: 15,
+      maxEvidenceLifetimeSeconds: 15,
+      maxClockSkewSeconds: 2,
+    },
+    now,
+  });
+  assert.equal(
+    verifiedRecoverySolverDaemonContext(recoveryContext, { now }).evmClaimWorkAllowed,
+    false,
+  );
+
+  await assert.rejects(activatePublicTestnetRelease({
+    candidate,
+    approvalBundle,
+    providerSet,
+    reconciliation: (await runtimeReconciliation(candidate, candidate.record.validUntil - 20)).reconciliation,
+    reconciliationApprovals: (await runtimeReconciliation(candidate, candidate.record.validUntil - 20)).approvals,
+    now,
+  }), /release approvals are invalid:.*expired/);
+
+  await assert.rejects(activatePublicTestnetRecovery({
+    candidate,
+    approvalBundle,
+    providerSet: providerSetFor({
+      candidate,
+      campaign,
+      deployment,
+      now,
+      overrides: { ...incidentOverrides, providerDisagreement: true },
+    }),
+    now,
+  }), /providers disagree/);
+  await assert.rejects(activatePublicTestnetRecovery({
+    candidate,
+    approvalBundle,
+    providerSet: providerSetFor({
+      candidate,
+      campaign,
+      deployment,
+      now,
+      overrides: { ...incidentOverrides, implementationAddress: "0x1111111111111111111111111111111111111111" },
+    }),
+    now,
+  }), /implementation changed/);
+  await assert.rejects(activatePublicTestnetRecovery({
+    candidate,
+    approvalBundle,
+    providerSet: providerSetFor({
+      candidate,
+      campaign,
+      deployment,
+      now,
+      overrides: { ...incidentOverrides, vaultBitBalanceWei: "1" },
+    }),
+    now,
+  }), /balances do not reconcile/);
+  assert.throws(
+    () => deactivatePublicTestnetRecovery(structuredClone(activation)),
+    /not backed by this process/,
+  );
+  assert.equal(deactivatePublicTestnetRecovery(activation), true);
 });
 
 test("activation manifest rebuilds every raw input and retains authority only in the verifying process", async (t) => {
@@ -1079,6 +1320,45 @@ test("activation manifest rebuilds every raw input and retains authority only in
     now,
   }).allowed, false);
 
+  const recoveryManifest = {
+    schema: "treeswap.public-testnet-recovery-activation-inputs.v1",
+    candidateEvidence,
+    approvalBundle: extraPaths.approvalBundle,
+    providerConfiguration: extraPaths.providerConfiguration,
+  };
+  const recoveryManifestPath = join(directory, "recovery-activation-inputs.json");
+  await writeFile(recoveryManifestPath, `${JSON.stringify(recoveryManifest)}\n`);
+  const recoveryResult = await activatePublicTestnetRecoveryFromManifest({
+    manifestPath: recoveryManifestPath,
+    environment: {
+      TREESWAP_RELEASE_RPC_ONE_URL: "https://one.example/rpc/private-token",
+      TREESWAP_RELEASE_RPC_TWO_URL: "https://two.example/rpc/private-token",
+    },
+    fetchImpl: releaseRpcFetch({
+      candidate,
+      deployment,
+      now,
+      overrides: { gateOpen: false, emergencyHalted: true, bitPaused: true },
+    }),
+    now,
+  });
+  const recoverySummary = buildPublicTestnetRecoveryActivationSummary(recoveryResult);
+  assert.equal(recoverySummary.status, "same-process-recovery-only-activation-passed");
+  assert.equal(recoverySummary.recordDigest, candidate.recordDigest);
+  assert.deepEqual(recoverySummary.runtime, {
+    gateOpen: false,
+    emergencyHalted: true,
+    bitPaused: true,
+    balancesReconciled: true,
+  });
+  assert.deepEqual(recoverySummary.authorizations, {
+    funding: false,
+    lightningDispatch: false,
+    newExposure: false,
+  });
+  assert.equal(/private-token|capabilities|signature/i.test(JSON.stringify(recoverySummary)), false);
+  assert.equal(deactivatePublicTestnetRecovery(recoveryResult.activation), true);
+
   const supervisor = createCoordinatorReleaseVerificationSupervisor({
     manifestPath,
     environment: {
@@ -1131,6 +1411,18 @@ test("activation manifest rebuilds every raw input and retains authority only in
     fetchImpl: releaseRpcFetch({ candidate, deployment, now }),
     now,
   }), /must use distinct files/);
+
+  const recoveryExtraFieldPath = join(directory, "recovery-activation-inputs-extra.json");
+  await writeFile(recoveryExtraFieldPath, `${JSON.stringify({
+    ...recoveryManifest,
+    reconciliation: extraPaths.reconciliation,
+  })}\n`);
+  await assert.rejects(activatePublicTestnetRecoveryFromManifest({
+    manifestPath: recoveryExtraFieldPath,
+    environment: {},
+    fetchImpl: releaseRpcFetch({ candidate, deployment, now }),
+    now,
+  }), /fields are not exact/);
 });
 
 test("activation manifest supports only the exact tiny bootstrap evidence shape before a campaign", async (t) => {
