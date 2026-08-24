@@ -310,6 +310,11 @@ test("creates a verified private backup and restores it only to a fresh path", a
   }
 
   assert.equal((await CoordinatorStore.verifyBackup(backupPath)).status, "ok");
+  const backupLiabilities = await CoordinatorStore.inspectVerifiedBackupReleaseLiabilities(backupPath);
+  assert.equal(backupLiabilities.totalNonterminalSettlementCount, 1);
+  assert.equal(backupLiabilities.unboundNonterminalSettlementCount, 1);
+  assert.equal(backupLiabilities.releases.length, 0);
+  assert.match(backupLiabilities.snapshotDigest, /^0x[0-9a-f]{64}$/);
   const restore = await CoordinatorStore.restoreVerifiedBackup(backupPath, restoredPath);
   assert.deepEqual(restore, {
     check: "integrity_check",

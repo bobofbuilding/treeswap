@@ -5,6 +5,7 @@ COPY infra/coordinator/runtime/package.json infra/coordinator/runtime/package-lo
 RUN npm ci --omit=dev --ignore-scripts \
   && npm cache clean --force
 COPY lib ./lib
+COPY scripts/verify-retained-release-custody.mjs ./scripts/verify-retained-release-custody.mjs
 COPY infra/coordinator ./infra/coordinator
 COPY infra/lightning-adapter/capacity-smoke.mjs ./infra/lightning-adapter/capacity-smoke.mjs
 RUN mkdir -p /data /run/treeswap/credentials /run/treeswap/state \

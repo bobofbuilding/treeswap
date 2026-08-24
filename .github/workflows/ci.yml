@@ -95,6 +95,7 @@ jobs:
       - run: node --check lib/public-testnet-release-candidate.mjs
       - run: node --check lib/public-testnet-release-files.mjs
       - run: node --check lib/public-testnet-release-activation.mjs
+      - run: node --check lib/release-retention-custody.mjs
       - run: node --check lib/solver-capability.mjs
       - run: node --check lib/solver-endpoint-transport.mjs
       - run: node --check lib/rfq-delivery.mjs
@@ -173,6 +174,7 @@ jobs:
       - run: node --check scripts/prepare-public-testnet-release-approval.mjs
       - run: node --check scripts/verify-public-testnet-release-approvals.mjs
       - run: node --check scripts/verify-public-testnet-release-activation.mjs
+      - run: node --check scripts/verify-retained-release-custody.mjs
       - run: node --check scripts/prepare-deployment-promotion-approval.mjs
       - run: node --check scripts/prepare-deployment-promotion-postflight-bundle.mjs
       - run: node --check scripts/verify-deployment-promotion.mjs

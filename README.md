@@ -41,6 +41,7 @@ The prototype assumes a business par value of **1 BIT = 100 sats**. This value i
 - Evidence-derived tiny-bootstrap and campaign-qualified release preparation in [`docs/PUBLIC_TESTNET_RELEASE_CANDIDATES.md`](docs/PUBLIC_TESTNET_RELEASE_CANDIDATES.md)
 - Guarded five-role payload and live contract-wallet approval verification in [`docs/PUBLIC_TESTNET_RELEASE_APPROVALS.md`](docs/PUBLIC_TESTNET_RELEASE_APPROVALS.md)
 - Same-process approval, reconciliation, live-provider, and runtime activation in [`docs/PUBLIC_TESTNET_RELEASE_ACTIVATION.md`](docs/PUBLIC_TESTNET_RELEASE_ACTIVATION.md)
+- Private old-release custody, restored-host readiness, witnessed old/new recovery drills, and fail-closed rotation decisions in [`docs/RETAINED_RELEASE_CUSTODY.md`](docs/RETAINED_RELEASE_CUSTODY.md)
 - Immutable public-testnet operator campaign snapshots via `npm run manage:testnet-campaign`
 - Authenticated solver request/response boundary in [`docs/SOLVER_ENDPOINT.md`](docs/SOLVER_ENDPOINT.md)
 - Optional Lightning account linking in [`docs/LIGHTNING_ACCOUNTS.md`](docs/LIGHTNING_ACCOUNTS.md)

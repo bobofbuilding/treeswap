@@ -25,7 +25,7 @@ Retirement never migrates a live swap. Users and solvers exit through the exact 
 5. Wait the governance review period. Controller, guardian, Lightning operator, security reviewer, and incident commander sign the same canonical release record. The controller and guardian signatures must pass finalized ERC-1271 quorum verification against their reviewed runtime hashes; the other three signatures must recover the exact policy-pinned EIP-712 identities.
 6. Run a capped canary with operator-owned inventory. Do not route ordinary users automatically to the candidate.
 7. Open the candidate for a short expiring window. Keep the prior release available until the candidate is proven.
-8. Retire the prior release by stopping new exposure only. Monitor until all liabilities are zero.
+8. Retire the prior release by stopping new exposure only. Seal its [retained-release custody package](./RETAINED_RELEASE_CUSTODY.md) before any provider, owner, solver-key, schema, or runtime rotation, and monitor until all liabilities are zero.
 
 ## Governance roles
 
@@ -39,7 +39,7 @@ Use distinct hardware-backed owners and thresholds. Any optional onchain release
 ## Component upgrades
 
 - **Escrows, gate, registry:** deploy a complete new immutable version.
-- **Coordinator and relays:** use backwards-compatible message versions; roll out canaries and retain the last known-good binary for rollback. The first RFQ binds one admission-policy digest to the durable coordinator namespace. A cap or threshold change uses a new release namespace and database; the prior coordinator closes new RFQs and drains all existing liabilities instead of mutating policy underneath them.
+- **Coordinator and relays:** use backwards-compatible message versions; roll out canaries and retain the exact compatible runtime plus raw release recovery inputs until its last liability is terminal. The first RFQ binds one admission-policy digest to the durable coordinator namespace. A cap or threshold change uses a new release namespace and database; the prior coordinator closes new RFQs and drains all existing liabilities instead of mutating policy underneath them. A nonzero-liability rotation additionally requires separately witnessed old/new recovery actions against the unchanged live liability snapshot under a closed gate.
 - **Lightning adapter:** pin binary/config hashes and LND compatibility; rotate credentials during a staged maintenance window.
 - **Web client:** ship signed release manifests and reject unknown versions or code hashes.
 - **External BIT proxy:** TreeSwap cannot govern it. An EIP-1967 implementation change or pause automatically closes new exposure and requires a new reviewed BIT observation before reopening.
