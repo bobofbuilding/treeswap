@@ -2,11 +2,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { id } from "ethers";
 import {
+  bindSafetyMonitorActions,
   prepareSafetyObservation,
+  SAFETY_MONITOR_ACTION_PLAN_SCHEMA,
   SAFETY_MONITOR_POLICY_SCHEMA,
   SAFETY_OBSERVATION_SCHEMA,
   safetyMonitorPolicyDigest,
   verifySafetyObservationAttestation,
+  verifiedSafetyMonitorActionBinding,
   verifiedSafetyObservationBinding,
 } from "../lib/safety-observation-attestation.mjs";
 import { createSignedSafetyObservationFixture } from "./fixtures/signed-safety-observations.mjs";
@@ -102,9 +105,9 @@ test("rejects mutation, copied provenance, wrong signer, expiry, and policy subs
 
 test("requires two canonically ordered, independently committed collectors for every safety domain", () => {
   assert.equal(safety.policy.schema, SAFETY_MONITOR_POLICY_SCHEMA);
-  assert.equal(SAFETY_OBSERVATION_SCHEMA, "treeswap.safety-observation-attestation.v2");
+  assert.equal(SAFETY_OBSERVATION_SCHEMA, "treeswap.safety-observation-attestation.v3");
   assert.throws(
-    () => safetyMonitorPolicyDigest({ ...safety.policy, schema: "treeswap.safety-monitor-policy.v1" }),
+    () => safetyMonitorPolicyDigest({ ...safety.policy, schema: "treeswap.safety-monitor-policy.v2" }),
     /schema is invalid/,
   );
   assert.throws(
@@ -155,6 +158,31 @@ test("requires two canonically ordered, independently committed collectors for e
     /exactly two collectors per safety domain/,
   );
   assert.throws(
+    () => safetyMonitorPolicyDigest({
+      ...safety.policy,
+      guardianBroadcasters: [...safety.policy.guardianBroadcasters].reverse(),
+    }),
+    /canonically ordered/,
+  );
+  assert.throws(
+    () => safetyMonitorPolicyDigest({
+      ...safety.policy,
+      guardianBroadcasters: safety.policy.guardianBroadcasters.map((route, index) => index === 1
+        ? { ...route, operatorId: safety.policy.guardianBroadcasters[0].operatorId }
+        : route),
+    }),
+    /distinct operator commitments/,
+  );
+  assert.throws(
+    () => safetyMonitorPolicyDigest({
+      ...safety.policy,
+      alertRoutes: safety.policy.alertRoutes.map((route, index) => index === 0
+        ? { ...route, routeId: safety.policy.quoteClosure.routeId }
+        : route),
+    }),
+    /globally distinct|canonically ordered/,
+  );
+  assert.throws(
     () => prepareSafetyObservation({
       policy: safety.policy,
       expectedPolicyDigest: safety.policyDigest,
@@ -167,4 +195,31 @@ test("requires two canonically ordered, independently committed collectors for e
     }),
     /not configured for the requested domain/,
   );
+});
+
+test("binds exact redundant action routes with same-process policy provenance", () => {
+  const plan = safety.bindActions();
+  assert.equal(plan.schema, SAFETY_MONITOR_ACTION_PLAN_SCHEMA);
+  assert.equal(plan.policyDigest, safety.policyDigest);
+  assert.deepEqual(plan.guardianBroadcasters, safety.policy.guardianBroadcasters);
+  assert.deepEqual(plan.alertRoutes, safety.policy.alertRoutes);
+  const binding = verifiedSafetyMonitorActionBinding(plan);
+  assert.equal(binding.policyDigest, safety.policyDigest);
+  assert.equal(binding.guardianBroadcasters.length, 2);
+  assert.equal(binding.alertRoutes.length, 2);
+  assert.throws(() => verifiedSafetyMonitorActionBinding({ ...plan }), /lacks same-process/);
+  assert.throws(() => safety.bindActions({ boundAt: NOW + 3_600 }), /not active/);
+
+  assert.throws(() => bindSafetyMonitorActions({
+    policy: safety.policy,
+    expectedPolicyDigest: safety.policyDigest,
+    now: NOW,
+    quoteClosure: { ...safety.quoteClosure, execute: async () => ({ closed: true }) },
+    guardianBroadcasters: safety.guardianBroadcasters.map((route, index) => ({
+      ...route,
+      routeId: index === 0 ? id("wrong-route").toLowerCase() : route.routeId,
+      execute: async () => ({}),
+    })),
+    alertRoutes: safety.alertRoutes.map((route) => ({ ...route, execute: async () => ({}) })),
+  }), /does not match/);
 });

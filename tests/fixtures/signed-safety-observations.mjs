@@ -1,5 +1,6 @@
 import { Wallet, id } from "ethers";
 import {
+  bindSafetyMonitorActions,
   prepareSafetyObservation,
   REQUIRED_SAFETY_CHECKS,
   SAFETY_MONITOR_POLICY_SCHEMA,
@@ -24,6 +25,18 @@ export function createSignedSafetyObservationFixture({
   maximumObservationAgeSeconds = 15,
 } = {}) {
   const collectors = wallets();
+  const quoteClosure = Object.freeze({
+    routeId: id("treeswap-test-quote-closure-route").toLowerCase(),
+    operatorId: id("treeswap-test-quote-closure-operator").toLowerCase(),
+  });
+  const guardianBroadcasters = Object.freeze([0, 1].map((index) => Object.freeze({
+    routeId: id(`treeswap-test-guardian-broadcaster:${index}`).toLowerCase(),
+    operatorId: id(`treeswap-test-guardian-operator:${index}`).toLowerCase(),
+  })).sort((left, right) => left.routeId < right.routeId ? -1 : 1));
+  const alertRoutes = Object.freeze([0, 1].map((index) => Object.freeze({
+    routeId: id(`treeswap-test-alert-route:${index}`).toLowerCase(),
+    operatorId: id(`treeswap-test-alert-operator:${index}`).toLowerCase(),
+  })).sort((left, right) => left.routeId < right.routeId ? -1 : 1));
   const policy = Object.freeze({
     schema: SAFETY_MONITOR_POLICY_SCHEMA,
     chainId: "31337",
@@ -32,6 +45,9 @@ export function createSignedSafetyObservationFixture({
     validFrom: now - 3_600,
     validUntil: now + 3_600,
     maximumObservationAgeSeconds,
+    quoteClosure,
+    guardianBroadcasters,
+    alertRoutes,
     collectors: Object.freeze(collectors.map(({ kind, collectorId, operatorId, wallet }) => Object.freeze({
       kind,
       collectorId,
@@ -40,6 +56,32 @@ export function createSignedSafetyObservationFixture({
     }))),
   });
   const policyDigest = safetyMonitorPolicyDigest(policy);
+
+  function bindActions({
+    boundAt = now,
+    closeQuotes = async () => ({ closed: true }),
+    guardianActions = guardianBroadcasters.map((route) => async (alert) => ({
+      halted: true,
+      reasonDigest: alert.alertDigest,
+      transactionHash: route.routeId,
+    })),
+    alertActions = alertRoutes.map(() => async () => ({ delivered: true })),
+  } = {}) {
+    return bindSafetyMonitorActions({
+      policy,
+      expectedPolicyDigest: policyDigest,
+      now: boundAt,
+      quoteClosure: { ...quoteClosure, execute: closeQuotes },
+      guardianBroadcasters: guardianBroadcasters.map((route, index) => ({
+        ...route,
+        execute: guardianActions[index],
+      })),
+      alertRoutes: alertRoutes.map((route, index) => ({
+        ...route,
+        execute: alertActions[index],
+      })),
+    });
+  }
 
   async function observations(overrides = {}) {
     return Promise.all(collectors.map(async ({ kind, collectorId, operatorIndex, wallet }) => {
@@ -71,6 +113,10 @@ export function createSignedSafetyObservationFixture({
     policy,
     policyDigest,
     collectors,
+    quoteClosure,
+    guardianBroadcasters,
+    alertRoutes,
+    bindActions,
     observations,
   });
 }

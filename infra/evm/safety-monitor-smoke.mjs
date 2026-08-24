@@ -14,6 +14,7 @@ import {
   runSafetyMonitorCycle,
 } from "../../lib/safety-monitor.mjs";
 import {
+  bindSafetyMonitorActions,
   prepareSafetyObservation,
   SAFETY_MONITOR_POLICY_SCHEMA,
   safetyMonitorPolicyDigest,
@@ -26,8 +27,8 @@ const ANVIL_VERSION = String(process.env.SAFETY_MONITOR_ANVIL_VERSION ?? "");
 const CHAIN_ID = 31_337n;
 const MAXIMUM_AGE = 15;
 const MONITOR_NOW = 2_100_100_000;
-const EXPECTED_MONITOR_POLICY_DIGEST = "0xf63ad20c51dabda8d8c69bc7b0c48dbdba04882c63cb9f4ae769ec537fa26b83";
-const EXPECTED_CAMPAIGN_DIGEST = "0x112c28bb8a88dea943d14f4ded189fe4f0b8b1ef568af0ff8ed0b97187719c61";
+const EXPECTED_MONITOR_POLICY_DIGEST = "0xf0bc1d21383118d59270adf4612684d35e0594afe4d15d63ec4848f8e43cf3d2";
+const EXPECTED_CAMPAIGN_DIGEST = "0x562faa1cb1fb8b80cd02ee3d74cea7b845126a1ba8a07fc092ccb522881cdb81";
 
 if (!RPC_URL || !MNEMONIC) throw new Error("safety monitor smoke requires an ephemeral RPC URL and mnemonic");
 if (!/^anvil Version: [0-9.]+/.test(ANVIL_VERSION)) throw new Error("Anvil version is not pinned in evidence");
@@ -105,6 +106,10 @@ try {
   let quoteIssuanceClosed = false;
   let gateHalted = false;
   let alertDeliveredAfterClosure = false;
+  let deliveredAlert;
+  let totalActionCalls = 0;
+  let failFirstGuardianRoute = true;
+  let failFirstAlertRoute = true;
   const now = MONITOR_NOW;
   const safetyCollectors = REQUIRED_SAFETY_CHECKS.flatMap((kind, kindIndex) => [0, 1].map((operatorIndex) => {
     const wallet = HDNodeWallet.fromPhrase(
@@ -128,6 +133,18 @@ try {
     validFrom: now - 60,
     validUntil: now + 3_600,
     maximumObservationAgeSeconds: MAXIMUM_AGE,
+    quoteClosure: Object.freeze({
+      routeId: id("treeswap-monitor-smoke-quote-closure").toLowerCase(),
+      operatorId: id("treeswap-monitor-smoke-quote-operator").toLowerCase(),
+    }),
+    guardianBroadcasters: Object.freeze([0, 1].map((index) => Object.freeze({
+      routeId: id(`treeswap-monitor-smoke-guardian-route:${index}`).toLowerCase(),
+      operatorId: id(`treeswap-monitor-smoke-guardian-operator:${index}`).toLowerCase(),
+    })).sort((left, right) => left.routeId < right.routeId ? -1 : 1)),
+    alertRoutes: Object.freeze([0, 1].map((index) => Object.freeze({
+      routeId: id(`treeswap-monitor-smoke-alert-route:${index}`).toLowerCase(),
+      operatorId: id(`treeswap-monitor-smoke-alert-operator:${index}`).toLowerCase(),
+    })).sort((left, right) => left.routeId < right.routeId ? -1 : 1)),
     collectors: Object.freeze(safetyCollectors.map(({ kind, collectorId, operatorId, wallet }) => Object.freeze({
       kind,
       collectorId,
@@ -140,89 +157,109 @@ try {
     policy: safetyPolicy,
     policyDigest: safetyMonitorPolicyDigest(safetyPolicy),
   });
+  const actionPlan = bindSafetyMonitorActions({
+    policy: safety.policy,
+    expectedPolicyDigest: safety.policyDigest,
+    now,
+    quoteClosure: {
+      ...safety.policy.quoteClosure,
+      execute: async () => {
+        totalActionCalls += 1;
+        quoteIssuanceClosed = true;
+        return { closed: true };
+      },
+    },
+    guardianBroadcasters: safety.policy.guardianBroadcasters.map((route, index) => ({
+      ...route,
+      execute: async (alert) => {
+        totalActionCalls += 1;
+        assert.equal(quoteIssuanceClosed, true);
+        if (failFirstGuardianRoute && index === 0) throw new Error("simulated guardian route outage");
+        const control = index === 0 ? controllerControl : guardianControl;
+        const transaction = await control.execute(
+          gateAddress,
+          gate.interface.encodeFunctionData("halt", [alert.alertDigest]),
+        );
+        await transaction.wait();
+        gateHalted = !(await gate.isOpen());
+        return {
+          halted: gateHalted,
+          reasonDigest: alert.alertDigest,
+          transactionHash: transaction.hash.toLowerCase(),
+        };
+      },
+    })),
+    alertRoutes: safety.policy.alertRoutes.map((route, index) => ({
+      ...route,
+      execute: async (alert) => {
+        totalActionCalls += 1;
+        assert.equal(quoteIssuanceClosed && gateHalted, true);
+        assert.equal(JSON.stringify(alert).includes("lnbc"), false);
+        if (failFirstAlertRoute && index === 0) throw new Error("simulated alert route outage");
+        deliveredAlert = alert;
+        alertDeliveredAfterClosure = true;
+        return { delivered: true };
+      },
+    })),
+  });
   const missingCollector = safety.collectors.filter(({ kind }) => kind === "bit-contract")[1];
   const outageObservations = (await observations(now, safety))
     .filter((observation) => observation.collectorId !== missingCollector.collectorId);
   const unhealthy = await runSafetyMonitorCycle({
     observations: outageObservations,
-    maximumObservationAgeSeconds: MAXIMUM_AGE,
-    expectedSafetyPolicyDigest: safety.policyDigest,
+    actionPlan,
     nowSeconds: () => now,
-    closeQuoteIssuance: async () => {
-      quoteIssuanceClosed = true;
-      return { closed: true };
-    },
-    haltOnchainGate: async (alert) => {
-      assert.equal(quoteIssuanceClosed, true);
-      const transaction = await guardianControl.execute(
-        gateAddress,
-        gate.interface.encodeFunctionData("halt", [alert.alertDigest]),
-      );
-      await transaction.wait();
-      gateHalted = !(await gate.isOpen());
-      return {
-        halted: gateHalted,
-        reasonDigest: alert.alertDigest,
-        transactionHash: transaction.hash.toLowerCase(),
-      };
-    },
-    deliverAlert: async (alert) => {
-      assert.equal(quoteIssuanceClosed && gateHalted, true);
-      assert.equal(JSON.stringify(alert).includes("lnbc"), false);
-      alertDeliveredAfterClosure = true;
-      return { delivered: true };
-    },
   });
   assert.equal(unhealthy.outcome, "HALTED_AND_ALERTED");
   assert.equal(unhealthy.newExposureClosed, true);
   assert.ok(unhealthy.reasonCodes.includes("BIT_CONTRACT_COLLECTOR_OUTAGE"));
+  assert.equal(unhealthy.guardianBroadcastsAttempted, 2);
+  assert.equal(unhealthy.guardianBroadcastsSucceeded, 1);
+  assert.equal(unhealthy.guardianBroadcastDegraded, true);
+  assert.equal(unhealthy.alertRoutesAttempted, 2);
+  assert.equal(unhealthy.alertRoutesDelivered, 1);
+  assert.equal(unhealthy.alertDeliveryDegraded, true);
   assert.equal(await gate.isOpen(), false);
   assert.equal(await gate.emergencyHalted(), true);
   assert.equal(await gate.activeRiskDigest(), `0x${"00".repeat(32)}`);
 
-  let healthyMutationCalls = 0;
+  failFirstGuardianRoute = false;
+  failFirstAlertRoute = false;
+  const actionCallsBeforeHealthy = totalActionCalls;
   const healthy = await runSafetyMonitorCycle({
     observations: await observations(now, safety),
-    maximumObservationAgeSeconds: MAXIMUM_AGE,
-    expectedSafetyPolicyDigest: safety.policyDigest,
+    actionPlan,
     nowSeconds: () => now,
-    closeQuoteIssuance: async () => { healthyMutationCalls += 1; },
-    haltOnchainGate: async () => { healthyMutationCalls += 1; },
-    deliverAlert: async () => { healthyMutationCalls += 1; },
   });
   assert.equal(healthy.outcome, "HEALTHY");
-  assert.equal(healthyMutationCalls, 0);
+  assert.equal(totalActionCalls, actionCallsBeforeHealthy);
+  const healthyCycleHasNoOpenAuthority = totalActionCalls === actionCallsBeforeHealthy;
   assert.equal(await gate.isOpen(), false);
 
   const malicious = await observations(now, safety);
   malicious[0] = { ...malicious[0], invoice: "lnbc-must-not-enter-alert" };
-  let outageAlert;
   const outage = await runSafetyMonitorCycle({
     observations: malicious,
-    maximumObservationAgeSeconds: MAXIMUM_AGE,
-    expectedSafetyPolicyDigest: safety.policyDigest,
+    actionPlan,
     nowSeconds: () => now,
-    closeQuoteIssuance: async () => ({ closed: true }),
-    haltOnchainGate: async (alert) => {
-      const transaction = await guardianControl.execute(
-        gateAddress,
-        gate.interface.encodeFunctionData("halt", [alert.alertDigest]),
-      );
-      await transaction.wait();
-      return { halted: true, reasonDigest: alert.alertDigest, transactionHash: transaction.hash.toLowerCase() };
-    },
-    deliverAlert: async (alert) => {
-      outageAlert = alert;
-      return { delivered: true };
-    },
   });
   assert.equal(outage.outcome, "HALTED_AND_ALERTED");
   assert.ok(outage.reasonCodes.includes("MONITOR_INPUT_INVALID"));
-  assert.equal(JSON.stringify(outageAlert).includes("lnbc-must-not-enter-alert"), false);
+  assert.equal(JSON.stringify(deliveredAlert).includes("lnbc-must-not-enter-alert"), false);
   assert.equal(await gate.isOpen(), false);
 
+  const actionCallsBeforeCopy = totalActionCalls;
+  const copiedPlan = await runSafetyMonitorCycle({
+    observations: await observations(now, safety),
+    actionPlan: { ...actionPlan },
+    nowSeconds: () => now,
+  });
+  assert.equal(copiedPlan.outcome, "HALT_INCOMPLETE");
+  assert.deepEqual(copiedPlan.reasonCodes, ["MONITOR_ACTION_PLAN_INVALID"]);
+  assert.equal(totalActionCalls, actionCallsBeforeCopy);
+
   const evidence = Object.freeze({
-    schema: "treeswap.safety-monitor-smoke.v3",
+    schema: "treeswap.safety-monitor-smoke.v4",
     chainId: String(CHAIN_ID),
     executionClient: ANVIL_VERSION,
     actualOpenGate: true,
@@ -232,7 +269,13 @@ try {
     collectorOutageClosedQuotes: quoteIssuanceClosed,
     collectorOutageHaltedOnchainGate: gateHalted,
     alertDeliveredAfterClosure,
-    healthyCycleHasNoOpenAuthority: healthyMutationCalls === 0,
+    redundantGuardianBroadcasters: 2,
+    oneGuardianBroadcasterOutageTolerated: unhealthy.guardianBroadcastsSucceeded === 1,
+    redundantAlertRoutes: 2,
+    oneAlertRouteOutageTolerated: unhealthy.alertRoutesDelivered === 1,
+    degradationReported: unhealthy.guardianBroadcastDegraded && unhealthy.alertDeliveryDegraded,
+    copiedActionPlanRejectedWithoutAction: totalActionCalls === actionCallsBeforeCopy,
+    healthyCycleHasNoOpenAuthority,
     malformedObservationFailedClosed: outage.newExposureClosed,
     signedReleaseBoundObservations: true,
     safetyMonitorPolicyDigest: safety.policyDigest,
