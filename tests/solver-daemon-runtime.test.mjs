@@ -467,6 +467,34 @@ test("leadership loss after a durable claim cannot contact Lightning and recover
     "RECOVER_INTERRUPTED_ACTION");
 });
 
+test("packet expiry during asynchronous dispatch approval halts before Lightning", async (t) => {
+  const fixture = await openStore("dispatch-expiry-race", "lightning-to-bit");
+  t.after(() => fixture.store.close());
+  const packets = packetClient(fixture.value);
+  const adapter = lightningAdapter();
+  const controls = {
+    authorizeLightning: async ({ action, settlement: current, packet, packetResponseDigest }) => authorization(
+      action, current, packetResponseDigest, packet,
+    ),
+  };
+  const planned = await executeSolverDaemonStep(runtimeArgs(fixture, {
+    packetClient: packets,
+    lightning: adapter.config,
+    controls,
+  }));
+  let clockReads = 0;
+  const halted = await executeSolverDaemonStep(runtimeArgs(fixture, {
+    packetClient: packets,
+    lightning: adapter.config,
+    controls,
+    nowSeconds: () => (clockReads++ === 0 ? NOW + 10 : NOW + 20),
+  }));
+  assert.equal(halted.outcome, "HALTED");
+  assert.equal(halted.haltCode, "DAEMON_AUTH_MISMATCH");
+  assert.equal(adapter.calls, 0);
+  assert.equal(fixture.store.getAction(planned.actionId).state, "PENDING");
+});
+
 test("runs Lightning-to-BIT through exact packet dispatch and terminal asset proof without persisting the preimage", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "treeswap-daemon-invoice-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
