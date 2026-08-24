@@ -1,6 +1,6 @@
 # Qualification review evidence
 
-Status: the repository can reconstruct the exact sealed local qualification file, enforce the complete release campaign and configuration boundary, verify one independent reviewer's short-lived signature, and require that live provenance in both bootstrap and full public-testnet release candidates. No reviewer, report, deployed release, signature, or funding authority is supplied by the repository.
+Status: the repository can reconstruct the exact sealed local qualification file, independently compare it with the exact current published `main`, enforce the complete release campaign and configuration boundary, verify one independent reviewer's short-lived signature, and require that live provenance in both bootstrap and full public-testnet release candidates. No reviewer, report, deployed release, signature, or funding authority is supplied by the repository.
 
 ## Boundary
 
@@ -8,8 +8,8 @@ The release path no longer accepts an opaque `testQualification` digest. Candida
 
 - the exact raw qualification file bytes and both SHA-256 commitments;
 - the exact clean published source commit in the artifact;
-- all 41 mandatory campaign names in canonical order;
-- the exact versioned 160-file configuration manifest shared by the qualification runner and verifier, including the qualification, release-candidate, active-daemon, coordinator fault-smoke, and reviewer boundaries;
+- the complete mandatory campaign plan exported by `lib/qualification-plan.mjs` in canonical order;
+- the exact versioned configuration manifest exported by `lib/qualification-plan.mjs` and shared by the qualification runner and verifier, including the CI workflow, qualification, release-candidate, active-daemon, coordinator fault-smoke, and reviewer boundaries;
 - at least three unique immutable container image pins;
 - validated uncompressed production-duration Lightning evidence;
 - a bounded public-testnet policy naming one reviewer, organization commitment, identity-evidence commitment, deployment, protocol version, and funding mode;
@@ -27,6 +27,15 @@ Generate the final artifact only from the exact clean release commit already pub
 ```sh
 npm run qualify:local -- --out-name final-release-qualification.json
 ```
+
+Before review, independently reconstruct that exact private artifact from a clean checkout of its currently published `main` commit:
+
+```bash
+npm run verify:local-qualification -- \
+  --artifact /secure-review/final-release-qualification.json
+```
+
+The standalone verifier accepts only one bounded, owner-only, single-link, mode-`0600` non-symlink regular file, reconstructs its canonical evidence digest, enforces the exact mandatory campaign order and immutable image pins, recomputes every file in the current configuration manifest through stable descriptor reads, checks the artifact commit against a fresh canonical `origin/main` reference, and repeats the source check after verification. Its deterministic JSON receipt contains only digests, counts, boolean checks, and explicit `false` authorization fields. It cannot review, sign, broadcast, open the gate, or authorize funding.
 
 Keep the mode-`0600` artifact outside Git when moving it to the independent reviewer. The reviewer must independently reproduce the source and configuration hashes, inspect the complete output and retained reports, and create:
 
