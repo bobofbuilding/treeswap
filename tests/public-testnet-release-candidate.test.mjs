@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -37,6 +37,10 @@ import {
 import { verifiedSolverCapacityRecord, verifiedSolverQuoteBinding } from "../lib/solver-capability.mjs";
 import { executeActiveSolverDaemonStep } from "../lib/active-solver-daemon-runtime.mjs";
 import { CoordinatorStore } from "../lib/coordinator-store.mjs";
+import {
+  acquireCoordinatorServiceLease,
+  normalizeCoordinatorServiceConfig,
+} from "../lib/coordinator-service-state.mjs";
 import { verifyPublicTestnetBootstrapEvidence } from "../lib/public-testnet-bootstrap-evidence.mjs";
 import { verifyIndependentReviewEvidence } from "../lib/independent-review-evidence.mjs";
 import { verifyOperationalReadinessEvidence } from "../lib/operational-readiness-evidence.mjs";
@@ -589,7 +593,7 @@ test("derives one exact release candidate from verified deployment, campaign, an
   assert.equal(summary.recordDigest, candidate.recordDigest);
 });
 
-test("activates funding only after same-process evidence, approvals, reconciliation, and live RPC quorum checks", async () => {
+test("activates funding only after same-process evidence, approvals, reconciliation, and live RPC quorum checks", async (t) => {
   const { campaign, candidate, deployment } = await fixture();
   const now = candidate.record.approvalBlockTimestamp + 120;
   const approvalBundle = await releaseApprovalBundle(candidate);
@@ -831,11 +835,33 @@ test("activates funding only after same-process evidence, approvals, reconciliat
     authorizedAt: now + 2,
   });
   waitingStore.acceptSettlement(waitingSettlement);
+  const serviceRoot = await realpath(await mkdtemp(join(tmpdir(), "treeswap-active-daemon-service-")));
+  t.after(() => rm(serviceRoot, { recursive: true, force: true }));
+  const serviceNow = (now + 3) * 1_000;
+  const serviceLease = await acquireCoordinatorServiceLease(normalizeCoordinatorServiceConfig({
+    COORDINATOR_DATABASE_PATH: join(serviceRoot, "data", "coordinator.sqlite"),
+    COORDINATOR_RUNTIME_DIRECTORY: join(serviceRoot, "run"),
+    COORDINATOR_HEARTBEAT_SECONDS: "5",
+    COORDINATOR_INTEGRITY_SECONDS: "10",
+    COORDINATOR_LEASE_STALE_SECONDS: "30",
+  }), { now: () => serviceNow });
   const originalDateNow = Date.now;
   try {
     Date.now = () => (now + 3) * 1_000;
+    await assert.rejects(executeActiveSolverDaemonStep({
+      executionContext,
+      store: waitingStore,
+      settlementId: wrapperSettlementId,
+    }), /original same-process service lease/);
+    await assert.rejects(executeActiveSolverDaemonStep({
+      executionContext,
+      serviceLease: JSON.parse(JSON.stringify(serviceLease)),
+      store: waitingStore,
+      settlementId: wrapperSettlementId,
+    }), /original same-process service lease/);
     assert.deepEqual(await executeActiveSolverDaemonStep({
       executionContext,
+      serviceLease,
       store: waitingStore,
       settlementId: wrapperSettlementId,
     }), {
@@ -868,6 +894,7 @@ test("activates funding only after same-process evidence, approvals, reconciliat
     Date.now = () => solverBinding.expiresAt * 1_000;
     const closed = await executeActiveSolverDaemonStep({
       executionContext,
+      serviceLease,
       store: waitingStore,
       settlementId: wrapperSettlementId,
     });
@@ -876,6 +903,7 @@ test("activates funding only after same-process evidence, approvals, reconciliat
     assert.match(closed.reason, /funding authorization is inactive/);
     await assert.rejects(executeActiveSolverDaemonStep({
       executionContext,
+      serviceLease,
       store: {
         getSettlement: () => waitingSettlement,
         getFirmOffer: () => waitingStore.getFirmOffer(waitingSettlement.selectedOfferId),
@@ -888,12 +916,14 @@ test("activates funding only after same-process evidence, approvals, reconciliat
     prototypeSpoof.listSettlementActions = () => [];
     await assert.rejects(executeActiveSolverDaemonStep({
       executionContext,
+      serviceLease,
       store: prototypeSpoof,
       settlementId: wrapperSettlementId,
     }), /original coordinator store/);
   } finally {
     Date.now = originalDateNow;
     waitingStore.close();
+    await serviceLease.release();
   }
   await assert.rejects(executeActiveSolverDaemonStep({
     executionContext: structuredClone(executionContext),
@@ -912,6 +942,12 @@ test("activates funding only after same-process evidence, approvals, reconciliat
     settlementId: ZERO,
     nowSeconds: () => now,
   }), /execution time cannot be supplied/);
+  await assert.rejects(executeActiveSolverDaemonStep({
+    executionContext,
+    store: null,
+    settlementId: ZERO,
+    beforeSideEffect: async () => {},
+  }), /leadership guard cannot be supplied/);
   const expiredReconciliation = authorizeSolverFunding({
     solverCapabilityVerification: solverCapability.verification,
     deployment: activation.deployment,

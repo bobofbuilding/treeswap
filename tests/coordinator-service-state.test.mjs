@@ -1,12 +1,13 @@
 import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
-import { chmod, lstat, mkdtemp, mkdir, readFile, realpath, rm, symlink } from "node:fs/promises";
+import { chmod, lstat, mkdtemp, mkdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { CoordinatorStore } from "../lib/coordinator-store.mjs";
 import {
   acquireCoordinatorServiceLease,
+  assertCoordinatorServiceLeaseOwnership,
   buildCoordinatorClosedStatus,
   buildCoordinatorReleaseVerificationStatus,
   normalizeCoordinatorServiceConfig,
@@ -208,6 +209,16 @@ test("fresh lease excludes a second supervisor and stale takeover cannot be remo
   const randomBytesImpl = deterministicRandom();
   let observedAt = Date.parse("2033-05-18T03:33:20.000Z");
   const first = await acquireCoordinatorServiceLease(policy, { now: () => observedAt, randomBytesImpl });
+  assert.equal("token" in first, false);
+  assert.equal(/token/i.test(JSON.stringify(first)), false);
+  assert.deepEqual(await assertCoordinatorServiceLeaseOwnership(first), {
+    leaseId: first.leaseId,
+    startedAt: first.startedAt,
+  });
+  await assert.rejects(
+    assertCoordinatorServiceLeaseOwnership(JSON.parse(JSON.stringify(first))),
+    /original same-process service lease/,
+  );
   const store = await CoordinatorStore.open(paths.databasePath);
   try {
     await first.publish(buildCoordinatorClosedStatus({
@@ -230,6 +241,7 @@ test("fresh lease excludes a second supervisor and stale takeover cannot be remo
     );
     observedAt += 31_000;
     await assert.rejects(readCoordinatorServiceHealth(policy, { now: () => observedAt }), /stale/);
+    await assert.rejects(assertCoordinatorServiceLeaseOwnership(first), /lease is stale/);
     const replacement = await acquireCoordinatorServiceLease(policy, { now: () => observedAt, randomBytesImpl });
     try {
       await replacement.publish(buildCoordinatorClosedStatus({
@@ -239,10 +251,13 @@ test("fresh lease excludes a second supervisor and stale takeover cannot be remo
         leaseIdentifier: replacement.leaseId,
         recoveredInterruptedActions: 0,
       }));
+      await assert.rejects(assertCoordinatorServiceLeaseOwnership(first), /no longer owns/);
+      assert.equal((await assertCoordinatorServiceLeaseOwnership(replacement)).leaseId, replacement.leaseId);
       assert.equal(await first.release(), false);
       assert.equal((await readCoordinatorServiceHealth(policy, { now: () => observedAt })).fundingAuthorization, false);
     } finally {
       assert.equal(await replacement.release(), true);
+      await assert.rejects(assertCoordinatorServiceLeaseOwnership(replacement), /ENOENT|no such file/i);
     }
   } finally {
     store.close();
@@ -300,6 +315,17 @@ test("refuses a symlink or malformed lease instead of guessing that it is stale"
   await mkdir(target);
   await symlink(target, join(paths.runtimeDirectory, "coordinator.lease"));
   await assert.rejects(acquireCoordinatorServiceLease(config(paths)), /not a real directory/);
+});
+
+test("lease ownership reads refuse a private-file symlink replacement", async (t) => {
+  const paths = await fixture(t);
+  const lease = await acquireCoordinatorServiceLease(config(paths));
+  const target = join(paths.root, "attacker-owner.json");
+  await writeFile(target, "{}\n", { mode: 0o600 });
+  const ownerPath = join(lease.leaseDirectory, "owner.json");
+  await rm(ownerPath);
+  await symlink(target, ownerPath);
+  await assert.rejects(assertCoordinatorServiceLeaseOwnership(lease), /bounded private regular file/);
 });
 
 async function waitForOutput(child, marker) {
