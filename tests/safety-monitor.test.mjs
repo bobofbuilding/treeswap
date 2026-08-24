@@ -3,42 +3,35 @@ import test from "node:test";
 import { id } from "ethers";
 import {
   evaluateSafetyMonitor,
-  REQUIRED_SAFETY_CHECKS,
   runSafetyMonitorCycle,
 } from "../lib/safety-monitor.mjs";
+import { createSignedSafetyObservationFixture } from "./fixtures/signed-safety-observations.mjs";
 
 const NOW = 2_100_000_000;
+const safety = createSignedSafetyObservationFixture({ now: NOW });
 
-function observations(overrides = {}) {
-  return REQUIRED_SAFETY_CHECKS.map((kind) => ({
-    kind,
-    status: "healthy",
-    observedAt: NOW - 2,
-    evidenceDigest: id(`safety-monitor:${kind}`).toLowerCase(),
-    ...(overrides[kind] ?? {}),
-  }));
-}
-
-test("accepts only one fresh healthy observation from every required safety domain", () => {
+test("accepts only signed, release-policy-bound observations from every required safety domain", async () => {
   const result = evaluateSafetyMonitor({
-    observations: observations(),
+    observations: await safety.observations(),
     now: NOW,
     maximumObservationAgeSeconds: 15,
+    expectedSafetyPolicyDigest: safety.policyDigest,
   });
   assert.equal(result.healthy, true);
   assert.deepEqual(result.reasonCodes, []);
+  assert.equal(result.monitorPolicyDigest, safety.policyDigest);
   assert.match(result.evidenceSetDigest, /^0x[0-9a-f]{64}$/);
   assert.match(result.alertDigest, /^0x[0-9a-f]{64}$/);
 });
 
-test("missing, stale, future, duplicate, unsafe, or malformed observations fail closed with fixed reason codes", () => {
-  const unsafe = observations({
+test("missing, stale, future, duplicate, unsafe, or unverified observations fail closed", async () => {
+  const unsafe = await safety.observations({
     "bit-contract": { status: "unsafe" },
     "price-quorum": { observedAt: NOW - 100 },
     "lightning-node": { observedAt: NOW + 1 },
   });
   unsafe.pop();
-  unsafe.push({ ...unsafe[0] });
+  unsafe.push(unsafe[0]);
   unsafe.push({
     kind: "audit-pipeline",
     status: "healthy",
@@ -46,10 +39,16 @@ test("missing, stale, future, duplicate, unsafe, or malformed observations fail 
     evidenceDigest: id("malformed").toLowerCase(),
     privateKey: "must-not-enter-the-alert",
   });
-  const result = evaluateSafetyMonitor({ observations: unsafe, now: NOW, maximumObservationAgeSeconds: 15 });
+  const result = evaluateSafetyMonitor({
+    observations: unsafe,
+    now: NOW,
+    maximumObservationAgeSeconds: 15,
+    expectedSafetyPolicyDigest: safety.policyDigest,
+  });
   assert.equal(result.healthy, false);
   assert.ok(result.reasonCodes.includes("BIT_CONTRACT_UNSAFE"));
   assert.ok(result.reasonCodes.includes("PRICE_QUORUM_STALE"));
+  assert.ok(result.reasonCodes.includes("PRICE_QUORUM_EXPIRED"));
   assert.ok(result.reasonCodes.includes("LIGHTNING_NODE_FUTURE"));
   assert.ok(result.reasonCodes.includes("SOLVER_CAPACITY_MISSING"));
   assert.ok(result.reasonCodes.includes("ASSET_RECONCILIATION_DUPLICATE"));
@@ -61,8 +60,9 @@ test("missing, stale, future, duplicate, unsafe, or malformed observations fail 
 test("healthy monitoring has no authority to open or mutate either exposure gate", async () => {
   let calls = 0;
   const result = await runSafetyMonitorCycle({
-    observations: observations(),
+    observations: await safety.observations(),
     maximumObservationAgeSeconds: 15,
+    expectedSafetyPolicyDigest: safety.policyDigest,
     nowSeconds: () => NOW,
     closeQuoteIssuance: async () => { calls += 1; },
     haltOnchainGate: async () => { calls += 1; },
@@ -77,8 +77,9 @@ test("unsafe monitoring closes quotes, halts onchain exposure, then emits one se
   let quoteClosed = false;
   let gateHalted = false;
   const result = await runSafetyMonitorCycle({
-    observations: observations({ "evm-provider-quorum": { status: "unsafe" } }),
+    observations: await safety.observations({ "evm-provider-quorum": { status: "unsafe" } }),
     maximumObservationAgeSeconds: 15,
+    expectedSafetyPolicyDigest: safety.policyDigest,
     nowSeconds: () => NOW,
     closeQuoteIssuance: async (alert) => {
       order.push("quotes");
@@ -105,10 +106,11 @@ test("unsafe monitoring closes quotes, halts onchain exposure, then emits one se
 });
 
 test("closure or alert transport failures remain explicit and never become healthy", async () => {
-  const unsafe = observations({ "audit-pipeline": { status: "unsafe" } });
+  const unsafe = await safety.observations({ "audit-pipeline": { status: "unsafe" } });
   const incomplete = await runSafetyMonitorCycle({
     observations: unsafe,
     maximumObservationAgeSeconds: 15,
+    expectedSafetyPolicyDigest: safety.policyDigest,
     nowSeconds: () => NOW,
     closeQuoteIssuance: async () => { throw new Error("offline"); },
     haltOnchainGate: async (alert) => ({
@@ -125,6 +127,7 @@ test("closure or alert transport failures remain explicit and never become healt
   const alertFailure = await runSafetyMonitorCycle({
     observations: unsafe,
     maximumObservationAgeSeconds: 15,
+    expectedSafetyPolicyDigest: safety.policyDigest,
     nowSeconds: () => NOW,
     closeQuoteIssuance: async () => ({ closed: true }),
     haltOnchainGate: async (alert) => ({
@@ -142,8 +145,9 @@ test("closure or alert transport failures remain explicit and never become healt
 test("monitor clock or configuration failure still attempts both closures with a fixed alert", async () => {
   let closures = 0;
   const result = await runSafetyMonitorCycle({
-    observations: observations(),
+    observations: await safety.observations(),
     maximumObservationAgeSeconds: 0,
+    expectedSafetyPolicyDigest: safety.policyDigest,
     actionTimeoutMs: 0,
     nowSeconds: () => { throw new Error("clock failed"); },
     closeQuoteIssuance: async () => {
@@ -170,8 +174,9 @@ test("a hung quote shutdown is bounded so the guardian halt and alert still run"
   let haltCalled = false;
   let alertCalled = false;
   const result = await runSafetyMonitorCycle({
-    observations: observations({ "lightning-node": { status: "unsafe" } }),
+    observations: await safety.observations({ "lightning-node": { status: "unsafe" } }),
     maximumObservationAgeSeconds: 15,
+    expectedSafetyPolicyDigest: safety.policyDigest,
     actionTimeoutMs: 5,
     nowSeconds: () => NOW,
     closeQuoteIssuance: async (_alert, { signal }) => new Promise((resolve) => {

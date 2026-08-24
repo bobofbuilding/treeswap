@@ -20,7 +20,7 @@ trap cleanup EXIT
 cd "$project_root"
 forge build --quiet
 anvil --host 127.0.0.1 --port "$monitor_port" --chain-id 31337 --mnemonic "$monitor_mnemonic" \
-  --silent >"$monitor_log" 2>&1 &
+  --timestamp 2100000000 --silent >"$monitor_log" 2>&1 &
 monitor_pid=$!
 
 for _ in $(seq 1 100); do

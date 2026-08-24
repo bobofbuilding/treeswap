@@ -1,15 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { id } from "ethers";
 import {
   DEFAULT_LIGHTNING_CLOSE_POLICY,
   evaluateLightningCloseRecovery,
   lightningCloseSafetyObservation,
 } from "../lib/lightning-close-monitor.mjs";
-import { evaluateSafetyMonitor, REQUIRED_SAFETY_CHECKS } from "../lib/safety-monitor.mjs";
+import { evaluateSafetyMonitor } from "../lib/safety-monitor.mjs";
+import { createSignedSafetyObservationFixture } from "./fixtures/signed-safety-observations.mjs";
 
 const NOW = 2_100_000_000;
 const HEIGHT = 263;
+const safety = createSignedSafetyObservationFixture({ now: NOW });
 
 function emptyPendingChannels() {
   return {
@@ -177,16 +178,16 @@ test("malformed LND responses and policy mutation fail closed without retaining 
   assert.equal(invalidPolicy.policyDigest, `0x${"00".repeat(32)}`);
 });
 
-test("the aggregate drives the existing lightning-node halt domain", () => {
+test("the aggregate drives the authenticated lightning-node halt domain", async () => {
   const unsafe = evaluate({ pendingSweeps: { pending_sweeps: [anchor({ witness_type: "COMMITMENT_TIME_LOCK" })] } });
   const lightning = lightningCloseSafetyObservation(unsafe);
-  const observations = REQUIRED_SAFETY_CHECKS.map((kind) => kind === "lightning-node" ? lightning : ({
-    kind,
-    status: "healthy",
-    observedAt: NOW,
-    evidenceDigest: id(`close-monitor:${kind}`).toLowerCase(),
-  }));
-  const result = evaluateSafetyMonitor({ observations, now: NOW, maximumObservationAgeSeconds: 15 });
+  const observations = await safety.observations({ "lightning-node": lightning });
+  const result = evaluateSafetyMonitor({
+    observations,
+    now: NOW,
+    maximumObservationAgeSeconds: 15,
+    expectedSafetyPolicyDigest: safety.policyDigest,
+  });
   assert.equal(result.healthy, false);
   assert.ok(result.reasonCodes.includes("LIGHTNING_NODE_UNSAFE"));
   assert.equal(result.evidenceSetDigest.includes(unsafe.evidenceDigest.slice(2)), false);
