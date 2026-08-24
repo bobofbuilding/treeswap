@@ -332,7 +332,8 @@ try {
   const registry = new Contract(expected.paymentHashRegistry, registryArtifact.abi, provider);
   const vault = new Contract(expected.vault, vaultArtifact.abi, provider);
   const userEscrow = new Contract(expected.userEscrow, userEscrowArtifact.abi, provider);
-  const controllerControl = new Contract(await controller.getAddress(), walletArtifact.abi, wallets[1]);
+  const controllerExecutor = new NonceManager(wallets[1]);
+  const controllerControl = new Contract(await controller.getAddress(), walletArtifact.abi, controllerExecutor);
   const controllerReceipts = [];
   let sealReceipt;
   for (const action of deploymentPlan.controllerSafeActions) {
@@ -616,7 +617,8 @@ try {
     userEscrowBitBalanceWei: "0",
   });
 
-  const bitControl = new Contract(await bitProxy.getAddress(), bitImplementationArtifact.abi, wallets[0]);
+  const bitMutator = new NonceManager(wallets[0]);
+  const bitControl = new Contract(await bitProxy.getAddress(), bitImplementationArtifact.abi, bitMutator);
   const unexpectedInventoryReceipt = await (await bitControl.setBalanceForTest(await vault.getAddress(), 1n)).wait();
   await waitForFinality(provider, unexpectedInventoryReceipt.blockNumber);
   const unexpectedInventoryObservation = await observeDeploymentManifest({
