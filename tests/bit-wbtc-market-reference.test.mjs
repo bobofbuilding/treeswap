@@ -36,6 +36,9 @@ const policy = Object.freeze({
   bitDecimals: 18,
   bitPaused: false,
   wbtcToken: WBTC_TOKEN_ADDRESS,
+  wbtcSymbol: "WBTC",
+  wbtcDecimals: 8,
+  wbtcPaused: false,
   uniswapV3Factory: UNISWAP_V3_FACTORY_ADDRESS,
   uniswapV3FactoryCodeHash: HASH("5"),
   wbtcTokenCodeHash: HASH("6"),
@@ -102,6 +105,9 @@ function observation(index, changes = {}) {
     bitPaused: policy.bitPaused,
     wbtcToken: WBTC_TOKEN_ADDRESS,
     wbtcTokenCodeHash: policy.wbtcTokenCodeHash,
+    wbtcSymbol: policy.wbtcSymbol,
+    wbtcDecimals: policy.wbtcDecimals,
+    wbtcPaused: policy.wbtcPaused,
     factory: UNISWAP_V3_FACTORY_ADDRESS,
     factoryCodeHash: policy.uniswapV3FactoryCodeHash,
     factoryPool: policy.poolAddress,
@@ -183,6 +189,11 @@ test("builds one request-sized pool signal from two agreeing provider domains", 
   assert.equal(result.evidence.bitSymbol, "BIT");
   assert.equal(result.evidence.bitDecimals, 18n);
   assert.equal(result.evidence.bitPaused, false);
+  assert.equal(result.evidence.wbtcToken, WBTC_TOKEN_ADDRESS);
+  assert.equal(result.evidence.wbtcTokenCodeHash, policy.wbtcTokenCodeHash);
+  assert.equal(result.evidence.wbtcSymbol, "WBTC");
+  assert.equal(result.evidence.wbtcDecimals, 8n);
+  assert.equal(result.evidence.wbtcPaused, false);
   assert.equal(result.evidence.fundingAuthorization, false);
   assert.match(result.evidence.evidenceDigest, /^0x[0-9a-f]{64}$/);
   assert.equal(isVerifiedBitWbtcPoolPriceSignal(result.priceSignal), true);
@@ -308,23 +319,50 @@ test("pins the upgradeable BIT runtime and rejects unsafe token state", () => {
   }
 });
 
+test("pins canonical WBTC metadata and rejects a paused market boundary", () => {
+  for (const [changes, pattern] of [
+    [{ wbtcTokenCodeHash: HASH("1") }, /wbtcTokenCodeHash does not match policy/],
+    [{ wbtcSymbol: "CHANGED" }, /WBTC symbol does not match policy/],
+    [{ wbtcDecimals: 18 }, /WBTC decimals do not match policy/],
+    [{ wbtcPaused: true }, /WBTC pause state does not match policy/],
+  ]) {
+    assert.throws(() => buildBitWbtcPoolPriceSignal({
+      policy,
+      request,
+      observations: [observation(1, changes), observation(2, changes)],
+    }), pattern);
+  }
+
+  for (const [changes, pattern] of [
+    [{ wbtcSymbol: "CHANGED" }, /WBTC symbol must be WBTC/],
+    [{ wbtcDecimals: 18 }, /WBTC decimals must be 8/],
+    [{ wbtcPaused: true }, /WBTC state must be unpaused/],
+  ]) {
+    assert.throws(() => buildBitWbtcPoolPriceSignal({
+      policy: { ...policy, ...changes },
+      request,
+      observations: [observation(1), observation(2)],
+    }), pattern);
+  }
+});
+
 test("rejects unversioned or cross-version pool inputs", () => {
   assert.throws(() => buildBitWbtcPoolPriceSignal({
-    policy: { ...policy, schema: "treeswap.bit-wbtc-market-policy.v2" },
+    policy: { ...policy, schema: "treeswap.bit-wbtc-market-policy.v1" },
     request,
     observations: [observation(1), observation(2)],
   }), /policy schema is invalid/);
   assert.throws(() => buildBitWbtcPoolPriceSignal({
     policy,
-    request: { ...request, schema: "treeswap.bit-wbtc-price-request.v2" },
+    request: { ...request, schema: "treeswap.bit-wbtc-price-request.v1" },
     observations: [observation(1), observation(2)],
   }), /request schema is invalid/);
   assert.throws(() => buildBitWbtcPoolPriceSignal({
     policy,
     request,
     observations: [
-      observation(1, { schema: "treeswap.bit-wbtc-provider-observation.v2" }),
-      observation(2, { schema: "treeswap.bit-wbtc-provider-observation.v2" }),
+      observation(1, { schema: "treeswap.bit-wbtc-provider-observation.v1" }),
+      observation(2, { schema: "treeswap.bit-wbtc-provider-observation.v1" }),
     ],
   }), /observation schema is invalid/);
 });
