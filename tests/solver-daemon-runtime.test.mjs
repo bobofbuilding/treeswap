@@ -382,6 +382,91 @@ function evmHarness(value) {
   return { config, get rawTransaction() { return rawTransaction; } };
 }
 
+test("rechecks leadership after private evidence reads and before durable state changes", async (t) => {
+  const fixture = await openStore("leadership-loss", "lightning-to-bit");
+  t.after(() => fixture.store.close());
+  const packets = packetClient(fixture.value);
+  let guardedBoundary = null;
+  await assert.rejects(executeSolverDaemonStep(runtimeArgs(fixture, {
+    packetClient: packets,
+    beforeSideEffect: async (boundary) => {
+      guardedBoundary = boundary;
+      throw new Error("coordinator supervisor no longer owns its lease");
+    },
+  })), /no longer owns its lease/);
+  assert.equal(packets.reads, 1);
+  assert.equal(guardedBoundary, "lightning-action-plan");
+  assert.deepEqual(fixture.store.listSettlementActions(fixture.value.settlementId), []);
+  assert.equal(nextSolverDaemonStep({ store: fixture.store, settlementId: fixture.value.settlementId }).kind,
+    "PLAN_LIGHTNING_ACTION");
+});
+
+test("leadership loss after dispatch approval cannot claim or contact Lightning", async (t) => {
+  const fixture = await openStore("dispatch-leadership-loss", "lightning-to-bit");
+  t.after(() => fixture.store.close());
+  const packets = packetClient(fixture.value);
+  const adapter = lightningAdapter();
+  const controls = {
+    authorizeLightning: async ({ action, settlement: current, packet, packetResponseDigest }) => authorization(
+      action, current, packetResponseDigest, packet,
+    ),
+  };
+  const planned = await executeSolverDaemonStep(runtimeArgs(fixture, {
+    packetClient: packets,
+    lightning: adapter.config,
+    controls,
+  }));
+  let guardedBoundary = null;
+  await assert.rejects(executeSolverDaemonStep(runtimeArgs(fixture, {
+    packetClient: packets,
+    lightning: adapter.config,
+    controls,
+    beforeSideEffect: async (boundary) => {
+      guardedBoundary = boundary;
+      throw new Error("coordinator supervisor no longer owns its lease");
+    },
+  })), /no longer owns its lease/);
+  assert.equal(guardedBoundary, "lightning-dispatch-claim");
+  assert.equal(adapter.calls, 0);
+  assert.equal(fixture.store.getAction(planned.actionId).state, "PENDING");
+  assert.equal(fixture.store.getAction(planned.actionId).dispatchCount, 0);
+});
+
+test("leadership loss after a durable claim cannot contact Lightning and recovers as unknown", async (t) => {
+  const fixture = await openStore("claimed-dispatch-leadership-loss", "lightning-to-bit");
+  t.after(() => fixture.store.close());
+  const packets = packetClient(fixture.value);
+  const adapter = lightningAdapter();
+  const controls = {
+    authorizeLightning: async ({ action, settlement: current, packet, packetResponseDigest }) => authorization(
+      action, current, packetResponseDigest, packet,
+    ),
+  };
+  const planned = await executeSolverDaemonStep(runtimeArgs(fixture, {
+    packetClient: packets,
+    lightning: adapter.config,
+    controls,
+  }));
+  const guardedBoundaries = [];
+  await assert.rejects(executeSolverDaemonStep(runtimeArgs(fixture, {
+    packetClient: packets,
+    lightning: adapter.config,
+    controls,
+    beforeSideEffect: async (boundary) => {
+      guardedBoundaries.push(boundary);
+      if (boundary === "lightning-dispatch-send") {
+        throw new Error("coordinator supervisor no longer owns its lease");
+      }
+    },
+  })), /no longer owns its lease/);
+  assert.deepEqual(guardedBoundaries, ["lightning-dispatch-claim", "lightning-dispatch-send"]);
+  assert.equal(adapter.calls, 0);
+  assert.equal(fixture.store.getAction(planned.actionId).state, "DISPATCHING");
+  assert.equal(fixture.store.getAction(planned.actionId).dispatchCount, 1);
+  assert.equal(nextSolverDaemonStep({ store: fixture.store, settlementId: fixture.value.settlementId }).kind,
+    "RECOVER_INTERRUPTED_ACTION");
+});
+
 test("runs Lightning-to-BIT through exact packet dispatch and terminal asset proof without persisting the preimage", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "treeswap-daemon-invoice-"));
   t.after(() => rm(directory, { recursive: true, force: true }));

@@ -237,6 +237,40 @@ test("broadcasts once, stays UNKNOWN, and permits only the identical signed tran
   );
 });
 
+test("leadership loss after durable EVM claim prevents transaction broadcast", async (t) => {
+  const fixture = await preparedStore(t, "evm-leadership-loss");
+  const guardedBoundaries = [];
+  let broadcastCalls = 0;
+  await assert.rejects(dispatchEvmClaimAction({
+    store: fixture.store,
+    actionId: fixture.planned.actionId,
+    operation: fixture.op,
+    signer,
+    expectedChainId: CHAIN_ID,
+    expectedContract: CONTRACT,
+    expectedContractCodeHash: CONTRACT_CODE_HASH,
+    maximumGasCostWei: MAXIMUM_GAS_COST_WEI,
+    rpcUrl: "http://127.0.0.1:8545",
+    rpcRequestImpl: async ({ method }) => {
+      if (method === "eth_chainId") return hexQuantity(CHAIN_ID);
+      if (method === "eth_getCode") return CONTRACT_CODE;
+      broadcastCalls += 1;
+      throw new Error("must not broadcast");
+    },
+    nowSeconds: () => NOW + 4,
+    beforeSideEffect: async (boundary) => {
+      guardedBoundaries.push(boundary);
+      if (boundary === "evm-broadcast-send") {
+        throw new Error("coordinator supervisor no longer owns its lease");
+      }
+    },
+  }), /no longer owns its lease/);
+  assert.deepEqual(guardedBoundaries, ["evm-broadcast-claim", "evm-broadcast-send"]);
+  assert.equal(broadcastCalls, 0);
+  assert.equal(fixture.store.getAction(fixture.planned.actionId).state, "DISPATCHING");
+  assert.equal(fixture.store.getEvmTransaction(fixture.planned.actionId).broadcastCount, 1);
+});
+
 test("rejects excessive gas cost or changed escrow code before durable broadcast", async (t) => {
   const fixture = await preparedStore(t, "preflight");
   await assert.rejects(
