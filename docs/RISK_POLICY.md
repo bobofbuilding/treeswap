@@ -1,6 +1,6 @@
 # TreeSwap fail-closed risk policy
 
-Status: executable policy, bounded secret-free monitor, and local actual-gate halt harness. Production quotes remain disabled until live inputs, continuous scheduling, redundant guardian delivery, alert routing, and operations are deployed and independently reviewed.
+Status: executable policy, bounded secret-free monitor, policy-bound two-route guardian/alert failover, and local actual-gate halt harness. Production quotes remain disabled until live inputs, continuous scheduling, genuinely redundant guardian delivery, public alert routing, and operations are deployed and independently reviewed.
 
 ## Why 100 sats is not enough
 
@@ -53,4 +53,4 @@ The recorded BIT v1 implementation applies its pause to mint and redeem, not ord
 
 Before testnet funding, record the expected proxy and implementation addresses and code hashes, configure three independent executable price sources, run the monitor continuously, alert on every failure reason, and test that the quote service actually stops. Before capped mainnet, the policy, data sources, and multisig recovery procedure require independent review.
 
-The local monitor now requires two fresh, short-lived EIP-712 observations from distinct policy-pinned operator commitments in each of the BIT, price, finality, provider-quorum, Lightning, capacity, reconciliation, and audit domains. One missing collector, disagreement, or any unsafe report halts. Its actual-gate campaign closes quotes, submits a guardian halt, verifies the gate closed, and emits the alert afterward. Signatures authenticate the configured claims but do not prove honest or organizationally independent operation. This proves the bounded repository path, not continuously deployed redundant monitors or public alert integration. See [Safety monitoring boundary](./MONITORING.md).
+The local monitor now requires two fresh, short-lived EIP-712 observations from distinct policy-pinned operator commitments in each of the BIT, price, finality, provider-quorum, Lightning, capacity, reconciliation, and audit domains. One missing collector, disagreement, or any unsafe report halts. The same policy binds one quote closer, two distinct guardian-broadcast routes, and two distinct alert routes. Its actual-gate campaign closes quotes, tolerates one guardian outage while the other halts, verifies the gate closed, and then tolerates one alert-route outage while the other delivers. Signatures and route commitments authenticate the configured local claims and wiring only; they do not prove honest, deployed, or organizationally independent operation. See [Safety monitoring boundary](./MONITORING.md).
