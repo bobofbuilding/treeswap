@@ -1,6 +1,6 @@
 # BIT/WBTC market reference
 
-Status: repository verifier and fail-closed price-source identity checks implemented. No canonical BIT/WBTC pool exists yet, so this source is unavailable and cannot authorize a funded quote.
+Status: repository verifier and fail-closed price-source identity checks implemented, including the upgradeable BIT boundary. No canonical BIT/WBTC pool exists yet, so this source is unavailable and cannot authorize a funded quote.
 
 ## Product priority
 
@@ -17,7 +17,7 @@ Two RPC providers reading the same pool prove observation agreement, not two pri
 
 ## Derived price
 
-`lib/bit-wbtc-market-reference.mjs` uses integer arithmetic only. It reconstructs the Uniswap v3 arithmetic-mean tick from the configured TWAP interval, converts the tick into WBTC atomic units per whole BIT using the canonical 18-decimal BIT and 8-decimal Ethereum WBTC contracts, and checks a direction-specific request-sized executable probe against that TWAP.
+`lib/bit-wbtc-market-reference.mjs` uses integer arithmetic only. It first requires both providers to observe the policy-pinned BIT proxy runtime, EIP-1967 implementation slot, implementation address and runtime, `BIT` symbol, 18 decimals, and unpaused state at the same finalized block. It then reconstructs the Uniswap v3 arithmetic-mean tick from the configured TWAP interval, converts the tick into WBTC atomic units per whole BIT using the verified 18-decimal BIT and 8-decimal Ethereum WBTC contracts, and checks a direction-specific request-sized executable probe against that TWAP.
 
 The final reference is:
 
@@ -29,7 +29,8 @@ WBTC atomic units have the same `10^-8` scale as bitcoin satoshis. The separatel
 
 One pool signal is eligible only when all of these hold:
 
-- the chain, canonical BIT and WBTC runtime, canonical Uniswap v3 factory/runtime, factory-returned pool, token ordering, fee tier, pool runtime and initialization transaction/time, quoter, and quoter runtime match a signed policy;
+- the policy, provider observation, and exact request use the supported versioned schemas; unknown or unversioned formats fail closed before signature or price evaluation;
+- the chain, canonical BIT proxy runtime, EIP-1967 implementation slot/address/runtime, `BIT` / `18` / `false` token state, WBTC runtime, canonical Uniswap v3 factory/runtime, factory-returned pool, token ordering, fee tier, pool runtime and initialization transaction/time, quoter, and quoter runtime match a signed policy;
 - two or more separately governed provider organizations are pinned by signer and organization in the policy, EIP-712-sign the exact observation, and agree on the same recent finalized block and every raw pool, probe, and feed field;
 - finality lag and finalized-block age are inside policy;
 - the pool has at least seven days of history, the configured observation cardinality, the minimum harmonic-mean active liquidity, and a minimum wide-range-liquidity measurement whose exact reviewed methodology digest is pinned;
@@ -52,11 +53,13 @@ Solvers still choose their own exact amount and fee and compete to fill the user
 
 TreeSwap never silently falls back from an unavailable or unsafe market source to the 100-sat reference. Bootstrap testing may use operator-owned inventory under the separately signed tiny testnet caps, but the missing pool or missing independent venues keeps public funded execution closed.
 
+Any BIT pause, proxy-runtime change, implementation-slot change, implementation-runtime change, symbol change, or decimal change invalidates the pool policy and closes this source. A new BIT implementation may contribute only after a new reviewed policy digest is signed and explicitly allowlisted by a later release.
+
 ## Pool rollout gate
 
 Before this source can become live, operators must publish and independently review:
 
-1. the pool creation transaction, factory-derived address, token ordering, fee tier, runtime hash, initialization price, and LP ownership/control disclosures;
+1. the exact BIT proxy and implementation boundary, pool creation transaction, factory-derived address, token ordering, fee tier, runtime hash, initialization price, and LP ownership/control disclosures;
 2. observation-cardinality expansion and at least seven continuous days of finalized observations;
 3. active and wide-range liquidity measurements plus manipulation-cost analysis relative to the maximum TreeSwap inventory at risk;
 4. request-sized probes for both bridge directions through two independent authenticated providers;

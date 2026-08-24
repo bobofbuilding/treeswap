@@ -2,6 +2,9 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { TypedDataEncoder, Wallet } from "ethers";
 import {
+  BIT_WBTC_MARKET_POLICY_SCHEMA,
+  BIT_WBTC_PRICE_REQUEST_SCHEMA,
+  BIT_WBTC_PROVIDER_OBSERVATION_SCHEMA,
   BIT_TOKEN_ADDRESS,
   UNISWAP_V3_FACTORY_ADDRESS,
   WBTC_TOKEN_ADDRESS,
@@ -13,6 +16,7 @@ import {
   quoteWbtcAtomicPerBitAtTick,
   sqrtRatioX96AtTick,
 } from "../lib/bit-wbtc-market-reference.mjs";
+import { EIP1967_IMPLEMENTATION_SLOT } from "../lib/bit-deployment-observer.mjs";
 
 const NOW = 2_000_000_000n;
 const BIT = 10n ** 18n;
@@ -21,8 +25,16 @@ const PROVIDER_WALLETS = [null, new Wallet(HASH("1")), new Wallet(HASH("2"))];
 const PROVIDER_ORGANIZATIONS = [null, HASH("3"), HASH("4")];
 
 const policy = Object.freeze({
+  schema: BIT_WBTC_MARKET_POLICY_SCHEMA,
   chainId: 1,
   bitToken: BIT_TOKEN_ADDRESS,
+  bitProxyCodeHash: HASH("9"),
+  bitImplementationSlot: EIP1967_IMPLEMENTATION_SLOT,
+  bitImplementation: "0x5555555555555555555555555555555555555555",
+  bitImplementationCodeHash: HASH("f"),
+  bitSymbol: "BIT",
+  bitDecimals: 18,
+  bitPaused: false,
   wbtcToken: WBTC_TOKEN_ADDRESS,
   uniswapV3Factory: UNISWAP_V3_FACTORY_ADDRESS,
   uniswapV3FactoryCodeHash: HASH("5"),
@@ -61,6 +73,7 @@ const policy = Object.freeze({
 });
 
 const request = Object.freeze({
+  schema: BIT_WBTC_PRICE_REQUEST_SCHEMA,
   now: NOW,
   direction: "lightning-to-bit",
   bitWei: BIT,
@@ -69,6 +82,7 @@ const request = Object.freeze({
 
 function observation(index, changes = {}) {
   const base = {
+    schema: BIT_WBTC_PROVIDER_OBSERVATION_SCHEMA,
     providerId: `provider-${index}`,
     providerOrganization: PROVIDER_ORGANIZATIONS[index],
     chainId: 1,
@@ -79,6 +93,13 @@ function observation(index, changes = {}) {
     blockHash: HASH("d"),
     blockTimestamp: NOW - 10n,
     bitToken: BIT_TOKEN_ADDRESS,
+    bitProxyCodeHash: policy.bitProxyCodeHash,
+    bitImplementationSlot: policy.bitImplementationSlot,
+    bitImplementation: policy.bitImplementation,
+    bitImplementationCodeHash: policy.bitImplementationCodeHash,
+    bitSymbol: policy.bitSymbol,
+    bitDecimals: policy.bitDecimals,
+    bitPaused: policy.bitPaused,
     wbtcToken: WBTC_TOKEN_ADDRESS,
     wbtcTokenCodeHash: policy.wbtcTokenCodeHash,
     factory: UNISWAP_V3_FACTORY_ADDRESS,
@@ -155,6 +176,13 @@ test("builds one request-sized pool signal from two agreeing provider domains", 
   assert.equal(result.priceSignal.pricePolicyDigest, result.evidence.policyDigest);
   assert.ok(result.priceSignal.validUntil > request.now);
   assert.equal(result.evidence.providerCount, 2);
+  assert.equal(result.evidence.bitProxyCodeHash, policy.bitProxyCodeHash);
+  assert.equal(result.evidence.bitImplementation, policy.bitImplementation);
+  assert.equal(result.evidence.bitImplementationCodeHash, policy.bitImplementationCodeHash);
+  assert.equal(result.evidence.bitImplementationSlot, EIP1967_IMPLEMENTATION_SLOT);
+  assert.equal(result.evidence.bitSymbol, "BIT");
+  assert.equal(result.evidence.bitDecimals, 18n);
+  assert.equal(result.evidence.bitPaused, false);
   assert.equal(result.evidence.fundingAuthorization, false);
   assert.match(result.evidence.evidenceDigest, /^0x[0-9a-f]{64}$/);
   assert.equal(isVerifiedBitWbtcPoolPriceSignal(result.priceSignal), true);
@@ -247,6 +275,58 @@ test("pins factory discovery, token order, initialization, and liquidity methodo
       observations: [observation(1, changes), observation(2, changes)],
     }), pattern);
   }
+});
+
+test("pins the upgradeable BIT runtime and rejects unsafe token state", () => {
+  for (const [changes, pattern] of [
+    [{ bitProxyCodeHash: HASH("1") }, /bitProxyCodeHash does not match policy/],
+    [{ bitImplementation: "0x6666666666666666666666666666666666666666" }, /bitImplementation does not match policy/],
+    [{ bitImplementationCodeHash: HASH("1") }, /bitImplementationCodeHash does not match policy/],
+    [{ bitImplementationSlot: HASH("1") }, /bitImplementationSlot does not match policy/],
+    [{ bitSymbol: "CHANGED" }, /BIT symbol does not match policy/],
+    [{ bitDecimals: 8 }, /BIT decimals do not match policy/],
+    [{ bitPaused: true }, /BIT pause state does not match policy/],
+  ]) {
+    assert.throws(() => buildBitWbtcPoolPriceSignal({
+      policy,
+      request,
+      observations: [observation(1, changes), observation(2, changes)],
+    }), pattern);
+  }
+
+  for (const [changes, pattern] of [
+    [{ bitImplementationSlot: HASH("1") }, /implementation slot is not EIP-1967/],
+    [{ bitSymbol: "CHANGED" }, /symbol must be BIT/],
+    [{ bitDecimals: 8 }, /decimals must be 18/],
+    [{ bitPaused: true }, /state must be unpaused/],
+  ]) {
+    assert.throws(() => buildBitWbtcPoolPriceSignal({
+      policy: { ...policy, ...changes },
+      request,
+      observations: [observation(1), observation(2)],
+    }), pattern);
+  }
+});
+
+test("rejects unversioned or cross-version pool inputs", () => {
+  assert.throws(() => buildBitWbtcPoolPriceSignal({
+    policy: { ...policy, schema: "treeswap.bit-wbtc-market-policy.v2" },
+    request,
+    observations: [observation(1), observation(2)],
+  }), /policy schema is invalid/);
+  assert.throws(() => buildBitWbtcPoolPriceSignal({
+    policy,
+    request: { ...request, schema: "treeswap.bit-wbtc-price-request.v2" },
+    observations: [observation(1), observation(2)],
+  }), /request schema is invalid/);
+  assert.throws(() => buildBitWbtcPoolPriceSignal({
+    policy,
+    request,
+    observations: [
+      observation(1, { schema: "treeswap.bit-wbtc-provider-observation.v2" }),
+      observation(2, { schema: "treeswap.bit-wbtc-provider-observation.v2" }),
+    ],
+  }), /observation schema is invalid/);
 });
 
 test("binds the complete policy and exact request into the evidence digest", () => {
