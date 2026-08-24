@@ -60,6 +60,8 @@ import {
   authorizeSolverFunding,
   buildPublicTestnetRuntimeReconciliationApproval,
   createActiveSolverDaemonContext,
+  deactivatePublicTestnetRelease,
+  isPublicTestnetReleaseActive,
   publicTestnetReleaseOpenRiskDigest,
   verifiedActiveSolverDaemonContext,
 } from "../lib/capabilities.mjs";
@@ -67,6 +69,7 @@ import {
   activatePublicTestnetReleaseFromManifest,
   buildPublicTestnetReleaseActivationPreflightSummary,
 } from "../lib/public-testnet-release-activation.mjs";
+import { createCoordinatorReleaseVerificationSupervisor } from "../lib/coordinator-release-supervisor.mjs";
 
 const ZERO = `0x${"00".repeat(32)}`;
 const LIGHTNING_OPERATOR = new Wallet(`0x${"55".repeat(32)}`);
@@ -934,6 +937,29 @@ test("activates funding only after same-process evidence, approvals, reconciliat
   });
   assert.equal(copiedCapability.allowed, false);
   assert.match(copiedCapability.reasons.join("; "), /cryptographically verified release capability/);
+  assert.throws(
+    () => deactivatePublicTestnetRelease(structuredClone(activation)),
+    /not backed by this process/,
+  );
+  assert.equal(deactivatePublicTestnetRelease(activation), true);
+  assert.equal(isPublicTestnetReleaseActive(activation), false);
+  assert.equal(deactivatePublicTestnetRelease(activation), false);
+  const deactivated = authorizeSolverFunding({
+    solverCapabilityVerification: solverCapability.verification,
+    deployment: activation.deployment,
+    capabilities: activation.capabilities,
+    now,
+  });
+  assert.equal(deactivated.allowed, false);
+  assert.match(deactivated.reasons.join("; "), /live release activation is inactive/);
+  assert.throws(
+    () => verifiedActiveSolverDaemonContext(executionContext, { now, requireFundingAuthorization: true }),
+    /live release activation is inactive/,
+  );
+  assert.equal(
+    verifiedActiveSolverDaemonContext(executionContext, { now, requireFundingAuthorization: false }).solverId,
+    solverBinding.solverId,
+  );
 });
 
 test("activation manifest rebuilds every raw input and retains authority only in the verifying process", async (t) => {
@@ -1016,6 +1042,35 @@ test("activation manifest rebuilds every raw input and retains authority only in
     capabilities: result.activation.capabilities,
     now,
   }).allowed, false);
+
+  const supervisor = createCoordinatorReleaseVerificationSupervisor({
+    manifestPath,
+    environment: {
+      TREESWAP_RELEASE_RPC_ONE_URL: "https://one.example/rpc/private-token",
+      TREESWAP_RELEASE_RPC_TWO_URL: "https://two.example/rpc/private-token",
+    },
+    fetchImpl: releaseRpcFetch({ candidate, deployment, now }),
+  });
+  assert.equal((await supervisor.refresh({ now })).state, "active");
+  const supervisedResult = supervisor.useActiveActivation((active) => active, { now });
+  assert.deepEqual(authorizeSolverFunding({
+    solverCapabilityVerification: solverCapability.verification,
+    deployment: supervisedResult.activation.deployment,
+    capabilities: supervisedResult.activation.capabilities,
+    now,
+  }), { allowed: true, reasons: [] });
+  await writeFile(extraPaths.reconciliationApprovals, "[]\n");
+  const failedRefresh = await supervisor.refresh({ now: now + 1 });
+  assert.equal(failedRefresh.state, "inactive");
+  const revoked = authorizeSolverFunding({
+    solverCapabilityVerification: solverCapability.verification,
+    deployment: supervisedResult.activation.deployment,
+    capabilities: supervisedResult.activation.capabilities,
+    now: now + 1,
+  });
+  assert.equal(revoked.allowed, false);
+  assert.match(revoked.reasons.join("; "), /live release activation is inactive/);
+  supervisor.stop();
 
   const malformedManifestPath = join(directory, "activation-inputs-malformed.json");
   await writeFile(malformedManifestPath, `${JSON.stringify({
