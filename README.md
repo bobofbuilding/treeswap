@@ -53,7 +53,7 @@ The prototype assumes a business par value of **1 BIT = 100 sats**. This value i
 - Reproducible BIT source, provider-comparison, and live-token fork evidence in [`docs/BIT_MAINNET_EVIDENCE.md`](docs/BIT_MAINNET_EVIDENCE.md)
 - Deterministic static preflight for the short-lived two-provider/two-reviewer ceremony in [`docs/BIT_CEREMONY_PREFLIGHT.md`](docs/BIT_CEREMONY_PREFLIGHT.md)
 - Provenance-only reviewed BIT token-deployment manifest derivation in [`docs/BIT_REVIEWED_MANIFEST.md`](docs/BIT_REVIEWED_MANIFEST.md)
-- Hermetic clean-published-commit local qualification with secret-free schema-v2 evidence via `npm run qualify:local`; the one-hour Lightning measurements are digest-bound and disposable regtest volumes are destroyed before and after every sealed run
+- Hermetic clean-published-commit local qualification with secret-free schema-v2 evidence via `npm run qualify:local`; `npm run verify:local-qualification -- --artifact <file>` independently reconstructs a private artifact against the exact current published `main`, and the one-hour Lightning measurements are digest-bound while disposable regtest volumes are destroyed before and after every sealed run
 - Exact final-artifact reconstruction and independent reviewer binding via [`docs/QUALIFICATION_REVIEW_EVIDENCE.md`](docs/QUALIFICATION_REVIEW_EVIDENCE.md); candidate v5 rejects opaque qualification digests and copied provenance
 - Deterministic two-direction execution-client reorg evidence via `npm run test:escrow-reorg`
 

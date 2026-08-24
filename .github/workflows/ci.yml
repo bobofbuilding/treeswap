@@ -83,6 +83,7 @@ jobs:
       - run: node --check lib/closed-testnet-deployment-postflight-observer.mjs
       - run: node --check lib/closed-testnet-deployment-postflight.mjs
       - run: node --check lib/qualification-evidence.mjs
+      - run: node --check lib/local-qualification-verification.mjs
       - run: node --check lib/production-duration-evidence.mjs
       - run: node --check lib/release-authorization.mjs
       - run: node --check lib/public-testnet-release-approval.mjs
@@ -136,6 +137,7 @@ jobs:
       - run: bash -n scripts/run-cross-chain-deadline-smoke.sh
       - run: bash -n scripts/run-live-bit-cross-chain-deadline-smoke.sh
       - run: node --check scripts/run-local-qualification.mjs
+      - run: node --check scripts/verify-local-qualification.mjs
       - run: node --check scripts/write-production-duration-evidence.mjs
       - run: node --check scripts/evaluate-lightning-close-recovery.mjs
       - run: node --check scripts/verify-lightning-close-collector-quorum.mjs
