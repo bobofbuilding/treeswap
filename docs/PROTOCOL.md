@@ -6,7 +6,7 @@ Status: prototype specification and local contract harness; not audited and not 
 
 TreeSwap coordinates full-fill swaps between Lightning sats and BIT on Ethereum at contract `0x57A447E4d5e18A9423408C365963A73F08B9d18C`.
 
-The product displays `1 BIT = 100 sats` as a project reference value. The BIT contract does not enforce that price. TreeSwap never promises unconditional redemption at par; users accept exact integer amounts from short-lived solver quotes.
+The product displays `1 BIT = 100 sats` as a project reference value. The BIT contract does not enforce that price. TreeSwap never promises unconditional redemption at par; users accept exact integer amounts from short-lived solver quotes. When the planned BIT/WBTC pool has sufficient reviewed history and liquidity, its finalized request-sized market signal may help bound those quotes as one venue under the [BIT/WBTC market-reference policy](./BIT_WBTC_MARKET_REFERENCE.md); it does not replace solver competition or independently set settlement amounts.
 
 The user experience is invoice-first, but public quote discovery is blind. BIT → Lightning starts with one exact, amount-bearing BOLT 11 invoice supplied by the user; only its amount and user caps reach competing solvers, while the invoice, hash, digest, payee, user, and beneficiary remain private until one solver is selected. For Lightning → BIT, the selected solver creates one short-lived hold invoice only after selection. Amountless invoices remain unsupported in v1.
 
