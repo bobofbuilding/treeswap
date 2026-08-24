@@ -63,6 +63,10 @@ import {
   publicTestnetReleaseOpenRiskDigest,
   verifiedActiveSolverDaemonContext,
 } from "../lib/capabilities.mjs";
+import {
+  activatePublicTestnetReleaseFromManifest,
+  buildPublicTestnetReleaseActivationPreflightSummary,
+} from "../lib/public-testnet-release-activation.mjs";
 
 const ZERO = `0x${"00".repeat(32)}`;
 const LIGHTNING_OPERATOR = new Wallet(`0x${"55".repeat(32)}`);
@@ -430,6 +434,78 @@ function postflightBundle(deployment) {
     observations: deployment.candidate.postflight.observations,
     attestations: deployment.candidate.postflightAttestations,
   };
+}
+
+function releaseEvidenceValues({ campaign, deployment, operations, qualification, review }) {
+  return {
+    recordTemplate: recordTemplate(),
+    policyTemplate: policyTemplate(deployment.verification.manifest),
+    promotionRecord: deployment.candidate.record,
+    promotionPolicy: deployment.candidate.policy,
+    deploymentPolicy: deployment.candidate.deploymentPolicy,
+    promotionObservations: deployment.candidate.observations,
+    promotionAttestations: deployment.attestations,
+    postflightBundle: postflightBundle(deployment),
+    campaignRecord: campaign.candidate.record,
+    campaignPolicy: campaign.candidate.policy,
+    campaignAttestations: campaign.candidate.attestations,
+    reviewRecord: review.candidate.record,
+    reviewPolicy: review.candidate.policy,
+    reviewAttestations: review.candidate.attestations,
+    operationsRecord: operations.candidate.record,
+    operationsPolicy: operations.candidate.policy,
+    operationsAttestations: operations.candidate.attestations,
+    adoptionPolicy: operations.candidate.adoptionPolicy,
+    isolationRecord: operations.serviceIsolation.candidate.record,
+    isolationPolicy: operations.serviceIsolation.candidate.policy,
+    isolationAttestations: operations.serviceIsolation.candidate.attestations,
+    qualificationArtifact: qualification.qualificationFileBytes,
+    qualificationReview: qualification.review,
+    qualificationPolicy: qualification.policy,
+    qualificationAttestation: qualification.attestation,
+  };
+}
+
+function bootstrapReleaseEvidenceValues({ bootstrap, deployment, operations, qualification, review }) {
+  return {
+    recordTemplate: bootstrapRecordTemplate(),
+    policyTemplate: bootstrapPolicyTemplate(deployment.verification.manifest),
+    bootstrapRecord: bootstrap.candidate.record,
+    bootstrapPolicy: bootstrap.candidate.policy,
+    bootstrapAttestations: bootstrap.candidate.attestations,
+    promotionRecord: deployment.candidate.record,
+    promotionPolicy: deployment.candidate.policy,
+    deploymentPolicy: deployment.candidate.deploymentPolicy,
+    promotionObservations: deployment.candidate.observations,
+    promotionAttestations: deployment.attestations,
+    postflightBundle: postflightBundle(deployment),
+    reviewRecord: review.candidate.record,
+    reviewPolicy: review.candidate.policy,
+    reviewAttestations: review.candidate.attestations,
+    operationsRecord: operations.candidate.record,
+    operationsPolicy: operations.candidate.policy,
+    operationsAttestations: operations.candidate.attestations,
+    adoptionPolicy: operations.candidate.adoptionPolicy,
+    isolationRecord: operations.serviceIsolation.candidate.record,
+    isolationPolicy: operations.serviceIsolation.candidate.policy,
+    isolationAttestations: operations.serviceIsolation.candidate.attestations,
+    qualificationArtifact: qualification.qualificationFileBytes,
+    qualificationReview: qualification.review,
+    qualificationPolicy: qualification.policy,
+    qualificationAttestation: qualification.attestation,
+  };
+}
+
+async function writeReleaseEvidenceFiles(directory, evidence) {
+  const paths = {};
+  for (const [name, value] of Object.entries(evidence)) {
+    paths[name] = join(directory, `${name}.json`);
+    await writeFile(
+      paths[name],
+      name === "qualificationArtifact" ? value : `${JSON.stringify(value)}\n`,
+    );
+  }
+  return paths;
 }
 
 async function fixture() {
@@ -858,6 +934,202 @@ test("activates funding only after same-process evidence, approvals, reconciliat
   });
   assert.equal(copiedCapability.allowed, false);
   assert.match(copiedCapability.reasons.join("; "), /cryptographically verified release capability/);
+});
+
+test("activation manifest rebuilds every raw input and retains authority only in the verifying process", async (t) => {
+  const { campaign, candidate, deployment, operations, qualification, review } = await fixture();
+  const directory = await mkdtemp(join(tmpdir(), "treeswap-release-activation-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const candidateEvidence = await writeReleaseEvidenceFiles(
+    directory,
+    releaseEvidenceValues({ campaign, deployment, operations, qualification, review }),
+  );
+  const now = candidate.record.approvalBlockTimestamp + 120;
+  const approvalBundle = await releaseApprovalBundle(candidate);
+  const reconciliation = await runtimeReconciliation(candidate, now);
+  const providerIdentities = campaign.candidate.record.participants
+    .filter((value) => value.role === "evm-provider")
+    .map((value) => value.operatorId);
+  const extraInputs = {
+    approvalBundle,
+    providerConfiguration: {
+      schema: "treeswap.public-testnet-release-approval-providers.v1",
+      providers: [
+        { identity: providerIdentities[0], urlEnvironmentVariable: "TREESWAP_RELEASE_RPC_ONE_URL" },
+        { identity: providerIdentities[1], urlEnvironmentVariable: "TREESWAP_RELEASE_RPC_TWO_URL" },
+      ],
+    },
+    reconciliation: reconciliation.reconciliation,
+    reconciliationApprovals: reconciliation.approvals,
+  };
+  const extraPaths = {};
+  for (const [name, value] of Object.entries(extraInputs)) {
+    extraPaths[name] = join(directory, `${name}.json`);
+    await writeFile(extraPaths[name], `${JSON.stringify(value)}\n`);
+  }
+  const manifest = {
+    schema: "treeswap.public-testnet-release-activation-inputs.v1",
+    candidateEvidence,
+    ...extraPaths,
+  };
+  const manifestPath = join(directory, "activation-inputs.json");
+  await writeFile(manifestPath, `${JSON.stringify(manifest)}\n`);
+  const result = await activatePublicTestnetReleaseFromManifest({
+    manifestPath,
+    environment: {
+      TREESWAP_RELEASE_RPC_ONE_URL: "https://one.example/rpc/private-token",
+      TREESWAP_RELEASE_RPC_TWO_URL: "https://two.example/rpc/private-token",
+    },
+    fetchImpl: releaseRpcFetch({ candidate, deployment, now }),
+    now,
+  });
+  const summary = buildPublicTestnetReleaseActivationPreflightSummary(result);
+  assert.equal(summary.status, "same-process-release-activation-preflight-passed");
+  assert.equal(summary.recordDigest, candidate.recordDigest);
+  assert.equal(summary.runtimeBlockNumber, 1_200);
+  assert.deepEqual(summary.authorizations, {
+    signing: false,
+    broadcast: false,
+    gateOpening: false,
+    dispatch: false,
+    funding: false,
+  });
+  assert.equal(/private-token|capabilities|signature/i.test(JSON.stringify(summary)), false);
+
+  const solverCapability = await createVerifiedSolverCapabilityFixture({
+    now,
+    chainId: candidate.record.chainId,
+    lightningToBitContract: deployment.verification.manifest.vault.address,
+    lightningToBitContractCodeHash: deployment.verification.manifest.vault.codeHash,
+    bitToLightningContract: deployment.verification.manifest.userEscrow.address,
+    bitToLightningContractCodeHash: deployment.verification.manifest.userEscrow.codeHash,
+  });
+  assert.deepEqual(authorizeSolverFunding({
+    solverCapabilityVerification: solverCapability.verification,
+    deployment: result.activation.deployment,
+    capabilities: result.activation.capabilities,
+    now,
+  }), { allowed: true, reasons: [] });
+  assert.equal(authorizeSolverFunding({
+    solverCapabilityVerification: solverCapability.verification,
+    deployment: structuredClone(result.activation.deployment),
+    capabilities: result.activation.capabilities,
+    now,
+  }).allowed, false);
+
+  const malformedManifestPath = join(directory, "activation-inputs-malformed.json");
+  await writeFile(malformedManifestPath, `${JSON.stringify({
+    ...manifest,
+    candidateEvidence: { ...candidateEvidence, preparedCandidate: extraPaths.approvalBundle },
+  })}\n`);
+  await assert.rejects(activatePublicTestnetReleaseFromManifest({
+    manifestPath: malformedManifestPath,
+    environment: {},
+    fetchImpl: releaseRpcFetch({ candidate, deployment, now }),
+    now,
+  }), /candidate evidence fields are not exact/);
+
+  const duplicateManifestPath = join(directory, "activation-inputs-duplicate.json");
+  await writeFile(duplicateManifestPath, `${JSON.stringify({
+    ...manifest,
+    reconciliationApprovals: extraPaths.reconciliation,
+  })}\n`);
+  await assert.rejects(activatePublicTestnetReleaseFromManifest({
+    manifestPath: duplicateManifestPath,
+    environment: {},
+    fetchImpl: releaseRpcFetch({ candidate, deployment, now }),
+    now,
+  }), /must use distinct files/);
+});
+
+test("activation manifest supports only the exact tiny bootstrap evidence shape before a campaign", async (t) => {
+  const deployment = await createVerifiedDeploymentPromotionFixture();
+  const qualification = await createVerifiedQualificationReviewFixture({
+    deployment,
+    fundingMode: "operator-testnet-bootstrap",
+    reviewedAt: PROMOTION_NOW - 100,
+    now: PROMOTION_NOW + 60,
+  });
+  const bootstrap = await createVerifiedPublicTestnetBootstrapFixture({
+    deployment,
+    preparedAt: PROMOTION_NOW,
+    testQualification: qualification.verification.evidenceDigest,
+    now: PROMOTION_NOW + 60,
+  });
+  const review = await createVerifiedIndependentReviewFixture({
+    deployment,
+    finishedAt: PROMOTION_NOW + 20,
+    now: PROMOTION_NOW + 60,
+  });
+  const monitor = bootstrap.candidate.record.participants.find((value) => value.role === "monitor");
+  const operations = await createVerifiedOperationalReadinessFixture({
+    deployment,
+    upstream: bootstrap,
+    fundingMode: "operator-testnet-bootstrap",
+    preparedAt: PROMOTION_NOW + 30,
+    now: PROMOTION_NOW + 60,
+    lightningOperatorWallet: LIGHTNING_OPERATOR,
+    incidentCommanderWallet: INCIDENT_COMMANDER,
+    securityReviewerWallet: SECURITY_REVIEWER,
+    monitoringOperatorWallet: bootstrap.candidate.wallets.get(monitor.signer),
+  });
+  const candidate = preparePublicTestnetBootstrapReleaseCandidate({
+    recordTemplate: bootstrapRecordTemplate(),
+    policyTemplate: bootstrapPolicyTemplate(deployment.verification.manifest),
+    bootstrapEvidenceVerification: bootstrap.verification,
+    deploymentPromotionVerification: deployment.verification,
+    independentReviewVerification: review.verification,
+    operationalReadinessVerification: operations.verification,
+    qualificationReviewVerification: qualification.verification,
+  });
+  const directory = await mkdtemp(join(tmpdir(), "treeswap-bootstrap-release-activation-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const candidateEvidence = await writeReleaseEvidenceFiles(
+    directory,
+    bootstrapReleaseEvidenceValues({ bootstrap, deployment, operations, qualification, review }),
+  );
+  const now = candidate.record.approvalBlockTimestamp + 120;
+  const approvalBundle = await releaseApprovalBundle(candidate);
+  const reconciliation = await runtimeReconciliation(candidate, now);
+  const providerIdentities = bootstrap.candidate.record.participants
+    .filter((value) => value.role === "evm-provider")
+    .map((value) => value.operatorId);
+  const values = {
+    approvalBundle,
+    providerConfiguration: {
+      schema: "treeswap.public-testnet-release-approval-providers.v1",
+      providers: [
+        { identity: providerIdentities[0], urlEnvironmentVariable: "TREESWAP_RELEASE_RPC_ONE_URL" },
+        { identity: providerIdentities[1], urlEnvironmentVariable: "TREESWAP_RELEASE_RPC_TWO_URL" },
+      ],
+    },
+    reconciliation: reconciliation.reconciliation,
+    reconciliationApprovals: reconciliation.approvals,
+  };
+  const paths = {};
+  for (const [name, value] of Object.entries(values)) {
+    paths[name] = join(directory, `${name}.json`);
+    await writeFile(paths[name], `${JSON.stringify(value)}\n`);
+  }
+  const manifestPath = join(directory, "bootstrap-activation-inputs.json");
+  await writeFile(manifestPath, `${JSON.stringify({
+    schema: "treeswap.public-testnet-release-activation-inputs.v1",
+    candidateEvidence,
+    ...paths,
+  })}\n`);
+  const result = await activatePublicTestnetReleaseFromManifest({
+    manifestPath,
+    environment: {
+      TREESWAP_RELEASE_RPC_ONE_URL: "https://one.example/rpc/private-token",
+      TREESWAP_RELEASE_RPC_TWO_URL: "https://two.example/rpc/private-token",
+    },
+    fetchImpl: releaseRpcFetch({ candidate, deployment, now }),
+    now,
+  });
+  const summary = buildPublicTestnetReleaseActivationPreflightSummary(result);
+  assert.equal(summary.fundingMode, "operator-testnet-bootstrap");
+  assert.equal(summary.recordDigest, candidate.recordDigest);
+  assert.equal(summary.authorizations.funding, false);
 });
 
 test("funding authorization rejects nominal flags, copied proofs, expiry, stale capacity, and wrong release bindings", async () => {
