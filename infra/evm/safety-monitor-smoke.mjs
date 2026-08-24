@@ -25,6 +25,9 @@ const MNEMONIC = process.env.SAFETY_MONITOR_MNEMONIC;
 const ANVIL_VERSION = String(process.env.SAFETY_MONITOR_ANVIL_VERSION ?? "");
 const CHAIN_ID = 31_337n;
 const MAXIMUM_AGE = 15;
+const MONITOR_NOW = 2_100_100_000;
+const EXPECTED_MONITOR_POLICY_DIGEST = "0xf63ad20c51dabda8d8c69bc7b0c48dbdba04882c63cb9f4ae769ec537fa26b83";
+const EXPECTED_CAMPAIGN_DIGEST = "0x112c28bb8a88dea943d14f4ded189fe4f0b8b1ef568af0ff8ed0b97187719c61";
 
 if (!RPC_URL || !MNEMONIC) throw new Error("safety monitor smoke requires an ephemeral RPC URL and mnemonic");
 if (!/^anvil Version: [0-9.]+/.test(ANVIL_VERSION)) throw new Error("Anvil version is not pinned in evidence");
@@ -102,7 +105,7 @@ try {
   let quoteIssuanceClosed = false;
   let gateHalted = false;
   let alertDeliveredAfterClosure = false;
-  const now = Number((await provider.getBlock("latest")).timestamp);
+  const now = MONITOR_NOW;
   const safetyCollectors = REQUIRED_SAFETY_CHECKS.flatMap((kind, kindIndex) => [0, 1].map((operatorIndex) => {
     const wallet = HDNodeWallet.fromPhrase(
       MNEMONIC,
@@ -238,7 +241,10 @@ try {
     productionMonitorIncluded: false,
     fundingAuthorization: false,
   });
-  process.stdout.write(`${JSON.stringify({ ...evidence, evidenceDigest: coordinatorCommitmentDigest(evidence) })}\n`);
+  const evidenceDigest = coordinatorCommitmentDigest(evidence);
+  assert.equal(safety.policyDigest, EXPECTED_MONITOR_POLICY_DIGEST);
+  assert.equal(evidenceDigest, EXPECTED_CAMPAIGN_DIGEST);
+  process.stdout.write(`${JSON.stringify({ ...evidence, evidenceDigest })}\n`);
 } finally {
   await provider.destroy();
 }
