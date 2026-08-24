@@ -9,10 +9,12 @@ import {
   verifyLightningCloseCollectorAttestation,
 } from "../lib/lightning-close-collector.mjs";
 import { evaluateLightningCloseRecovery } from "../lib/lightning-close-monitor.mjs";
-import { evaluateSafetyMonitor, REQUIRED_SAFETY_CHECKS } from "../lib/safety-monitor.mjs";
+import { evaluateSafetyMonitor } from "../lib/safety-monitor.mjs";
+import { createSignedSafetyObservationFixture } from "./fixtures/signed-safety-observations.mjs";
 
 const NOW = 2_100_000_000;
 const NODE_COMMITMENT = id("treeswap-regtest-alice-close-monitor").toLowerCase();
+const safety = createSignedSafetyObservationFixture({ now: NOW + 5 });
 
 function keyPair() {
   return generateKeyPairSync("ed25519");
@@ -170,19 +172,26 @@ test("fails closed on unsafe, missing, duplicate, unknown, stale, wrong-node, an
   assert.ok(keyReuse.reasonCodes.includes("COLLECTOR_QUORUM_INVALID"));
 });
 
-test("the signed quorum drives the existing Lightning safety halt domain", () => {
+test("the signed quorum drives the authenticated Lightning safety halt domain", async () => {
   const healthy = quorum([attestation(A), attestation(B)]);
-  const observations = REQUIRED_SAFETY_CHECKS.map((kind) => kind === "lightning-node"
-    ? healthy.observation
-    : { kind, status: "healthy", observedAt: NOW, evidenceDigest: id(`collector:${kind}`).toLowerCase() });
-  const result = evaluateSafetyMonitor({ observations, now: NOW + 5, maximumObservationAgeSeconds: 15 });
+  const observations = await safety.observations({ "lightning-node": healthy.observation });
+  const result = evaluateSafetyMonitor({
+    observations,
+    now: NOW + 5,
+    maximumObservationAgeSeconds: 15,
+    expectedSafetyPolicyDigest: safety.policyDigest,
+  });
   assert.equal(result.healthy, true);
 
   const missing = quorum([attestation(A)]);
+  const missingObservations = await safety.observations({
+    "lightning-node": { ...missing.observation, observedAt: NOW },
+  });
   const halted = evaluateSafetyMonitor({
-    observations: observations.map((entry) => entry.kind === "lightning-node" ? missing.observation : entry),
+    observations: missingObservations,
     now: NOW + 5,
     maximumObservationAgeSeconds: 15,
+    expectedSafetyPolicyDigest: safety.policyDigest,
   });
   assert.equal(halted.healthy, false);
   assert.ok(halted.reasonCodes.includes("LIGHTNING_NODE_UNSAFE"));

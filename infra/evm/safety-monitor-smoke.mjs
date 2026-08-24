@@ -13,6 +13,12 @@ import {
   REQUIRED_SAFETY_CHECKS,
   runSafetyMonitorCycle,
 } from "../../lib/safety-monitor.mjs";
+import {
+  prepareSafetyObservation,
+  SAFETY_MONITOR_POLICY_SCHEMA,
+  safetyMonitorPolicyDigest,
+  verifySafetyObservationAttestation,
+} from "../../lib/safety-observation-attestation.mjs";
 
 const RPC_URL = process.env.SAFETY_MONITOR_RPC_URL;
 const MNEMONIC = process.env.SAFETY_MONITOR_MNEMONIC;
@@ -27,13 +33,27 @@ function artifact(path) {
   return readFile(new URL(path, import.meta.url), "utf8").then(JSON.parse);
 }
 
-function observations(now, overrides = {}) {
-  return REQUIRED_SAFETY_CHECKS.map((kind) => ({
-    kind,
-    status: "healthy",
-    observedAt: now - 1,
-    evidenceDigest: id(`treeswap-monitor-smoke:${kind}`).toLowerCase(),
-    ...(overrides[kind] ?? {}),
+async function observations(now, safety, overrides = {}) {
+  return Promise.all(safety.collectors.map(async ({ kind, wallet }) => {
+    const override = overrides[kind] ?? {};
+    const observedAt = override.observedAt ?? now - 1;
+    const prepared = prepareSafetyObservation({
+      policy: safety.policy,
+      expectedPolicyDigest: safety.policyDigest,
+      kind,
+      status: override.status ?? "healthy",
+      observedAt,
+      validUntil: override.validUntil ?? observedAt + MAXIMUM_AGE,
+      evidenceDigest: override.evidenceDigest ?? id(`treeswap-monitor-smoke:${kind}`).toLowerCase(),
+    });
+    const signature = await wallet.signTypedData(prepared.domain, prepared.types, prepared.message);
+    return verifySafetyObservationAttestation({
+      policy: safety.policy,
+      expectedPolicyDigest: safety.policyDigest,
+      attestation: Object.freeze({ ...prepared.message, signature }),
+      now,
+      maximumClockSkewSeconds: 1,
+    });
   }));
 }
 
@@ -82,9 +102,37 @@ try {
   let gateHalted = false;
   let alertDeliveredAfterClosure = false;
   const now = Number((await provider.getBlock("latest")).timestamp);
-  const unhealthy = await runSafetyMonitorCycle({
-    observations: observations(now, { "bit-contract": { status: "unsafe" } }),
+  const safetyCollectors = REQUIRED_SAFETY_CHECKS.map((kind, index) => {
+    const wallet = HDNodeWallet.fromPhrase(MNEMONIC, undefined, `m/44'/60'/0'/0/${index + 10}`);
+    return Object.freeze({
+      kind,
+      collectorId: id(`treeswap-monitor-smoke-collector:${kind}`).toLowerCase(),
+      wallet,
+    });
+  });
+  const safetyPolicy = Object.freeze({
+    schema: SAFETY_MONITOR_POLICY_SCHEMA,
+    chainId: CHAIN_ID.toString(),
+    verifyingContract: gateAddress,
+    releaseRecordDigest: id("treeswap-monitor-smoke-release-record").toLowerCase(),
+    validFrom: now - 60,
+    validUntil: now + 3_600,
     maximumObservationAgeSeconds: MAXIMUM_AGE,
+    collectors: Object.freeze(safetyCollectors.map(({ kind, collectorId, wallet }) => Object.freeze({
+      kind,
+      collectorId,
+      signer: wallet.address,
+    }))),
+  });
+  const safety = Object.freeze({
+    collectors: safetyCollectors,
+    policy: safetyPolicy,
+    policyDigest: safetyMonitorPolicyDigest(safetyPolicy),
+  });
+  const unhealthy = await runSafetyMonitorCycle({
+    observations: await observations(now, safety, { "bit-contract": { status: "unsafe" } }),
+    maximumObservationAgeSeconds: MAXIMUM_AGE,
+    expectedSafetyPolicyDigest: safety.policyDigest,
     nowSeconds: () => now,
     closeQuoteIssuance: async () => {
       quoteIssuanceClosed = true;
@@ -119,8 +167,9 @@ try {
 
   let healthyMutationCalls = 0;
   const healthy = await runSafetyMonitorCycle({
-    observations: observations(now),
+    observations: await observations(now, safety),
     maximumObservationAgeSeconds: MAXIMUM_AGE,
+    expectedSafetyPolicyDigest: safety.policyDigest,
     nowSeconds: () => now,
     closeQuoteIssuance: async () => { healthyMutationCalls += 1; },
     haltOnchainGate: async () => { healthyMutationCalls += 1; },
@@ -130,12 +179,13 @@ try {
   assert.equal(healthyMutationCalls, 0);
   assert.equal(await gate.isOpen(), false);
 
-  const malicious = observations(now);
+  const malicious = await observations(now, safety);
   malicious[0] = { ...malicious[0], invoice: "lnbc-must-not-enter-alert" };
   let outageAlert;
   const outage = await runSafetyMonitorCycle({
     observations: malicious,
     maximumObservationAgeSeconds: MAXIMUM_AGE,
+    expectedSafetyPolicyDigest: safety.policyDigest,
     nowSeconds: () => now,
     closeQuoteIssuance: async () => ({ closed: true }),
     haltOnchainGate: async (alert) => {
@@ -157,7 +207,7 @@ try {
   assert.equal(await gate.isOpen(), false);
 
   const evidence = Object.freeze({
-    schema: "treeswap.safety-monitor-smoke.v1",
+    schema: "treeswap.safety-monitor-smoke.v2",
     chainId: String(CHAIN_ID),
     executionClient: ANVIL_VERSION,
     actualOpenGate: true,
@@ -167,6 +217,8 @@ try {
     alertDeliveredAfterClosure,
     healthyCycleHasNoOpenAuthority: healthyMutationCalls === 0,
     malformedObservationFailedClosed: outage.newExposureClosed,
+    signedReleaseBoundObservations: true,
+    safetyMonitorPolicyDigest: safety.policyDigest,
     secretMaterialInAlert: false,
     publicAlertProviderIncluded: false,
     productionMonitorIncluded: false,
