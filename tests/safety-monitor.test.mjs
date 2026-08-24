@@ -10,7 +10,7 @@ import { createSignedSafetyObservationFixture } from "./fixtures/signed-safety-o
 const NOW = 2_100_000_000;
 const safety = createSignedSafetyObservationFixture({ now: NOW });
 
-test("accepts only signed, release-policy-bound observations from every required safety domain", async () => {
+test("accepts only two signed, release-policy-bound operator observations from every required safety domain", async () => {
   const result = evaluateSafetyMonitor({
     observations: await safety.observations(),
     now: NOW,
@@ -24,7 +24,7 @@ test("accepts only signed, release-policy-bound observations from every required
   assert.match(result.alertDigest, /^0x[0-9a-f]{64}$/);
 });
 
-test("missing, stale, future, duplicate, unsafe, or unverified observations fail closed", async () => {
+test("outage, stale, future, duplicate, unsafe, or unverified observations fail closed", async () => {
   const unsafe = await safety.observations({
     "bit-contract": { status: "unsafe" },
     "price-quorum": { observedAt: NOW - 100 },
@@ -50,11 +50,60 @@ test("missing, stale, future, duplicate, unsafe, or unverified observations fail
   assert.ok(result.reasonCodes.includes("PRICE_QUORUM_STALE"));
   assert.ok(result.reasonCodes.includes("PRICE_QUORUM_EXPIRED"));
   assert.ok(result.reasonCodes.includes("LIGHTNING_NODE_FUTURE"));
-  assert.ok(result.reasonCodes.includes("SOLVER_CAPACITY_MISSING"));
-  assert.ok(result.reasonCodes.includes("ASSET_RECONCILIATION_DUPLICATE"));
+  assert.ok(result.reasonCodes.includes("SOLVER_CAPACITY_COLLECTOR_OUTAGE"));
+  assert.ok(result.reasonCodes.includes("ASSET_RECONCILIATION_COLLECTOR_DUPLICATE"));
   assert.ok(result.reasonCodes.includes("MONITOR_INPUT_INVALID"));
   assert.equal(JSON.stringify(result).includes("must-not-enter-the-alert"), false);
   assert.equal(JSON.stringify(result).includes("privateKey"), false);
+});
+
+test("one collector outage or cross-operator disagreement cannot produce a healthy cycle", async () => {
+  const priceCollectors = safety.collectors.filter((collector) => collector.kind === "price-quorum");
+  assert.equal(priceCollectors.length, 2);
+
+  const missingOne = (await safety.observations())
+    .filter((observation) => observation.collectorId !== priceCollectors[1].collectorId);
+  const outage = evaluateSafetyMonitor({
+    observations: missingOne,
+    now: NOW,
+    maximumObservationAgeSeconds: 15,
+    expectedSafetyPolicyDigest: safety.policyDigest,
+  });
+  assert.equal(outage.healthy, false);
+  assert.ok(outage.reasonCodes.includes("PRICE_QUORUM_COLLECTOR_OUTAGE"));
+
+  const missingBoth = evaluateSafetyMonitor({
+    observations: (await safety.observations()).filter((observation) => observation.kind !== "price-quorum"),
+    now: NOW,
+    maximumObservationAgeSeconds: 15,
+    expectedSafetyPolicyDigest: safety.policyDigest,
+  });
+  assert.equal(missingBoth.healthy, false);
+  assert.ok(missingBoth.reasonCodes.includes("PRICE_QUORUM_MISSING"));
+  assert.ok(missingBoth.reasonCodes.includes("PRICE_QUORUM_COLLECTOR_OUTAGE"));
+
+  const disagreement = evaluateSafetyMonitor({
+    observations: await safety.observations({
+      [priceCollectors[1].collectorId]: { status: "unsafe" },
+    }),
+    now: NOW,
+    maximumObservationAgeSeconds: 15,
+    expectedSafetyPolicyDigest: safety.policyDigest,
+  });
+  assert.equal(disagreement.healthy, false);
+  assert.ok(disagreement.reasonCodes.includes("PRICE_QUORUM_DISAGREEMENT"));
+  assert.ok(disagreement.reasonCodes.includes("PRICE_QUORUM_UNSAFE"));
+});
+
+test("collector delivery order cannot change the canonical evidence digest", async () => {
+  const observations = await safety.observations();
+  const evaluate = (candidate) => evaluateSafetyMonitor({
+    observations: candidate,
+    now: NOW,
+    maximumObservationAgeSeconds: 15,
+    expectedSafetyPolicyDigest: safety.policyDigest,
+  });
+  assert.equal(evaluate(observations).evidenceSetDigest, evaluate([...observations].reverse()).evidenceSetDigest);
 });
 
 test("healthy monitoring has no authority to open or mutate either exposure gate", async () => {

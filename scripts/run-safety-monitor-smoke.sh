@@ -19,16 +19,25 @@ trap cleanup EXIT
 
 cd "$project_root"
 forge build --quiet
+if cast chain-id --rpc-url "$monitor_rpc" >/dev/null 2>&1; then
+  echo "safety monitor smoke port is already in use" >&2
+  exit 1
+fi
 anvil --host 127.0.0.1 --port "$monitor_port" --chain-id 31337 --mnemonic "$monitor_mnemonic" \
   --timestamp 2100000000 --silent >"$monitor_log" 2>&1 &
 monitor_pid=$!
 
 for _ in $(seq 1 100); do
+  if ! kill -0 "$monitor_pid" >/dev/null 2>&1; then
+    echo "safety monitor Anvil process exited before readiness" >&2
+    exit 1
+  fi
   if cast chain-id --rpc-url "$monitor_rpc" >/dev/null 2>&1; then
     break
   fi
   sleep 0.1
 done
+kill -0 "$monitor_pid" >/dev/null 2>&1
 cast chain-id --rpc-url "$monitor_rpc" >/dev/null
 
 SAFETY_MONITOR_RPC_URL="$monitor_rpc" \

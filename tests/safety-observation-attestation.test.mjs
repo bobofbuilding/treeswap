@@ -13,12 +13,13 @@ import { createSignedSafetyObservationFixture } from "./fixtures/signed-safety-o
 
 const NOW = 2_100_000_000;
 const safety = createSignedSafetyObservationFixture({ now: NOW });
+const priceCollector = safety.collectors.find((candidate) => candidate.kind === "price-quorum");
 
 async function signedAttestation(overrides = {}) {
-  const collector = safety.collectors.find((candidate) => candidate.kind === "price-quorum");
   const prepared = prepareSafetyObservation({
     policy: safety.policy,
     expectedPolicyDigest: safety.policyDigest,
+    collectorId: priceCollector.collectorId,
     kind: "price-quorum",
     status: "healthy",
     observedAt: NOW - 2,
@@ -28,7 +29,7 @@ async function signedAttestation(overrides = {}) {
   });
   return Object.freeze({
     ...prepared.message,
-    signature: await collector.wallet.signTypedData(prepared.domain, prepared.types, prepared.message),
+    signature: await priceCollector.wallet.signTypedData(prepared.domain, prepared.types, prepared.message),
   });
 }
 
@@ -41,6 +42,7 @@ test("verifies a short-lived EIP-712 observation against the exact release-bound
     maximumClockSkewSeconds: 1,
   });
   assert.deepEqual(observation, {
+    collectorId: priceCollector.collectorId,
     kind: "price-quorum",
     status: "healthy",
     observedAt: NOW - 2,
@@ -49,6 +51,7 @@ test("verifies a short-lived EIP-712 observation against the exact release-bound
   const binding = verifiedSafetyObservationBinding(observation);
   assert.equal(binding.policyDigest, safety.policyDigest);
   assert.equal(binding.releaseRecordDigest, safety.policy.releaseRecordDigest);
+  assert.equal(binding.operatorId, priceCollector.operatorId);
   assert.equal(binding.validUntil, NOW + 10);
 });
 
@@ -76,6 +79,7 @@ test("rejects mutation, copied provenance, wrong signer, expiry, and policy subs
   const prepared = prepareSafetyObservation({
     policy: safety.policy,
     expectedPolicyDigest: safety.policyDigest,
+    collectorId: priceCollector.collectorId,
     kind: "price-quorum",
     status: "healthy",
     observedAt: NOW - 2,
@@ -96,9 +100,13 @@ test("rejects mutation, copied provenance, wrong signer, expiry, and policy subs
   assert.throws(() => verifiedSafetyObservationBinding({ ...observation }), /lacks same-process/);
 });
 
-test("requires a complete, exact, canonically ordered policy with separate collector identities", () => {
+test("requires two canonically ordered, independently committed collectors for every safety domain", () => {
   assert.equal(safety.policy.schema, SAFETY_MONITOR_POLICY_SCHEMA);
-  assert.equal(SAFETY_OBSERVATION_SCHEMA, "treeswap.safety-observation-attestation.v1");
+  assert.equal(SAFETY_OBSERVATION_SCHEMA, "treeswap.safety-observation-attestation.v2");
+  assert.throws(
+    () => safetyMonitorPolicyDigest({ ...safety.policy, schema: "treeswap.safety-monitor-policy.v1" }),
+    /schema is invalid/,
+  );
   assert.throws(
     () => safetyMonitorPolicyDigest({ ...safety.policy, extra: true }),
     /fields are not exact/,
@@ -125,5 +133,38 @@ test("requires a complete, exact, canonically ordered policy with separate colle
         : collector),
     }),
     /identities and signers must be distinct/,
+  );
+  const priceCollectors = safety.policy.collectors
+    .map((collector, index) => ({ collector, index }))
+    .filter(({ collector }) => collector.kind === "price-quorum");
+  assert.equal(priceCollectors.length, 2);
+  assert.throws(
+    () => safetyMonitorPolicyDigest({
+      ...safety.policy,
+      collectors: safety.policy.collectors.map((collector, index) => index === priceCollectors[1].index
+        ? { ...collector, operatorId: priceCollectors[0].collector.operatorId }
+        : collector),
+    }),
+    /distinct operator commitments/,
+  );
+  assert.throws(
+    () => safetyMonitorPolicyDigest({
+      ...safety.policy,
+      collectors: safety.policy.collectors.slice(1),
+    }),
+    /exactly two collectors per safety domain/,
+  );
+  assert.throws(
+    () => prepareSafetyObservation({
+      policy: safety.policy,
+      expectedPolicyDigest: safety.policyDigest,
+      collectorId: priceCollector.collectorId,
+      kind: "solver-capacity",
+      status: "healthy",
+      observedAt: NOW - 2,
+      validUntil: NOW + 10,
+      evidenceDigest: id("wrong-domain").toLowerCase(),
+    }),
+    /not configured for the requested domain/,
   );
 });
