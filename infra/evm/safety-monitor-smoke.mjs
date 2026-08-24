@@ -34,17 +34,18 @@ function artifact(path) {
 }
 
 async function observations(now, safety, overrides = {}) {
-  return Promise.all(safety.collectors.map(async ({ kind, wallet }) => {
-    const override = overrides[kind] ?? {};
+  return Promise.all(safety.collectors.map(async ({ kind, collectorId, operatorIndex, wallet }) => {
+    const override = overrides[collectorId] ?? overrides[`${kind}:${operatorIndex}`] ?? overrides[kind] ?? {};
     const observedAt = override.observedAt ?? now - 1;
     const prepared = prepareSafetyObservation({
       policy: safety.policy,
       expectedPolicyDigest: safety.policyDigest,
+      collectorId,
       kind,
       status: override.status ?? "healthy",
       observedAt,
       validUntil: override.validUntil ?? observedAt + MAXIMUM_AGE,
-      evidenceDigest: override.evidenceDigest ?? id(`treeswap-monitor-smoke:${kind}`).toLowerCase(),
+      evidenceDigest: override.evidenceDigest ?? id(`treeswap-monitor-smoke:${kind}:${collectorId}`).toLowerCase(),
     });
     const signature = await wallet.signTypedData(prepared.domain, prepared.types, prepared.message);
     return verifySafetyObservationAttestation({
@@ -102,14 +103,20 @@ try {
   let gateHalted = false;
   let alertDeliveredAfterClosure = false;
   const now = Number((await provider.getBlock("latest")).timestamp);
-  const safetyCollectors = REQUIRED_SAFETY_CHECKS.map((kind, index) => {
-    const wallet = HDNodeWallet.fromPhrase(MNEMONIC, undefined, `m/44'/60'/0'/0/${index + 10}`);
+  const safetyCollectors = REQUIRED_SAFETY_CHECKS.flatMap((kind, kindIndex) => [0, 1].map((operatorIndex) => {
+    const wallet = HDNodeWallet.fromPhrase(
+      MNEMONIC,
+      undefined,
+      `m/44'/60'/0'/0/${kindIndex * 2 + operatorIndex + 10}`,
+    );
     return Object.freeze({
       kind,
-      collectorId: id(`treeswap-monitor-smoke-collector:${kind}`).toLowerCase(),
+      operatorIndex,
+      operatorId: id(`treeswap-monitor-smoke-operator:${operatorIndex}`).toLowerCase(),
+      collectorId: id(`treeswap-monitor-smoke-collector:${kind}:${operatorIndex}`).toLowerCase(),
       wallet,
     });
-  });
+  }).sort((left, right) => left.collectorId < right.collectorId ? -1 : 1));
   const safetyPolicy = Object.freeze({
     schema: SAFETY_MONITOR_POLICY_SCHEMA,
     chainId: CHAIN_ID.toString(),
@@ -118,9 +125,10 @@ try {
     validFrom: now - 60,
     validUntil: now + 3_600,
     maximumObservationAgeSeconds: MAXIMUM_AGE,
-    collectors: Object.freeze(safetyCollectors.map(({ kind, collectorId, wallet }) => Object.freeze({
+    collectors: Object.freeze(safetyCollectors.map(({ kind, collectorId, operatorId, wallet }) => Object.freeze({
       kind,
       collectorId,
+      operatorId,
       signer: wallet.address,
     }))),
   });
@@ -129,8 +137,11 @@ try {
     policy: safetyPolicy,
     policyDigest: safetyMonitorPolicyDigest(safetyPolicy),
   });
+  const missingCollector = safety.collectors.filter(({ kind }) => kind === "bit-contract")[1];
+  const outageObservations = (await observations(now, safety))
+    .filter((observation) => observation.collectorId !== missingCollector.collectorId);
   const unhealthy = await runSafetyMonitorCycle({
-    observations: await observations(now, safety, { "bit-contract": { status: "unsafe" } }),
+    observations: outageObservations,
     maximumObservationAgeSeconds: MAXIMUM_AGE,
     expectedSafetyPolicyDigest: safety.policyDigest,
     nowSeconds: () => now,
@@ -161,6 +172,7 @@ try {
   });
   assert.equal(unhealthy.outcome, "HALTED_AND_ALERTED");
   assert.equal(unhealthy.newExposureClosed, true);
+  assert.ok(unhealthy.reasonCodes.includes("BIT_CONTRACT_COLLECTOR_OUTAGE"));
   assert.equal(await gate.isOpen(), false);
   assert.equal(await gate.emergencyHalted(), true);
   assert.equal(await gate.activeRiskDigest(), `0x${"00".repeat(32)}`);
@@ -207,13 +219,15 @@ try {
   assert.equal(await gate.isOpen(), false);
 
   const evidence = Object.freeze({
-    schema: "treeswap.safety-monitor-smoke.v2",
+    schema: "treeswap.safety-monitor-smoke.v3",
     chainId: String(CHAIN_ID),
     executionClient: ANVIL_VERSION,
     actualOpenGate: true,
     distinctControllerAndGuardianContracts: true,
-    unsafeObservationClosedQuotes: quoteIssuanceClosed,
-    unsafeObservationHaltedOnchainGate: gateHalted,
+    redundantCollectorsPerDomain: 2,
+    distinctOperatorCommitmentsPerDomain: true,
+    collectorOutageClosedQuotes: quoteIssuanceClosed,
+    collectorOutageHaltedOnchainGate: gateHalted,
     alertDeliveredAfterClosure,
     healthyCycleHasNoOpenAuthority: healthyMutationCalls === 0,
     malformedObservationFailedClosed: outage.newExposureClosed,
