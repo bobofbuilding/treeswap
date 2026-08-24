@@ -14,12 +14,16 @@ The pre-quote gate rejects a request unless all of these are true:
 2. The BIT proxy address, proxy bytecode hash, ERC-1967 implementation address, and implementation bytecode hash match pinned deployment values.
 3. `decimals()` is exactly 18 and `paused()` is exactly false. An unavailable response fails closed.
 4. The state snapshot is fresh.
-5. At least three independent, fresh price sources each expose executable depth for the requested size.
+5. At least three independent, fresh price sources each bind the exact request direction, evidence digest, venue, control domain, and executable depth for both asset legs. Each source-policy digest must be explicitly allowlisted by the signed release risk policy.
 6. The median executable price remains inside the configured reference band and the sources agree within a tighter spread limit.
 7. Immutable contract caps and the offchain per-swap and per-epoch caps are not exceeded.
 8. The inventory consumed by the direction remains above its reserve floor after the quote.
 
-Duplicate, stale, shallow, or unavailable price sources do not count. A web-page price, last trade, or non-executable oracle observation is not sufficient.
+Duplicate, stale, shallow, wrong-direction, wrong-chain, expired, copied, unverified, or non-allowlisted price sources do not count. Duplicate venue IDs, control domains, or operator organizations do not count even when labels differ. Two RPC providers reading one pool are observation quorum for one price, not two prices. A web-page price, last trade, or non-executable oracle observation is not sufficient.
+
+Every non-pool source must pass `lib/executable-venue-price-signal.mjs`: a policy-pinned organization signs a maximum-five-minute EIP-712 observation containing its exact price, dual-asset executable depth, validity, direction, and quote commitment. The risk gate accepts only the original same-process verified object and commits its policy and observation digests; a caller cannot supply a plausible-looking JSON substitute. An allowlisted signer proves which operator made the claim, while the release review must separately verify that each venue and control domain is genuinely independent and executable.
+
+A future BIT/WBTC Uniswap v3 pool may contribute one request-sized source through the [BIT/WBTC market-reference boundary](./BIT_WBTC_MARKET_REFERENCE.md). It requires a finalized TWAP, active and wide-range liquidity floors, exact-direction executable probe, two-provider agreement, and a separately pinned WBTC/BTC peg conversion. The pool and conversion feed cannot satisfy the three-source requirement by themselves, and the source is unavailable until the pool exists and completes its rollout gate.
 
 ## Inventory fees
 
@@ -35,7 +39,7 @@ The monitor reads the standardized ERC-1967 implementation slot:
 
 `0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc`
 
-It also pins both proxy and implementation bytecode hashes. An `Upgraded` event is an alert input, but each quote must re-read state rather than trusting that an event was observed. `buildBitRiskAttestation` commits the reviewed chain, proxy, implementation, code hashes, decimals, pause flag, observation time, latest and finalized blocks, executable-price median/spread, and independent source set.
+It also pins both proxy and implementation bytecode hashes. An `Upgraded` event is an alert input, but each quote must re-read state rather than trusting that an event was observed. `buildBitRiskAttestation` commits the reviewed chain, proxy, implementation, code hashes, decimals, pause flag, observation time, latest and finalized blocks, executable-price median/spread, independent source set, exact source-policy digests, and the complete risk-policy digest.
 
 `TreeSwapOpenGate` deploys closed. A controller stages that nonzero digest, waits the immutable resume delay, and opens only until the attestation's bounded expiry. A stale attestation closes automatically. The guardian or controller can halt new reservations immediately and cancel a pending reopen. Neither role is called by deposits, withdrawals, claims, or refunds, so TreeSwap governance cannot pause exits. Both escrows also read `decimals()` and `paused()` at the opening transition and fail closed on an unavailable or unexpected response.
 

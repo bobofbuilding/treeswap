@@ -20,6 +20,7 @@ The prototype assumes a business par value of **1 BIT = 100 sats**. This value i
 - Product and protocol specification in [`docs/PROTOCOL.md`](docs/PROTOCOL.md)
 - Liquidity operations plan in [`docs/LIQUIDITY_FUNDING.md`](docs/LIQUIDITY_FUNDING.md)
 - Fail-closed market, proxy, finality, and inventory policy in [`docs/RISK_POLICY.md`](docs/RISK_POLICY.md)
+- Future BIT/WBTC request-sized TWAP/probe signal and pool rollout gate in [`docs/BIT_WBTC_MARKET_REFERENCE.md`](docs/BIT_WBTC_MARKET_REFERENCE.md)
 - Secret-free fail-closed monitoring and actual-gate halt evidence in [`docs/MONITORING.md`](docs/MONITORING.md)
 - Finalized read-only deployment observation and closed governance rehearsal in [`docs/GOVERNANCE.md`](docs/GOVERNANCE.md)
 - Deterministic unsigned Sepolia deployment preparation, a short-lived signed two-provider preflight, and signed finalized receipt reconstruction in [`docs/CLOSED_TESTNET_DEPLOYMENT.md`](docs/CLOSED_TESTNET_DEPLOYMENT.md) and [`docs/CLOSED_TESTNET_DEPLOYMENT_POSTFLIGHT.md`](docs/CLOSED_TESTNET_DEPLOYMENT_POSTFLIGHT.md)
@@ -99,6 +100,7 @@ Start with the ordered [TreeSwap adoption handoff](docs/ADOPTION_HANDOFF.md). It
 - Deploy and qualify the bounded solver daemon, continuous safety monitor, backup/restore drills, redundant guardian delivery, and external alert routing
 - Deploy the persistent activation coordinator with independently operated runtime reconciliation signers; never restore funding authority from serialized activation output
 - Deploy the implemented solver endpoint, private-packet, and capacity-reader protocols plus independent quote-delivery paths
+- Create and mature the BIT/WBTC pool in observation-only mode, then independently review its exact pool/feed/quoter policy and the other executable BIT venues before it can help bound funded quotes
 - Bridge-escrow wallet integration with exact intent authorization and explicit approval boundaries
 - Keep email delivery disabled; a later mail release requires ownership verification, unsubscribe, rate limits, auditing, and sender authentication
 - Independent reconciliation inputs, production proxy monitoring, live incident drills using [`docs/INCIDENT_RUNBOOK.md`](docs/INCIDENT_RUNBOOK.md), and external review
