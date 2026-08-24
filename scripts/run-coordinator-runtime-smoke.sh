@@ -5,13 +5,15 @@ project_root=$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)
 runtime_image="treeswap/coordinator:runtime-recovery"
 
 cd "$project_root"
-docker build --file infra/coordinator/Dockerfile --tag "$runtime_image" .
+docker build --load --file infra/coordinator/Dockerfile --tag "$runtime_image" .
 docker run --rm --read-only \
   --tmpfs /tmp:rw,noexec,nosuid,size=64m \
   --mount type=bind,src="$project_root/tests",dst=/app/tests,readonly \
   --entrypoint node \
   "$runtime_image" \
-  --test tests/admission-store.test.mjs tests/coordinator-store.test.mjs tests/coordinator-service-state.test.mjs \
+  --test --test-concurrency=1 \
+    tests/admission-store.test.mjs tests/coordinator-store.test.mjs tests/coordinator-service-state.test.mjs \
+    tests/coordinator-release-supervisor.test.mjs \
     tests/coordinator-action-runner.test.mjs tests/evm-action-runner.test.mjs \
     tests/deployment-observer.test.mjs tests/deployment-policy.test.mjs \
     tests/safety-monitor.test.mjs tests/solver-capability.test.mjs \

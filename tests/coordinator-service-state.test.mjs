@@ -8,9 +8,11 @@ import { CoordinatorStore } from "../lib/coordinator-store.mjs";
 import {
   acquireCoordinatorServiceLease,
   buildCoordinatorClosedStatus,
+  buildCoordinatorReleaseVerificationStatus,
   normalizeCoordinatorServiceConfig,
   readCoordinatorServiceHealth,
   validateCoordinatorClosedStatus,
+  validateCoordinatorReleaseVerificationStatus,
 } from "../lib/coordinator-service-state.mjs";
 
 function fixture(t) {
@@ -45,14 +47,38 @@ function wholeSecond(milliseconds) {
   return new Date(Math.floor(milliseconds / 1_000) * 1_000).toISOString();
 }
 
-test("accepts only a separated, closed, bounded coordinator configuration", async (t) => {
+test("accepts only separated, bounded closed or release-verification coordinator configuration", async (t) => {
   const paths = await fixture(t);
   const valid = config(paths);
   assert.equal(valid.databasePath, paths.databasePath);
   assert.equal(valid.runtimeDirectory, paths.runtimeDirectory);
   assert.equal(valid.heartbeatSeconds, 5);
-  assert.throws(() => config(paths, { COORDINATOR_MODE: "active" }), /closed mode only/);
-  assert.throws(() => config(paths, { TREESWAP_FUNDING_ENABLED: "true" }), /cannot enable funding/);
+  assert.equal(valid.mode, "closed");
+  assert.throws(() => config(paths, { COORDINATOR_MODE: "active" }), /mode is not supported/);
+  assert.throws(() => config(paths, { TREESWAP_FUNDING_ENABLED: "true" }), /cannot enable funding by configuration/);
+  const manifestPath = join(paths.root, "inputs", "activation.json");
+  const release = config(paths, {
+    COORDINATOR_MODE: "release-verification-only",
+    COORDINATOR_RELEASE_ACTIVATION_MANIFEST_PATH: manifestPath,
+    COORDINATOR_RELEASE_REFRESH_SECONDS: "5",
+    COORDINATOR_RELEASE_PROVIDER_TIMEOUT_MS: "1000",
+  });
+  assert.equal(release.mode, "release-verification-only");
+  assert.equal(release.releaseActivationManifestPath, manifestPath);
+  assert.equal(release.releaseRefreshSeconds, 5);
+  assert.equal(release.releaseProviderTimeoutMs, 1000);
+  assert.throws(() => config(paths, {
+    COORDINATOR_RELEASE_ACTIVATION_MANIFEST_PATH: manifestPath,
+  }), /closed coordinator mode cannot accept/);
+  assert.throws(() => config(paths, {
+    COORDINATOR_MODE: "release-verification-only",
+    COORDINATOR_RELEASE_ACTIVATION_MANIFEST_PATH: join(paths.runtimeDirectory, "activation.json"),
+  }), /separate read-only directory/);
+  assert.throws(() => config(paths, {
+    COORDINATOR_MODE: "release-verification-only",
+    COORDINATOR_RELEASE_ACTIVATION_MANIFEST_PATH: manifestPath,
+    COORDINATOR_RELEASE_PROVIDER_TIMEOUT_MS: "30000",
+  }), /does not cover verification work/);
   assert.throws(() => normalizeCoordinatorServiceConfig({
     COORDINATOR_DATABASE_PATH: "coordinator.sqlite",
     COORDINATOR_RUNTIME_DIRECTORY: paths.runtimeDirectory,
@@ -78,6 +104,35 @@ test("accepts only a separated, closed, bounded coordinator configuration", asyn
   }), /cannot be shorter/);
 });
 
+function activeReleaseVerification(attemptAt, validUntil) {
+  return {
+    schema: "treeswap.coordinator-release-verification.v1",
+    state: "active",
+    scope: "verification-only-no-listener-solver-context-dispatch-or-funding-authority",
+    lastAttemptAt: attemptAt,
+    lastSuccessAt: attemptAt,
+    consecutiveFailures: 0,
+    releaseId: `0x${"1".repeat(64)}`,
+    fundingMode: "operator-testnet-bootstrap",
+    validUntil,
+    recordDigest: `0x${"2".repeat(64)}`,
+    policyDigest: `0x${"3".repeat(64)}`,
+    inputManifestDigest: `0x${"4".repeat(64)}`,
+    approvalBundleDigest: `0x${"5".repeat(64)}`,
+    reconciliationDigest: `0x${"6".repeat(64)}`,
+    providerConsensusDigest: `0x${"7".repeat(64)}`,
+    runtimeBlockNumber: 1200,
+    runtimeBlockHash: `0x${"8".repeat(64)}`,
+    authorizations: {
+      signing: false,
+      broadcast: false,
+      gateOpening: false,
+      dispatch: false,
+      funding: false,
+    },
+  };
+}
+
 test("publishes only aggregate closed status and rejects authority or secret-shaped fields", async (t) => {
   const paths = await fixture(t);
   const store = await CoordinatorStore.open(paths.databasePath);
@@ -100,6 +155,48 @@ test("publishes only aggregate closed status and rejects authority or secret-sha
       ...status,
       metrics: { ...status.metrics, invoiceDigest: `0x${"1".repeat(64)}` },
     }), /forbidden cross-network/);
+  } finally {
+    store.close();
+  }
+});
+
+test("release-verification status can prove fresh verification but never dispatch or funding authority", async (t) => {
+  const paths = await fixture(t);
+  const store = await CoordinatorStore.open(paths.databasePath);
+  const heartbeatAt = "2033-05-18T03:33:21.000Z";
+  const validUntil = Math.floor(Date.parse(heartbeatAt) / 1_000) + 60;
+  try {
+    const status = buildCoordinatorReleaseVerificationStatus({
+      store,
+      serviceStartedAt: "2033-05-18T03:33:20.000Z",
+      heartbeatAt,
+      leaseIdentifier: `sha256:${"1".repeat(64)}`,
+      recoveredInterruptedActions: 0,
+      releaseVerification: activeReleaseVerification(heartbeatAt, validUntil),
+    });
+    assert.equal(status.mode, "release-verification-only");
+    assert.equal(status.releaseVerification.state, "active");
+    assert.equal(status.fundingAuthorization, false);
+    assert.equal(status.dispatchAuthorization, false);
+    assert.equal(status.networkListener, false);
+    assert.throws(
+      () => validateCoordinatorReleaseVerificationStatus({ ...status, fundingAuthorization: true }),
+      /claims unavailable authority/,
+    );
+    assert.throws(() => validateCoordinatorReleaseVerificationStatus({
+      ...status,
+      releaseVerification: {
+        ...status.releaseVerification,
+        state: "inactive",
+      },
+    }), /retains active release fields/);
+    assert.throws(() => validateCoordinatorReleaseVerificationStatus({
+      ...status,
+      releaseVerification: {
+        ...status.releaseVerification,
+        authorizations: { ...status.releaseVerification.authorizations, dispatch: true },
+      },
+    }), /identity or authority/);
   } finally {
     store.close();
   }
@@ -152,6 +249,49 @@ test("fresh lease excludes a second supervisor and stale takeover cannot be remo
   }
 });
 
+test("release-verification health requires a fresh active release and still reports false funding authority", async (t) => {
+  const paths = await fixture(t);
+  const observedAt = Date.parse("2033-05-18T03:33:20.000Z");
+  const policy = config(paths, {
+    COORDINATOR_MODE: "release-verification-only",
+    COORDINATOR_RELEASE_ACTIVATION_MANIFEST_PATH: join(paths.root, "inputs", "activation.json"),
+    COORDINATOR_RELEASE_REFRESH_SECONDS: "5",
+    COORDINATOR_RELEASE_PROVIDER_TIMEOUT_MS: "1000",
+  });
+  const lease = await acquireCoordinatorServiceLease(policy, {
+    now: () => observedAt,
+    randomBytesImpl: deterministicRandom(),
+  });
+  const store = await CoordinatorStore.open(paths.databasePath);
+  const validUntil = Math.floor(observedAt / 1_000) + 20;
+  try {
+    await lease.publish(buildCoordinatorReleaseVerificationStatus({
+      store,
+      serviceStartedAt: lease.startedAt,
+      heartbeatAt: wholeSecond(observedAt),
+      leaseIdentifier: lease.leaseId,
+      recoveredInterruptedActions: 0,
+      releaseVerification: activeReleaseVerification(wholeSecond(observedAt), validUntil),
+    }));
+    assert.deepEqual(await readCoordinatorServiceHealth(policy, { now: () => observedAt + 5_000 }), {
+      schema: "treeswap.coordinator-release-verification-service-status.v1",
+      mode: "release-verification-only",
+      heartbeatAt: wholeSecond(observedAt),
+      databaseStatus: "ok",
+      fundingAuthorization: false,
+      releaseVerification: "active",
+      releaseValidUntil: validUntil,
+    });
+    await assert.rejects(
+      readCoordinatorServiceHealth(policy, { now: () => observedAt + 21_000 }),
+      /release verification is expired/,
+    );
+  } finally {
+    store.close();
+    await lease.release();
+  }
+});
+
 test("refuses a symlink or malformed lease instead of guessing that it is stale", async (t) => {
   const paths = await fixture(t);
   await mkdir(paths.runtimeDirectory, { recursive: true, mode: 0o700 });
@@ -162,14 +302,14 @@ test("refuses a symlink or malformed lease instead of guessing that it is stale"
   await assert.rejects(acquireCoordinatorServiceLease(config(paths)), /not a real directory/);
 });
 
-async function waitForReady(child) {
+async function waitForOutput(child, marker) {
   return new Promise((resolve, reject) => {
     let stdout = "";
     let stderr = "";
-    const timeout = setTimeout(() => reject(new Error(`coordinator did not become ready: ${stderr}`)), 10_000);
+    const timeout = setTimeout(() => reject(new Error(`coordinator did not become ready: ${stderr}`)), 60_000);
     child.stdout.on("data", (chunk) => {
       stdout += chunk.toString("utf8");
-      if (stdout.includes("ready-closed-no-funding-authority")) {
+      if (stdout.includes(marker)) {
         clearTimeout(timeout);
         resolve({ stdout, stderr });
       }
@@ -182,9 +322,13 @@ async function waitForReady(child) {
   });
 }
 
+async function waitForReady(child) {
+  return waitForOutput(child, "ready-closed-no-funding-authority");
+}
+
 async function stop(child) {
   return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => reject(new Error("coordinator did not stop")), 10_000);
+    const timeout = setTimeout(() => reject(new Error("coordinator did not stop")), 60_000);
     child.once("exit", (code, signal) => {
       clearTimeout(timeout);
       if (code !== 0 && signal !== "SIGTERM") reject(new Error(`coordinator stopped with ${code ?? signal}`));
@@ -233,7 +377,7 @@ test("packaged service stays alive, reports closed health, excludes a duplicate,
       cwd: process.cwd(),
       env: environment,
       encoding: "utf8",
-      timeout: 10_000,
+      timeout: 60_000,
     });
     assert.equal(duplicate.status, 1);
     assert.match(duplicate.stderr, /fresh lease/);
@@ -251,4 +395,50 @@ test("packaged service stays alive, reports closed health, excludes a duplicate,
   await assert.rejects(lstat(join(paths.runtimeDirectory, "coordinator.lease")), { code: "ENOENT" });
   assert.equal((await lstat(paths.databasePath)).mode & 0o777, 0o600);
   assert.equal((await lstat(paths.runtimeDirectory)).mode & 0o777, 0o700);
+});
+
+test("packaged release verifier stays alive but unhealthy and authority-free when evidence cannot verify", async (t) => {
+  const paths = await fixture(t);
+  const environment = {
+    ...process.env,
+    COORDINATOR_MODE: "release-verification-only",
+    COORDINATOR_DATABASE_PATH: paths.databasePath,
+    COORDINATOR_RUNTIME_DIRECTORY: paths.runtimeDirectory,
+    COORDINATOR_HEARTBEAT_SECONDS: "5",
+    COORDINATOR_INTEGRITY_SECONDS: "10",
+    COORDINATOR_LEASE_STALE_SECONDS: "30",
+    COORDINATOR_RELEASE_ACTIVATION_MANIFEST_PATH: join(paths.root, "inputs", "missing-activation.json"),
+    COORDINATOR_RELEASE_REFRESH_SECONDS: "5",
+    COORDINATOR_RELEASE_PROVIDER_TIMEOUT_MS: "1000",
+    TREESWAP_FUNDING_ENABLED: "false",
+    TREESWAP_RELEASE_RPC_TEST_URL: "https://provider.example/private-token",
+  };
+  const child = spawn(process.execPath, ["infra/coordinator/service.mjs"], {
+    cwd: process.cwd(),
+    env: environment,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  try {
+    await waitForOutput(
+      child,
+      "running-release-verification-inactive-no-dispatch-or-funding-authority",
+    );
+    const health = spawnSync(process.execPath, ["infra/coordinator/healthcheck.mjs"], {
+      cwd: process.cwd(),
+      env: environment,
+      encoding: "utf8",
+    });
+    assert.equal(health.status, 1);
+    assert.match(health.stderr, /release verification is inactive/);
+    const statusBytes = await readFile(join(paths.runtimeDirectory, "coordinator.lease", "status.json"), "utf8");
+    const status = JSON.parse(statusBytes);
+    assert.equal(status.releaseVerification.state, "inactive");
+    assert.equal(status.releaseVerification.consecutiveFailures, 1);
+    assert.equal(status.fundingAuthorization, false);
+    assert.equal(status.dispatchAuthorization, false);
+    assert.equal(statusBytes.includes("private-token"), false);
+    assert.equal(statusBytes.includes(environment.COORDINATOR_RELEASE_ACTIVATION_MANIFEST_PATH), false);
+  } finally {
+    if (child.exitCode === null) await stop(child);
+  }
 });
