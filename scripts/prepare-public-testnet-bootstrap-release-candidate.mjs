@@ -1,17 +1,10 @@
 #!/usr/bin/env node
 
-import { readBoundedFile, readBoundedJson, writeExclusiveJson } from "../lib/closed-testnet-deployment-files.mjs";
-import { verifyDeploymentManifestPromotion } from "../lib/deployment-manifest-promotion.mjs";
-import { verifyDeploymentPromotionPostflightBundle } from "../lib/deployment-promotion-postflight-bundle.mjs";
-import { verifyPublicTestnetBootstrapEvidence } from "../lib/public-testnet-bootstrap-evidence.mjs";
-import { verifyIndependentReviewEvidence } from "../lib/independent-review-evidence.mjs";
-import { verifyOperationalReadinessEvidence } from "../lib/operational-readiness-evidence.mjs";
-import { verifyServiceIsolationEvidence } from "../lib/service-isolation-evidence.mjs";
-import { verifyQualificationReviewEvidence } from "../lib/qualification-review-evidence.mjs";
+import { writeExclusiveJson } from "../lib/closed-testnet-deployment-files.mjs";
 import {
   buildPublicTestnetReleaseCandidateSummary,
-  preparePublicTestnetBootstrapReleaseCandidate,
 } from "../lib/public-testnet-release-candidate.mjs";
+import { rebuildPublicTestnetBootstrapReleaseCandidateFromFiles } from "../lib/public-testnet-release-files.mjs";
 
 const FLAGS = Object.freeze([
   "--adoption-policy",
@@ -56,93 +49,32 @@ function argumentsFromCommandLine(values) {
 }
 
 const args = argumentsFromCommandLine(process.argv.slice(2));
-const [recordTemplate, policyTemplate, adoptionPolicy, bootstrapRecord, bootstrapPolicy, bootstrapAttestations,
-  promotionRecord, promotionPolicy, deploymentPolicy, promotionObservations, promotionAttestations,
-  postflightBundle, reviewRecord, reviewPolicy, reviewAttestations, operationsRecord,
-  operationsPolicy, operationsAttestations, isolationRecord, isolationPolicy,
-  isolationAttestations, qualificationFileBytes, qualificationReview, qualificationPolicy,
-  qualificationAttestation] = await Promise.all([
-  readBoundedJson(args["--record-template"], "bootstrap release record template"),
-  readBoundedJson(args["--policy-template"], "bootstrap release policy template"),
-  readBoundedJson(args["--adoption-policy"], "adoption policy"),
-  readBoundedJson(args["--bootstrap-record"], "bootstrap evidence record"),
-  readBoundedJson(args["--bootstrap-policy"], "bootstrap evidence policy"),
-  readBoundedJson(args["--bootstrap-attestations"], "bootstrap evidence attestations"),
-  readBoundedJson(args["--promotion-record"], "deployment promotion record"),
-  readBoundedJson(args["--promotion-policy"], "deployment promotion policy"),
-  readBoundedJson(args["--deployment-policy"], "deployment policy"),
-  readBoundedJson(args["--promotion-observations"], "deployment promotion observations"),
-  readBoundedJson(args["--promotion-attestations"], "deployment promotion attestations"),
-  readBoundedJson(args["--postflight-bundle"], "deployment postflight bundle"),
-  readBoundedJson(args["--review-record"], "independent review record"),
-  readBoundedJson(args["--review-policy"], "independent review policy"),
-  readBoundedJson(args["--review-attestations"], "independent review attestations"),
-  readBoundedJson(args["--operations-record"], "operational readiness record"),
-  readBoundedJson(args["--operations-policy"], "operational readiness policy"),
-  readBoundedJson(args["--operations-attestations"], "operational readiness attestations"),
-  readBoundedJson(args["--isolation-record"], "service isolation record"),
-  readBoundedJson(args["--isolation-policy"], "service isolation policy"),
-  readBoundedJson(args["--isolation-attestations"], "service isolation attestations"),
-  readBoundedFile(args["--qualification-artifact"], "qualification artifact"),
-  readBoundedJson(args["--qualification-review"], "qualification review"),
-  readBoundedJson(args["--qualification-policy"], "qualification review policy"),
-  readBoundedJson(args["--qualification-attestation"], "qualification review attestation"),
-]);
-const postflightVerification = verifyDeploymentPromotionPostflightBundle({
-  bundle: postflightBundle,
-  deploymentPolicy,
-  promotedAt: promotionRecord.promotedAt,
-});
-const deploymentPromotionVerification = verifyDeploymentManifestPromotion({
-  record: promotionRecord,
-  policy: promotionPolicy,
-  deploymentPolicy,
-  observations: promotionObservations,
-  postflightVerification,
-  attestations: promotionAttestations,
-  now: recordTemplate.approvalBlockTimestamp,
-});
-const bootstrapEvidenceVerification = verifyPublicTestnetBootstrapEvidence({
-  record: bootstrapRecord,
-  policy: bootstrapPolicy,
-  attestations: bootstrapAttestations,
-  now: recordTemplate.approvalBlockTimestamp,
-});
-const independentReviewVerification = verifyIndependentReviewEvidence({
-  record: reviewRecord,
-  policy: reviewPolicy,
-  attestations: reviewAttestations,
-  now: recordTemplate.approvalBlockTimestamp,
-});
-const serviceIsolationVerification = verifyServiceIsolationEvidence({
-  record: isolationRecord,
-  policy: isolationPolicy,
-  attestations: isolationAttestations,
-  now: recordTemplate.approvalBlockTimestamp,
-});
-const operationalReadinessVerification = verifyOperationalReadinessEvidence({
-  adoptionPolicy,
-  record: operationsRecord,
-  policy: operationsPolicy,
-  attestations: operationsAttestations,
-  serviceIsolationVerification,
-  now: recordTemplate.approvalBlockTimestamp,
-});
-const qualificationReviewVerification = verifyQualificationReviewEvidence({
-  qualificationFileBytes,
-  review: qualificationReview,
-  policy: qualificationPolicy,
-  attestation: qualificationAttestation,
-  now: recordTemplate.approvalBlockTimestamp,
-});
-const candidate = preparePublicTestnetBootstrapReleaseCandidate({
-  recordTemplate,
-  policyTemplate,
-  bootstrapEvidenceVerification,
-  deploymentPromotionVerification,
-  independentReviewVerification,
-  operationalReadinessVerification,
-  qualificationReviewVerification,
+const candidate = await rebuildPublicTestnetBootstrapReleaseCandidateFromFiles({
+  recordTemplate: args["--record-template"],
+  policyTemplate: args["--policy-template"],
+  adoptionPolicy: args["--adoption-policy"],
+  bootstrapRecord: args["--bootstrap-record"],
+  bootstrapPolicy: args["--bootstrap-policy"],
+  bootstrapAttestations: args["--bootstrap-attestations"],
+  promotionRecord: args["--promotion-record"],
+  promotionPolicy: args["--promotion-policy"],
+  deploymentPolicy: args["--deployment-policy"],
+  promotionObservations: args["--promotion-observations"],
+  promotionAttestations: args["--promotion-attestations"],
+  postflightBundle: args["--postflight-bundle"],
+  reviewRecord: args["--review-record"],
+  reviewPolicy: args["--review-policy"],
+  reviewAttestations: args["--review-attestations"],
+  operationsRecord: args["--operations-record"],
+  operationsPolicy: args["--operations-policy"],
+  operationsAttestations: args["--operations-attestations"],
+  isolationRecord: args["--isolation-record"],
+  isolationPolicy: args["--isolation-policy"],
+  isolationAttestations: args["--isolation-attestations"],
+  qualificationArtifact: args["--qualification-artifact"],
+  qualificationReview: args["--qualification-review"],
+  qualificationPolicy: args["--qualification-policy"],
+  qualificationAttestation: args["--qualification-attestation"],
 });
 if (Buffer.byteLength(JSON.stringify(candidate)) > 1_000_000) {
   throw new Error("public-testnet bootstrap release candidate exceeds 1 MB");

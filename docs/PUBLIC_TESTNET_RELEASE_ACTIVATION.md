@@ -55,9 +55,17 @@ Every candidate-bound provider must independently return the same state at the n
 
 Any provider disagreement, stale or future head, implementation change, code change, gate closure, wrong risk digest, registry change, BIT pause, accounting mismatch, reserve shortfall, or cap excess aborts activation.
 
+## Operator activation preflight
+
+`npm run verify:testnet-release-activation -- --inputs /absolute/activation-inputs.json --out activation-preflight.json` exercises the production activation boundary without starting a solver or retaining authority. The input manifest must use `treeswap.public-testnet-release-activation-inputs.v1`, canonical absolute paths, one distinct file per input, and one of the two exact evidence shapes shown in `examples/public-testnet-bootstrap-release-activation-inputs.json` and `examples/public-testnet-release-activation-inputs.json`. The first supports the tiny operator-owned bootstrap; the second requires the completed campaign-qualified release. The two shapes cannot be mixed. Provider URLs stay in the environment variables named by the provider configuration; they never enter the manifest or output.
+
+The command does not load a serialized candidate. In one process it reopens all raw deployment, campaign, review, service-isolation, operational-readiness, adoption-policy, and qualification artifacts; reconstructs every module-private verification object and the candidate; builds the candidate-bound provider set; rechecks the five release approvals; verifies the two reconciliation signatures; and obtains fresh live EVM quorum state. A copied candidate, missing or extra evidence field, reused file path, provider mismatch, stale reconciliation, or unsafe live state fails before a receipt is written.
+
+The exclusive mode-`0600` output is a secret-free `treeswap.public-testnet-release-activation-preflight.v1` summary. It contains only release, input, approval, reconciliation, provider-consensus, and runtime-block digests plus explicit false authorization fields. The in-memory capability is never serialized, no solver capability or daemon context is accepted, and process exit destroys the only activation provenance. Passing this preflight proves that an exact external evidence package can cross the activation boundary; it does not prove operator independence and does not satisfy the persistent-coordinator launch gate.
+
 ## Coordinator integration
 
-There is intentionally no command that writes an “active release” JSON file. A file cannot retain process provenance. The long-running coordinator must:
+There is intentionally no command that writes an “active release” JSON file. A file cannot retain process provenance. The preflight command above writes only a non-authorizing audit summary. The long-running coordinator must:
 
 1. load and verify the raw upstream evidence;
 2. rebuild the exact candidate;
