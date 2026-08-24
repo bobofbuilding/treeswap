@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { chmod, mkdtemp, readFile, realpath, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -34,7 +35,12 @@ import {
   SOLVER_DAEMON_EVIDENCE_POLICY_SCHEMA,
   solverDaemonEvidencePolicyDigest,
 } from "../lib/solver-daemon-evidence.mjs";
-import { verifiedSolverCapacityRecord, verifiedSolverQuoteBinding } from "../lib/solver-capability.mjs";
+import {
+  solverLightningNodePubkeyDigest,
+  verifiedSolverCapacityRecord,
+  verifiedSolverQuoteBinding,
+  verifiedSolverRecoveryAuthority,
+} from "../lib/solver-capability.mjs";
 import {
   bindActiveSolverSettlementExecutionPolicy,
   executeActiveSolverDaemonStep,
@@ -85,6 +91,13 @@ import {
   buildPublicTestnetReleaseActivationPreflightSummary,
 } from "../lib/public-testnet-release-activation.mjs";
 import { createCoordinatorReleaseVerificationSupervisor } from "../lib/coordinator-release-supervisor.mjs";
+import {
+  assessRetainedReleaseRotation,
+  buildRetainedReleaseRecoveryDrillApproval,
+  inspectRetainedReleaseCustody,
+  verifyRetainedReleaseRecoveryDrill,
+  verifyRetainedReleaseRecoveryReadiness,
+} from "../lib/release-retention-custody.mjs";
 
 const ZERO = `0x${"00".repeat(32)}`;
 const LIGHTNING_OPERATOR = new Wallet(`0x${"55".repeat(32)}`);
@@ -526,6 +539,23 @@ async function writeReleaseEvidenceFiles(directory, evidence) {
   return paths;
 }
 
+async function retainedFileReference(path, root) {
+  await chmod(path, 0o600);
+  const bytes = await readFile(path);
+  return {
+    path: path.slice(root.length + 1),
+    sha256: `sha256:${createHash("sha256").update(bytes).digest("hex")}`,
+    sizeBytes: (await stat(path)).size,
+  };
+}
+
+async function retainedCandidateEvidenceReferences(paths, root) {
+  return Object.fromEntries(await Promise.all(Object.entries(paths).map(async ([field, path]) => [
+    field,
+    await retainedFileReference(path, root),
+  ])));
+}
+
 async function fixture() {
   const deployment = await createVerifiedDeploymentPromotionFixture();
   const qualification = await createVerifiedQualificationReviewFixture({
@@ -605,7 +635,7 @@ test("derives one exact release candidate from verified deployment, campaign, an
 });
 
 test("activates funding only after same-process evidence, approvals, reconciliation, and live RPC quorum checks", async (t) => {
-  const { campaign, candidate, deployment } = await fixture();
+  const { campaign, candidate, deployment, operations, qualification, review } = await fixture();
   const now = candidate.record.approvalBlockTimestamp + 120;
   const approvalBundle = await releaseApprovalBundle(candidate);
   const providerSet = providerSetFor({ candidate, campaign, deployment, now });
@@ -836,7 +866,9 @@ test("activates funding only after same-process evidence, approvals, reconciliat
     establishedSolverMaxBitToLightningSats: "100000",
     maxGlobalBitToLightningInFlightSats: "500000",
   };
-  const waitingStore = await CoordinatorStore.open(":memory:", { allowMemory: true });
+  const serviceRoot = await realpath(await mkdtemp(join(tmpdir(), "treeswap-active-daemon-service-")));
+  t.after(() => rm(serviceRoot, { recursive: true, force: true }));
+  const waitingStore = await CoordinatorStore.open(join(serviceRoot, "settlements", "coordinator.sqlite"));
   waitingStore.admitRfq({
     identity: {
       authenticated: true,
@@ -889,8 +921,6 @@ test("activates funding only after same-process evidence, approvals, reconciliat
     authorizedAt: now + 2,
   });
   waitingStore.acceptSettlement(waitingSettlement);
-  const serviceRoot = await realpath(await mkdtemp(join(tmpdir(), "treeswap-active-daemon-service-")));
-  t.after(() => rm(serviceRoot, { recursive: true, force: true }));
   const serviceNow = (now + 3) * 1_000;
   const serviceLease = await acquireCoordinatorServiceLease(normalizeCoordinatorServiceConfig({
     COORDINATOR_DATABASE_PATH: join(serviceRoot, "data", "coordinator.sqlite"),
@@ -933,6 +963,240 @@ test("activates funding only after same-process evidence, approvals, reconciliat
       })).executionPolicyBindingDigest,
       executionPolicyBinding.executionPolicyBindingDigest,
     );
+
+    const candidateEvidencePaths = await writeReleaseEvidenceFiles(
+      serviceRoot,
+      releaseEvidenceValues({ campaign, deployment, operations, qualification, review }),
+    );
+    const retainedCandidateEvidence = await retainedCandidateEvidenceReferences(
+      candidateEvidencePaths,
+      serviceRoot,
+    );
+    const approvalBundlePath = join(serviceRoot, "retained-approval-bundle.json");
+    await writeFile(approvalBundlePath, `${JSON.stringify(approvalBundle)}\n`, { mode: 0o600 });
+    const providerIdentities = campaign.candidate.record.participants
+      .filter((value) => value.role === "evm-provider")
+      .map((value) => value.operatorId);
+    const providerConfigurationPath = join(serviceRoot, "retained-provider-configuration.json");
+    await writeFile(providerConfigurationPath, `${JSON.stringify({
+      schema: "treeswap.public-testnet-release-approval-providers.v1",
+      providers: [
+        { identity: providerIdentities[0], urlEnvironmentVariable: "TREESWAP_RELEASE_RPC_ONE_URL" },
+        { identity: providerIdentities[1], urlEnvironmentVariable: "TREESWAP_RELEASE_RPC_TWO_URL" },
+      ],
+    })}\n`, { mode: 0o600 });
+    const daemonPolicyPath = join(serviceRoot, "retained-daemon-policy.json");
+    await writeFile(daemonPolicyPath, `${JSON.stringify(evidencePolicy)}\n`, { mode: 0o600 });
+    const runtimeArchivePath = join(serviceRoot, "retained-coordinator-runtime.tar");
+    await writeFile(runtimeArchivePath, "pinned coordinator runtime fixture", { mode: 0o600 });
+    const backupPath = join(serviceRoot, "retained-coordinator-backup.sqlite");
+    await waitingStore.createVerifiedBackup(backupPath);
+    const originalRecoveryAuthority = verifiedSolverRecoveryAuthority(solverCapability.verification);
+    const rotatedRecoveryAuthority = verifiedSolverRecoveryAuthority(rotatedRecoverySolverCapability.verification);
+    const custodyManifest = {
+      schema: "treeswap.retained-release-custody.v1",
+      coordinatorSchema: "treeswap.coordinator.v7",
+      createdAt: now + 3,
+      sealedHostInstanceId: id("retained original host").toLowerCase(),
+      sealedProcessInstanceId: id("retained original process").toLowerCase(),
+      coordinatorBackup: await retainedFileReference(backupPath, serviceRoot),
+      witnessPolicy: {
+        maximumDrillAgeSeconds: 86_400,
+        maximumDrillDurationSeconds: 3_600,
+        minimumWitnesses: 2,
+        witnesses: [
+          {
+            operatorId: id("retained witness one").toLowerCase(),
+            organizationId: id("retained witness organization one").toLowerCase(),
+            signer: LIGHTNING_OPERATOR.address,
+          },
+          {
+            operatorId: id("retained witness two").toLowerCase(),
+            organizationId: id("retained witness organization two").toLowerCase(),
+            signer: SECURITY_REVIEWER.address,
+          },
+        ].sort((left, right) => left.operatorId.localeCompare(right.operatorId)),
+      },
+      releases: [{
+        releaseId: candidate.record.releaseId,
+        releaseRecordDigest: candidate.recordDigest,
+        releasePolicyDigest: candidate.policyDigest,
+        candidateKind: "campaign-qualified",
+        candidateEvidence: retainedCandidateEvidence,
+        approvalBundle: await retainedFileReference(approvalBundlePath, serviceRoot),
+        providerConfiguration: await retainedFileReference(providerConfigurationPath, serviceRoot),
+        daemonEvidencePolicies: [{
+          direction: evidencePolicy.direction,
+          evidencePolicyDigest: solverDaemonEvidencePolicyDigest(evidencePolicy),
+          file: await retainedFileReference(daemonPolicyPath, serviceRoot),
+        }],
+        solverRecoveryAuthorities: [{
+          evidencePolicyDigest: solverDaemonEvidencePolicyDigest(evidencePolicy),
+          direction: evidencePolicy.direction,
+          solver: originalRecoveryAuthority.solverId,
+          endpointPublicKeyDigest: originalRecoveryAuthority.endpointPublicKeyDigest,
+          lightningNodePubkeyDigest: solverLightningNodePubkeyDigest(
+            originalRecoveryAuthority.lightningNodePubkey,
+          ),
+          custodianId: id("retained solver key custodian").toLowerCase(),
+          organizationId: id("retained solver organization").toLowerCase(),
+          custodyEvidenceDigest: id("retained solver key custody evidence").toLowerCase(),
+        }],
+        runtime: {
+          sourceCommit: candidate.record.reviewedBuildCommit,
+          coordinatorSchema: "treeswap.coordinator.v7",
+          nodeVersion: process.version,
+          archive: await retainedFileReference(runtimeArchivePath, serviceRoot),
+        },
+      }],
+    };
+    const oldCustodyManifestPath = join(serviceRoot, "retained-release-custody-old.json");
+    await writeFile(oldCustodyManifestPath, `${JSON.stringify(custodyManifest, null, 2)}\n`, { mode: 0o600 });
+    const oldCustody = await inspectRetainedReleaseCustody({ manifestPath: oldCustodyManifestPath });
+    const newCustodyManifest = structuredClone(custodyManifest);
+    newCustodyManifest.sealedHostInstanceId = id("retained replacement sealing host").toLowerCase();
+    newCustodyManifest.sealedProcessInstanceId = id("retained replacement sealing process").toLowerCase();
+    newCustodyManifest.releases[0].solverRecoveryAuthorities[0] = {
+      ...newCustodyManifest.releases[0].solverRecoveryAuthorities[0],
+      solver: rotatedRecoveryAuthority.solverId,
+      endpointPublicKeyDigest: rotatedRecoveryAuthority.endpointPublicKeyDigest,
+      lightningNodePubkeyDigest: solverLightningNodePubkeyDigest(rotatedRecoveryAuthority.lightningNodePubkey),
+      custodyEvidenceDigest: id("replacement solver key custody evidence").toLowerCase(),
+    };
+    const newCustodyManifestPath = join(serviceRoot, "retained-release-custody-new.json");
+    await writeFile(newCustodyManifestPath, `${JSON.stringify(newCustodyManifest, null, 2)}\n`, { mode: 0o600 });
+    const newCustody = await inspectRetainedReleaseCustody({ manifestPath: newCustodyManifestPath });
+    assert.equal(oldCustody.totalNonterminalSettlementCount, 1);
+    assert.equal(oldCustody.releaseCount, 1);
+    assert.equal(oldCustody.authorizations.funding, false);
+    assert.notEqual(oldCustody.packageDigest, newCustody.packageDigest);
+    const retentionRecoveryActivation = await activatePublicTestnetRecovery({
+      candidate,
+      approvalBundle,
+      providerSet: providerSetFor({
+        candidate,
+        campaign,
+        deployment,
+        now,
+        overrides: { gateOpen: false, emergencyHalted: true },
+      }),
+      now,
+    });
+    t.after(() => {
+      if (isPublicTestnetRecoveryActive(retentionRecoveryActivation)) {
+        deactivatePublicTestnetRecovery(retentionRecoveryActivation);
+      }
+    });
+    const restoredPath = join(serviceRoot, "restored", "coordinator.sqlite");
+    await CoordinatorStore.restoreVerifiedBackup(backupPath, restoredPath);
+    const restoredStore = await CoordinatorStore.open(restoredPath);
+    try {
+      const oldReadiness = verifyRetainedReleaseRecoveryReadiness({
+        custodyVerification: oldCustody,
+        releaseRecordDigest: candidate.recordDigest,
+        recoveryActivation: retentionRecoveryActivation,
+        restoredStore,
+        solverCapabilityVerifications: [solverCapability.verification],
+        restoredHostInstanceId: id("retained restored old host").toLowerCase(),
+        restoredProcessInstanceId: id("retained restored old process").toLowerCase(),
+        now: now + 3,
+      });
+      const newReadiness = verifyRetainedReleaseRecoveryReadiness({
+        custodyVerification: newCustody,
+        releaseRecordDigest: candidate.recordDigest,
+        recoveryActivation: retentionRecoveryActivation,
+        restoredStore,
+        solverCapabilityVerifications: [rotatedRecoverySolverCapability.verification],
+        restoredHostInstanceId: id("retained restored new host").toLowerCase(),
+        restoredProcessInstanceId: id("retained restored new process").toLowerCase(),
+        now: now + 3,
+      });
+      assert.throws(() => verifyRetainedReleaseRecoveryReadiness({
+        custodyVerification: newCustody,
+        releaseRecordDigest: candidate.recordDigest,
+        recoveryActivation: structuredClone(retentionRecoveryActivation),
+        restoredStore,
+        solverCapabilityVerifications: [rotatedRecoverySolverCapability.verification],
+        restoredHostInstanceId: id("copied activation host").toLowerCase(),
+        restoredProcessInstanceId: id("copied activation process").toLowerCase(),
+        now: now + 3,
+      }), /not backed by this process/);
+      assert.throws(() => verifyRetainedReleaseRecoveryReadiness({
+        custodyVerification: newCustody,
+        releaseRecordDigest: candidate.recordDigest,
+        recoveryActivation: retentionRecoveryActivation,
+        restoredStore,
+        solverCapabilityVerifications: [solverCapability.verification],
+        restoredHostInstanceId: id("wrong recovery key host").toLowerCase(),
+        restoredProcessInstanceId: id("wrong recovery key process").toLowerCase(),
+        now: now + 3,
+      }), /does not prove the retained recovery authority/);
+      assert.notEqual(oldReadiness.operatingSetDigest, newReadiness.operatingSetDigest);
+      assert.equal(oldReadiness.authorizations.lightningDispatch, false);
+
+      async function witnessedDrill(readinessVerification, role, label) {
+        const approval = buildRetainedReleaseRecoveryDrillApproval({
+          readinessVerification,
+          drillId: id(`retained ${label} drill`).toLowerCase(),
+          operatingSetRole: role,
+          recoveryEvidenceDigest: id(`retained ${label} recovery evidence`).toLowerCase(),
+          postconditionDigest: id(`retained ${label} postcondition`).toLowerCase(),
+          recoveredActionCount: 1,
+          startedAt: now + 1,
+          finishedAt: now + 2,
+        });
+        const wallets = new Map([
+          [LIGHTNING_OPERATOR.address.toLowerCase(), LIGHTNING_OPERATOR],
+          [SECURITY_REVIEWER.address.toLowerCase(), SECURITY_REVIEWER],
+        ]);
+        const attestations = await Promise.all(custodyManifest.witnessPolicy.witnesses.map(async (witness) => ({
+          operatorId: witness.operatorId,
+          signer: witness.signer,
+          signature: await wallets.get(witness.signer.toLowerCase()).signTypedData(
+            { ...approval.domain, chainId: BigInt(approval.domain.chainId) },
+            approval.types,
+            approval.message,
+          ),
+        })));
+        return verifyRetainedReleaseRecoveryDrill({ approval, attestations, now: now + 3 });
+      }
+
+      const oldDrill = await witnessedDrill(oldReadiness, "old", "old set");
+      const newDrill = await witnessedDrill(newReadiness, "new", "new set");
+      const rotation = assessRetainedReleaseRotation({
+        oldCustodyVerification: oldCustody,
+        newCustodyVerification: newCustody,
+        liveStore: waitingStore,
+        changeKind: "solver-key",
+        oldDrills: [oldDrill],
+        newDrills: [newDrill],
+        now: now + 3,
+      });
+      assert.equal(rotation.rotationPermitted, true);
+      assert.equal(rotation.nonterminalSettlementCount, 1);
+      assert.equal(rotation.authorizations.funding, false);
+      assert.throws(() => assessRetainedReleaseRotation({
+        oldCustodyVerification: oldCustody,
+        newCustodyVerification: newCustody,
+        liveStore: waitingStore,
+        changeKind: "solver-key",
+        oldDrills: [oldDrill],
+        newDrills: [oldDrill],
+        now: now + 3,
+      }), /operating-set role/);
+      assert.throws(() => assessRetainedReleaseRotation({
+        oldCustodyVerification: oldCustody,
+        newCustodyVerification: oldCustody,
+        liveStore: waitingStore,
+        changeKind: "solver-key",
+        oldDrills: [oldDrill],
+        newDrills: [newDrill],
+        now: now + 3,
+      }), /packages must be distinct/);
+    } finally {
+      restoredStore.close();
+    }
+
     const originalGetSettlement = waitingStore.getSettlement;
     waitingStore.getSettlement = () => executionPolicyBinding;
     await assert.rejects(executeActiveSolverDaemonStep({

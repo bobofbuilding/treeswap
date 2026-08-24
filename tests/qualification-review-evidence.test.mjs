@@ -41,7 +41,7 @@ test("reconstructs the exact sealed artifact and binds one independent reviewer"
   const { qualification } = await validFixture();
   const evidence = buildQualificationReviewReleaseEvidence(qualification.verification);
   assert.equal(evidence.fundingMode, "operator-testnet-bootstrap");
-  assert.equal(evidence.campaignCount, 41);
+  assert.equal(evidence.campaignCount, 42);
   assert.equal(evidence.configurationHashCount, RELEASE_QUALIFICATION_CONFIGURATION_FILES.length);
   assert.equal(evidence.pinnedImageCount, 3);
   assert.equal(evidence.qualificationFileDigest, qualification.review.qualificationFileDigest);
@@ -196,7 +196,7 @@ test("operator CLIs emit typed data and verify without gaining funding authority
       "--attestation", paths.attestation,
     ], { encoding: "utf8" }));
     assert.equal(verified.authorizations.funding, false);
-    assert.equal(verified.campaignCount, 41);
+    assert.equal(verified.campaignCount, 42);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

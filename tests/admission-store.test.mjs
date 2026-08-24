@@ -726,6 +726,19 @@ test("binds a settlement once to its reviewed release, evidence policy, and sele
       store.bindSettlementExecutionPolicy(authority).executionPolicyBindingDigest,
       bound.executionPolicyBindingDigest,
     );
+    const boundLiabilities = store.releaseLiabilitySnapshot();
+    assert.equal(boundLiabilities.coordinatorSchema, "treeswap.coordinator.v7");
+    assert.equal(boundLiabilities.totalNonterminalSettlementCount, 1);
+    assert.equal(boundLiabilities.unboundNonterminalSettlementCount, 0);
+    assert.equal(boundLiabilities.releases.length, 1);
+    assert.deepEqual(boundLiabilities.releases[0].executionPolicies, [{
+      direction: value.direction,
+      evidencePolicyDigest: authority.evidencePolicyDigest,
+      historicalSolverCapabilityDigests: [authority.solverCapabilityDigest],
+      nonterminalSettlementCount: 1,
+    }]);
+    assert.match(boundLiabilities.releases[0].liabilitySetDigest, /^0x[0-9a-f]{64}$/);
+    assert.match(boundLiabilities.snapshotDigest, /^0x[0-9a-f]{64}$/);
     assert.throws(
       () => store.bindSettlementExecutionPolicy({ ...authority, boundAt: NOW + 4 }),
       /already bound to different authority/,
@@ -754,6 +767,11 @@ test("binds a settlement once to its reviewed release, evidence policy, and sele
       reservationIntentDigest: late.intentDigest,
       observedAt: NOW + 3,
     });
+    const unsafeLiabilities = store.releaseLiabilitySnapshot();
+    assert.equal(unsafeLiabilities.totalNonterminalSettlementCount, 2);
+    assert.equal(unsafeLiabilities.unboundNonterminalSettlementCount, 1);
+    assert.equal(unsafeLiabilities.releases[0].nonterminalSettlementCount, 1);
+    assert.notEqual(unsafeLiabilities.snapshotDigest, boundLiabilities.snapshotDigest);
     assert.throws(
       () => store.bindSettlementExecutionPolicy({ ...authority, settlementId: late.settlementId }),
       /must bind before reservation, actions, or closure/,
