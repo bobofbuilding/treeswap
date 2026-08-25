@@ -222,7 +222,7 @@ async function capabilityClient({ requestImpl: requestOverride = null } = {}) {
   });
 }
 
-function runtime(policy = evidencePolicy()) {
+function runtime(policy = evidencePolicy(), { evidenceRequestImpl } = {}) {
   const packetClient = createAuthenticatedPrivatePacketClient({
     providerOrigin: "https://packet-provider.internal",
     requesterPrivateKey: packetRequesterKeys.privateKey,
@@ -236,7 +236,7 @@ function runtime(policy = evidencePolicy()) {
     nowSeconds: () => NOW,
     randomBytesImpl: () => Buffer.alloc(32, 0x93),
   });
-  const controls = createSolverDaemonEvidenceControls({
+  const controlsInput = {
     policy,
     routes: {
       lightningOperator: "https://lightning-operator.internal",
@@ -244,12 +244,13 @@ function runtime(policy = evidencePolicy()) {
     },
     requesterPrivateKey: evidenceRequesterKeys.privateKey,
     requesterKeyId: "coordinator-evidence-one",
-    requestImpl: async () => { throw new Error("evidence route must not run during composition"); },
     nowSeconds: () => NOW,
     randomBytesImpl: () => Buffer.alloc(32, 0x94),
     requestTtlSeconds: 15,
     timeoutMs: 1_000,
-  });
+  };
+  if (evidenceRequestImpl !== undefined) controlsInput.requestImpl = evidenceRequestImpl;
+  const controls = createSolverDaemonEvidenceControls(controlsInput);
   const lightning = createCoordinatorLightningActionConfig({
     privateKey: lightningActionKeys.privateKey,
     keyId: "coordinator-action-one",
@@ -409,6 +410,9 @@ test("rejects lookalike readers, packet clients, action configs, and non-indepen
     lightning: {},
     evm: {},
   }), /concrete authenticated private-packet client/);
+  assert.throws(() => runtime(evidencePolicy(), {
+    evidenceRequestImpl: async () => { throw new Error("injected evidence transport"); },
+  }), /fixed Node HTTPS evidence transport/);
 
   const sameRpc = async () => {};
   assert.throws(() => createCoordinatorEvmActionConfig({

@@ -108,8 +108,8 @@ function evidencePolicy(overrides = {}) {
   };
 }
 
-function recoveryControls(policy) {
-  return createSolverDaemonRecoveryEvidenceControls({
+function recoveryControls(policy, requestImpl = undefined) {
+  const input = {
     policy,
     routes: {
       lightningOperator: "https://lightning-operator.internal",
@@ -117,12 +117,13 @@ function recoveryControls(policy) {
     },
     requesterPrivateKey: evidenceRequesterKeys.privateKey,
     requesterKeyId: "coordinator-recovery-evidence-one",
-    requestImpl: async () => { throw new Error("evidence route must not run during composition"); },
     nowSeconds: () => NOW,
     randomBytesImpl: () => Buffer.alloc(32, 0x81),
     requestTtlSeconds: 15,
     timeoutMs: 1_000,
-  });
+  };
+  if (requestImpl !== undefined) input.requestImpl = requestImpl;
+  return createSolverDaemonRecoveryEvidenceControls(input);
 }
 
 function activeControls(policy) {
@@ -142,7 +143,7 @@ function activeControls(policy) {
   });
 }
 
-function recoveryRuntime(policy = evidencePolicy()) {
+function recoveryRuntime(policy = evidencePolicy(), { evidenceRequestImpl } = {}) {
   const packetClient = createAuthenticatedPrivatePacketClient({
     providerOrigin: "https://packet-provider.internal",
     requesterPrivateKey: packetRequesterKeys.privateKey,
@@ -184,7 +185,7 @@ function recoveryRuntime(policy = evidencePolicy()) {
   });
   return createCoordinatorRecoveryOperatorRuntime({
     packetClient,
-    controls: recoveryControls(policy),
+    controls: recoveryControls(policy, evidenceRequestImpl),
     lightning,
     evm,
   });
@@ -354,6 +355,9 @@ test("accepts only a complete recovery-only runtime and an exact reviewed policy
     ...runtime,
     packetClient: { read: runtime.packetClient.read },
   }), /authenticated private-packet client/);
+  assert.throws(() => recoveryRuntime(policy, {
+    evidenceRequestImpl: async () => { throw new Error("injected evidence transport"); },
+  }), /fixed Node HTTPS evidence transport/);
 
   const client = await capabilityClient();
   const preparer = createCoordinatorRecoveryOperatorPolicyPreparer({

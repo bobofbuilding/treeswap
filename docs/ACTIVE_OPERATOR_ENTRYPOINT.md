@@ -14,7 +14,8 @@ must contain all of the following original same-process objects:
   the separately signed Lightning-capacity reader;
 - a `createAuthenticatedPrivatePacketClient` result;
 - a `createSolverDaemonEvidenceControls` result using two distinct private
-  HTTPS routes whose policy digest exactly matches the policy being prepared;
+  HTTPS routes, the module-owned fixed Node HTTPS transport, and a policy
+  digest that exactly matches the policy being prepared;
 - a `createCoordinatorLightningActionConfig` result for one isolated private
   Lightning adapter and one private Ed25519 authorization-key handle; and
 - a `createCoordinatorEvmActionConfig` result for one gas-only claim signer,
@@ -32,8 +33,10 @@ active policy set prepared.
 Preparation is one-use and cancellation-aware. Shutdown aborts outstanding
 solver endpoint requests; a late result cannot be handed to the active
 lifecycle. A copied client, runtime, config, controls object, or preparer has no
-factory provenance and is rejected. No endpoint, key, invoice, address, or
-settlement identifier is added to coordinator health output.
+factory provenance and is rejected. Evidence controls made with an injected
+request callback are test-only and reject before runtime creation. No endpoint,
+key, invoice, address, or settlement identifier is added to coordinator health
+output.
 
 ## Deployment-owned code
 
@@ -54,7 +57,8 @@ The operator must still prove all external facts separately:
   independently controlled as required by the release;
 - both evidence routes use the repository's [durable provider
   boundary](./DURABLE_EVIDENCE_PROVIDER.md), separate initialized replay-ledger
-  volumes, independent readers, and reviewed TLS identity;
+  volumes, independent readers, reviewed TLS identities/trust roots, and the
+  fixed Node HTTPS client path;
 - the Lightning adapter and EVM claim signer have least-privilege credentials;
 - the coordinator database and crash journal are on a persistent private
   volume;

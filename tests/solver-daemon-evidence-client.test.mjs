@@ -9,6 +9,7 @@ import {
   createSolverDaemonEvidenceControls,
   isSolverDaemonEvidenceControls,
   signSolverDaemonEvidenceRequest,
+  solverDaemonEvidenceControlsTransportMode,
   verifySolverDaemonEvidenceRequest,
 } from "../lib/solver-daemon-evidence-client.mjs";
 import {
@@ -274,6 +275,7 @@ test("collects both distinct route approvals for every daemon control and return
   const controls = controlsWithHarness(harness, evidencePolicy);
   assert.equal(isSolverDaemonEvidenceControls(controls), true);
   assert.equal(isSolverDaemonEvidenceControls({ ...controls }), false);
+  assert.equal(solverDaemonEvidenceControlsTransportMode(controls), "injected-test");
   const pending = settlement("bit-to-lightning", { observed: false });
   const observed = settlement();
   const privatePacket = packet();
@@ -380,6 +382,19 @@ test("fails closed when routes share an origin or a route is public, plaintext, 
       },
     }), /isolated private HTTPS origin/);
   }
+
+  const fixedTransportControls = createSolverDaemonEvidenceControls({
+    ...base,
+    routes: {
+      lightningOperator: "https://lightning-approver.internal",
+      securityReviewer: "https://security-approver.internal",
+    },
+  });
+  assert.equal(solverDaemonEvidenceControlsTransportMode(fixedTransportControls), "fixed-node-https");
+  assert.throws(
+    () => solverDaemonEvidenceControlsTransportMode({ ...fixedTransportControls }),
+    /factory provenance/,
+  );
 });
 
 test("rejects route disagreement, wrong signers, copied responses, redirects, and cacheable bodies", async () => {

@@ -24,6 +24,17 @@ The client does not quote, select a solver, create work, open the release gate, 
 
 Active policy preparation accepts nonempty evidence controls only when they are the original same-process object returned by this factory. A spread copy or deployment-injected callback object is rejected. An empty control object remains valid but fail-closed: it can only leave reservation and reconciliation waiting and dispatch gates closed.
 
+The factory owns a direct `node:https` request implementation. Controls
+constructed without a request override are marked `fixed-node-https`; controls
+constructed with any injected request function are marked `injected-test`.
+Both reviewed active and recovery operator runtimes accept only the former.
+The fixed transport opens a fresh port-443 connection with certificate and
+hostname verification enabled; it does not use global `fetch`, a shared agent,
+or the process-wide Undici dispatcher. This prevents deployment code from
+silently replacing the HTTPS request path while retaining otherwise-valid
+control provenance. Injected transport remains available only for isolated
+protocol tests and is not accepted by either official operator launcher.
+
 ## Request and response boundary
 
 For each control call, the client:
@@ -66,7 +77,7 @@ Routes must not log request or response bodies. Although the protocol contains n
 
 Different URLs, keys, signatures, containers, or service commitments do not prove independent operation. Before test inventory, retained deployment evidence must show that the two routes use the service identities, trust domains, credentials, operators, and organizations required by the release and service-isolation policies. Reviewers must also prove that both routes are not aliases for one backend observation or one administrator.
 
-The route response is authenticated by the policy-pinned EIP-712 signer, not by trusting an HTTP success. Standard TLS verification must remain enabled, and deployment evidence must retain the certificate/trust-root, network-policy, requester-key provisioning, rotation, revocation, replay-store persistence, and outage behavior for both origins.
+The route response is authenticated by the policy-pinned EIP-712 signer, not by trusting an HTTP success. The official launchers require the fixed Node HTTPS transport, which fixes the request path and port, does not follow redirects, explicitly enables certificate verification, and refuses operation whenever Node TLS verification is globally disabled. Deployment evidence must still retain and independently review the certificate/trust-root, hostname resolution, network policy, requester-key provisioning, rotation, revocation, replay-store persistence, and outage behavior for both origins.
 
 ## Remaining deployment gate
 

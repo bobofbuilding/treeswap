@@ -230,6 +230,17 @@ Paying Lightning before the BIT escrow is sufficiently final can leave the payer
 
 The bounded daemon no longer treats a structurally matching callback object as finality or reconciliation authority. Reservation, both dispatch types, and both terminal outcomes require an exact dual-signed, short-lived, release/policy/solver/direction/escrow-bound EIP-712 record and the original module-private verification result. Nominal booleans, copied verification objects, signer substitution, mutation, cross-purpose reuse, stale/future records, unsafe deadlines, and exact-expiry use halt before value movement or completed-history promotion. These signatures authenticate the configured operators and commitments; deployed organizational independence and truthful upstream observations remain external evidence gates.
 
+The reviewed operator runtimes also reject evidence controls constructed with an
+injected request callback. The evidence client owns a direct `node:https`
+request path, labels overridden transports test-only, and propagates that
+provenance into both active and recovery-only controls. The fixed path uses a
+fresh port-443 connection, explicit certificate verification, and no global
+`fetch`, shared agent, or process-wide Undici dispatcher. This prevents a
+deployment callback from silently ignoring the fixed private HTTPS origins,
+path, port, or TLS-verification check while retaining a valid control object. It
+does not prove certificate issuance, trust-root scope, private routing, endpoint
+independence, or honest operators; those remain deployment and review gates.
+
 Each evidence provider now has a concrete fail-closed handler and strict durable
 replay ledger. The signed request is policy-matched and atomically claimed before
 the independent observation path runs; authority fields are derived from the

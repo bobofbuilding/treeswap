@@ -21,8 +21,9 @@ For every retained policy the operator must construct:
   readers;
 - a `createAuthenticatedPrivatePacketClient` result;
 - `createSolverDaemonRecoveryEvidenceControls`, using two distinct private
-  evidence routes and exposing only reservation observation, EVM-claim
-  authorization, and terminal asset verification;
+  evidence routes through the module-owned fixed Node HTTPS transport and
+  exposing only reservation observation, EVM-claim authorization, and terminal
+  asset verification;
 - a `createCoordinatorLightningActionConfig` result used only to reconcile an
   already-created Lightning action; and
 - a `createCoordinatorEvmActionConfig` result with the gas-only claim signer,
@@ -30,10 +31,11 @@ For every retained policy the operator must construct:
 
 The recovery-only evidence object has no `authorizeLightning` method. Passing
 the active evidence object, a copied recovery object, or a caller-built
-lookalike rejects before service startup. The runtime still contains the
-Lightning reconciliation adapter because an interrupted historical action may
-need a read-only status lookup; the recovery planner and execution fence
-independently reject Lightning planning and dispatch.
+lookalike rejects before service startup. Controls constructed with an injected
+request callback are test-only and reject before runtime creation. The runtime
+still contains the Lightning reconciliation adapter because an interrupted
+historical action may need a read-only status lookup; the recovery planner and
+execution fence independently reject Lightning planning and dispatch.
 
 ## One uninterrupted preparation
 
