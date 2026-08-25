@@ -9,6 +9,27 @@ import { createSignedSafetyObservationFixture } from "./fixtures/signed-safety-o
 
 const NOW = 2_100_000_000;
 const safety = createSignedSafetyObservationFixture({ now: NOW });
+const ZERO_DIGEST = `0x${"00".repeat(32)}`;
+
+function confirmedGate(alert, acceptedTransactionHashes, overrides = {}) {
+  return {
+    confirmed: true,
+    finalized: true,
+    alertDigest: alert.alertDigest,
+    transactionHash: acceptedTransactionHashes[0],
+    gateAddress: safety.policy.verifyingContract,
+    blockNumber: "10",
+    blockHash: id("treeswap-test-gate-confirmation-block").toLowerCase(),
+    gateOpen: false,
+    emergencyHalted: true,
+    openUntil: "0",
+    activeRiskDigest: ZERO_DIGEST,
+    pendingRiskDigest: ZERO_DIGEST,
+    pendingExecuteAfter: "0",
+    pendingValidUntil: "0",
+    ...overrides,
+  };
+}
 
 test("accepts only two signed, release-policy-bound operator observations from every required safety domain", async () => {
   const result = evaluateSafetyMonitor({
@@ -116,6 +137,7 @@ test("healthy monitoring has no authority to open or mutate either exposure gate
         calls += 1;
         return { halted: false, reasonDigest: id("unused").toLowerCase(), transactionHash: id("unused").toLowerCase() };
       }),
+      gateConfirmationActions: safety.gateConfirmers.map(() => async () => { calls += 1; return {}; }),
       alertActions: safety.alertRoutes.map(() => async () => { calls += 1; return { delivered: true }; }),
     }),
     nowSeconds: () => NOW,
@@ -123,22 +145,31 @@ test("healthy monitoring has no authority to open or mutate either exposure gate
   assert.equal(result.outcome, "HEALTHY");
   assert.equal(calls, 0);
   assert.equal(result.guardianBroadcastsAttempted, 0);
+  assert.equal(result.gateConfirmationsAttempted, 0);
   assert.equal(result.alertRoutesAttempted, 0);
 });
 
-test("unsafe monitoring closes quotes, uses both guardian broadcasters, then uses both secret-free alert routes", async () => {
+test("unsafe monitoring closes quotes, broadcasts, confirms finalized gate state, then alerts", async () => {
   const order = [];
   let quoteClosed = false;
-  let gateHalted = false;
+  let broadcastAccepted = false;
+  let gateConfirmed = false;
   const guardianActions = safety.guardianBroadcasters.map((route) => async (alert) => {
-    order.push(`gate:${route.routeId}`);
+    order.push(`broadcast:${route.routeId}`);
     assert.equal(quoteClosed, true);
-    gateHalted = true;
+    broadcastAccepted = true;
     return { halted: true, reasonDigest: alert.alertDigest, transactionHash: route.routeId };
+  });
+  const gateConfirmationActions = safety.gateConfirmers.map((route) => async (alert, context) => {
+    order.push(`confirm:${route.routeId}`);
+    assert.equal(quoteClosed && broadcastAccepted, true);
+    assert.equal(Object.isFrozen(context.acceptedTransactionHashes), true);
+    gateConfirmed = true;
+    return confirmedGate(alert, context.acceptedTransactionHashes);
   });
   const alertActions = safety.alertRoutes.map((route) => async (alert) => {
     order.push(`alert:${route.routeId}`);
-    assert.equal(quoteClosed && gateHalted, true);
+    assert.equal(quoteClosed && gateConfirmed, true);
     assert.equal(JSON.stringify(alert).includes("invoice"), false);
     return { delivered: true };
   });
@@ -152,19 +183,24 @@ test("unsafe monitoring closes quotes, uses both guardian broadcasters, then use
         return { closed: true };
       },
       guardianActions,
+      gateConfirmationActions,
       alertActions,
     }),
     nowSeconds: () => NOW,
   });
   assert.equal(result.outcome, "HALTED_AND_ALERTED");
   assert.equal(result.newExposureClosed, true);
-  assert.equal(result.guardianBroadcastsSucceeded, 2);
+  assert.equal(result.guardianBroadcastsAccepted, 2);
   assert.equal(result.guardianBroadcastDegraded, false);
+  assert.equal(result.gateConfirmationsSucceeded, 2);
+  assert.equal(result.gateConfirmationAgreement, true);
+  assert.equal(result.gateConfirmationDegraded, false);
   assert.equal(result.alertRoutesDelivered, 2);
   assert.equal(result.alertDeliveryDegraded, false);
   assert.deepEqual(order, [
     "quotes",
-    ...safety.guardianBroadcasters.map((route) => `gate:${route.routeId}`),
+    ...safety.guardianBroadcasters.map((route) => `broadcast:${route.routeId}`),
+    ...safety.gateConfirmers.map((route) => `confirm:${route.routeId}`),
     ...safety.alertRoutes.map((route) => `alert:${route.routeId}`),
   ]);
 });
@@ -182,7 +218,8 @@ test("closure or alert transport failures remain explicit and never become healt
   assert.equal(incomplete.outcome, "HALT_INCOMPLETE");
   assert.equal(incomplete.onchainGateHalted, true);
   assert.equal(incomplete.newExposureClosed, false);
-  assert.equal(incomplete.guardianBroadcastsSucceeded, 2);
+  assert.equal(incomplete.guardianBroadcastsAccepted, 2);
+  assert.equal(incomplete.gateConfirmationAgreement, true);
 
   const alertFailure = await runSafetyMonitorCycle({
     observations: unsafe,
@@ -220,11 +257,136 @@ test("one guardian-broadcast outage and one alert-route outage are tolerated but
   assert.equal(result.outcome, "HALTED_AND_ALERTED");
   assert.equal(result.newExposureClosed, true);
   assert.equal(result.guardianBroadcastsAttempted, 2);
-  assert.equal(result.guardianBroadcastsSucceeded, 1);
+  assert.equal(result.guardianBroadcastsAccepted, 1);
   assert.equal(result.guardianBroadcastDegraded, true);
+  assert.equal(result.gateConfirmationsSucceeded, 2);
+  assert.equal(result.gateConfirmationAgreement, true);
   assert.equal(result.alertRoutesAttempted, 2);
   assert.equal(result.alertRoutesDelivered, 1);
   assert.equal(result.alertDeliveryDegraded, true);
+});
+
+test("broadcaster claims cannot establish an onchain halt without two exact confirmations", async () => {
+  const result = await runSafetyMonitorCycle({
+    observations: await safety.observations({ "bit-contract": { status: "unsafe" } }),
+    actionPlan: safety.bindActions({
+      gateConfirmationActions: safety.gateConfirmers.map(() => async () => {
+        throw new Error("confirmation provider unavailable");
+      }),
+    }),
+    nowSeconds: () => NOW,
+  });
+  assert.equal(result.outcome, "HALT_INCOMPLETE");
+  assert.equal(result.guardianBroadcastsAccepted, 2);
+  assert.equal(result.gateConfirmationsAttempted, 2);
+  assert.equal(result.gateConfirmationsSucceeded, 0);
+  assert.equal(result.gateConfirmationAgreement, false);
+  assert.equal(result.gateConfirmationDegraded, true);
+  assert.equal(result.onchainGateHalted, false);
+  assert.equal(result.alertRoutesDelivered, 2);
+  assert.equal(result.newExposureClosed, false);
+});
+
+test("one confirmation outage or two disagreeing finalized views remain halt incomplete", async () => {
+  const unsafe = await safety.observations({ "ethereum-finality": { status: "unsafe" } });
+  const outage = await runSafetyMonitorCycle({
+    observations: unsafe,
+    actionPlan: safety.bindActions({
+      gateConfirmationActions: [
+        async (alert, { acceptedTransactionHashes }) => confirmedGate(alert, acceptedTransactionHashes),
+        async () => { throw new Error("provider offline"); },
+      ],
+    }),
+    nowSeconds: () => NOW,
+  });
+  assert.equal(outage.gateConfirmationsSucceeded, 1);
+  assert.equal(outage.gateConfirmationAgreement, false);
+  assert.equal(outage.onchainGateHalted, false);
+  assert.equal(outage.outcome, "HALT_INCOMPLETE");
+
+  const disagreement = await runSafetyMonitorCycle({
+    observations: unsafe,
+    actionPlan: safety.bindActions({
+      gateConfirmationActions: [
+        async (alert, { acceptedTransactionHashes }) => confirmedGate(alert, acceptedTransactionHashes),
+        async (alert, { acceptedTransactionHashes }) => confirmedGate(alert, acceptedTransactionHashes, {
+          blockHash: id("divergent-finalized-block").toLowerCase(),
+        }),
+      ],
+    }),
+    nowSeconds: () => NOW,
+  });
+  assert.equal(disagreement.gateConfirmationsSucceeded, 2);
+  assert.equal(disagreement.gateConfirmationAgreement, false);
+  assert.equal(disagreement.gateConfirmationDegraded, true);
+  assert.equal(disagreement.onchainGateHalted, false);
+  assert.equal(disagreement.outcome, "HALT_INCOMPLETE");
+});
+
+test("gate confirmations fail closed on false finality, the wrong transaction, or any open and pending state", async () => {
+  const unsafe = await safety.observations({ "ethereum-finality": { status: "unsafe" } });
+  const invalidStates = [
+    { finalized: false },
+    { transactionHash: id("unaccepted-halt-transaction").toLowerCase() },
+    { gateAddress: "0x2222222222222222222222222222222222222222" },
+    { blockNumber: "01" },
+    { blockHash: ZERO_DIGEST },
+    { gateOpen: true },
+    { emergencyHalted: false },
+    { openUntil: "1" },
+    { activeRiskDigest: id("active-risk-remains").toLowerCase() },
+    { pendingRiskDigest: id("pending-reopen").toLowerCase() },
+    { pendingExecuteAfter: "1" },
+    { pendingValidUntil: "1" },
+  ];
+  for (const overrides of invalidStates) {
+    const result = await runSafetyMonitorCycle({
+      observations: unsafe,
+      actionPlan: safety.bindActions({
+        gateConfirmationActions: safety.gateConfirmers.map(() => async (alert, { acceptedTransactionHashes }) => (
+          confirmedGate(alert, acceptedTransactionHashes, overrides)
+        )),
+      }),
+      nowSeconds: () => NOW,
+    });
+    assert.equal(result.gateConfirmationsSucceeded, 0);
+    assert.equal(result.gateConfirmationAgreement, false);
+    assert.equal(result.onchainGateHalted, false);
+    assert.equal(result.newExposureClosed, false);
+    assert.equal(result.outcome, "HALT_INCOMPLETE");
+  }
+});
+
+test("a hung confirmation provider is bounded and cannot suppress alert delivery", async () => {
+  let confirmerAborted = false;
+  let alertsDelivered = 0;
+  const result = await runSafetyMonitorCycle({
+    observations: await safety.observations({ "ethereum-finality": { status: "unsafe" } }),
+    actionPlan: safety.bindActions({
+      gateConfirmationActions: [
+        async (alert, { acceptedTransactionHashes }) => confirmedGate(alert, acceptedTransactionHashes),
+        async (_alert, { signal }) => new Promise((resolve) => {
+          signal.addEventListener("abort", () => {
+            confirmerAborted = true;
+            resolve(null);
+          }, { once: true });
+        }),
+      ],
+      alertActions: safety.alertRoutes.map(() => async () => {
+        alertsDelivered += 1;
+        return { delivered: true };
+      }),
+    }),
+    actionTimeoutMs: 5,
+    nowSeconds: () => NOW,
+  });
+  assert.equal(confirmerAborted, true);
+  assert.equal(alertsDelivered, 2);
+  assert.equal(result.gateConfirmationsSucceeded, 1);
+  assert.equal(result.gateConfirmationAgreement, false);
+  assert.equal(result.alertRoutesDelivered, 2);
+  assert.equal(result.onchainGateHalted, false);
+  assert.equal(result.outcome, "HALT_INCOMPLETE");
 });
 
 test("all guardian-broadcast failures keep the halt incomplete even when quotes and paging close", async () => {
@@ -238,7 +400,9 @@ test("all guardian-broadcast failures keep the halt incomplete even when quotes 
   assert.equal(result.outcome, "HALT_INCOMPLETE");
   assert.equal(result.quoteIssuanceClosed, true);
   assert.equal(result.onchainGateHalted, false);
-  assert.equal(result.guardianBroadcastsSucceeded, 0);
+  assert.equal(result.guardianBroadcastsAccepted, 0);
+  assert.equal(result.gateConfirmationsSucceeded, 0);
+  assert.equal(result.gateConfirmationAgreement, false);
   assert.equal(result.alertRoutesDelivered, 2);
   assert.equal(result.newExposureClosed, false);
 });
@@ -262,13 +426,23 @@ test("noncanonical or secret-bearing action results are rejected and never copie
           transactionHash: id("uppercase-halt").toUpperCase(),
         }),
       ],
+      gateConfirmationActions: [
+        async (alert, { acceptedTransactionHashes }) => ({
+          ...confirmedGate(alert, acceptedTransactionHashes),
+          invoice: secret,
+        }),
+        async (alert, { acceptedTransactionHashes }) => confirmedGate(alert, acceptedTransactionHashes, {
+          transactionHash: String(acceptedTransactionHashes[0] ?? id("missing")).toUpperCase(),
+        }),
+      ],
       alertActions: safety.alertRoutes.map(() => async () => ({ delivered: true, remote: secret })),
     }),
     nowSeconds: () => NOW,
   });
   assert.equal(result.outcome, "HALT_INCOMPLETE");
   assert.equal(result.quoteIssuanceClosed, false);
-  assert.equal(result.guardianBroadcastsSucceeded, 0);
+  assert.equal(result.guardianBroadcastsAccepted, 0);
+  assert.equal(result.gateConfirmationsSucceeded, 0);
   assert.equal(result.alertRoutesDelivered, 0);
   assert.equal(JSON.stringify(result).includes(secret), false);
 });
@@ -281,13 +455,15 @@ test("hostile action-result objects cannot escape fail-closed validation", async
     actionPlan: safety.bindActions({
       closeQuotes: async () => revoked.proxy,
       guardianActions: safety.guardianBroadcasters.map(() => async () => revoked.proxy),
+      gateConfirmationActions: safety.gateConfirmers.map(() => async () => revoked.proxy),
       alertActions: safety.alertRoutes.map(() => async () => revoked.proxy),
     }),
     nowSeconds: () => NOW,
   });
   assert.equal(result.outcome, "HALT_INCOMPLETE");
   assert.equal(result.quoteIssuanceClosed, false);
-  assert.equal(result.guardianBroadcastsSucceeded, 0);
+  assert.equal(result.guardianBroadcastsAccepted, 0);
+  assert.equal(result.gateConfirmationsSucceeded, 0);
   assert.equal(result.alertRoutesDelivered, 0);
 });
 
@@ -322,13 +498,17 @@ test("monitor clock or configuration failure still attempts both closures with a
         closures += 1;
         return { halted: true, reasonDigest: alert.alertDigest, transactionHash: route.routeId };
       }),
+      gateConfirmationActions: safety.gateConfirmers.map(() => async (alert, { acceptedTransactionHashes }) => {
+        closures += 1;
+        return confirmedGate(alert, acceptedTransactionHashes);
+      }),
     }),
     actionTimeoutMs: 0,
     nowSeconds: () => { throw new Error("clock failed"); },
   });
   assert.equal(result.outcome, "HALTED_AND_ALERTED");
   assert.deepEqual(result.reasonCodes, ["MONITOR_INPUT_INVALID"]);
-  assert.equal(closures, 3);
+  assert.equal(closures, 5);
 });
 
 test("an action plan cannot outlive its signed monitor policy", async () => {
@@ -341,18 +521,23 @@ test("an action plan cannot outlive its signed monitor policy", async () => {
         calls += 1;
         return { halted: true, reasonDigest: alert.alertDigest, transactionHash: route.routeId };
       }),
+      gateConfirmationActions: safety.gateConfirmers.map(() => async (alert, { acceptedTransactionHashes }) => {
+        calls += 1;
+        return confirmedGate(alert, acceptedTransactionHashes);
+      }),
       alertActions: safety.alertRoutes.map(() => async () => { calls += 1; return { delivered: true }; }),
     }),
     nowSeconds: () => safety.policy.validUntil,
   });
   assert.equal(result.outcome, "HALTED_AND_ALERTED");
   assert.ok(result.reasonCodes.includes("MONITOR_POLICY_INACTIVE"));
-  assert.equal(calls, 5);
+  assert.equal(calls, 7);
 });
 
 test("a hung quote shutdown is bounded so the guardian halt and alert still run", async () => {
   let signalAborted = false;
   let haltCalled = false;
+  let confirmationCalled = false;
   let alertCalled = false;
   const result = await runSafetyMonitorCycle({
     observations: await safety.observations({ "lightning-node": { status: "unsafe" } }),
@@ -367,6 +552,10 @@ test("a hung quote shutdown is bounded so the guardian halt and alert still run"
         haltCalled = true;
         return { halted: true, reasonDigest: alert.alertDigest, transactionHash: route.routeId };
       }),
+      gateConfirmationActions: safety.gateConfirmers.map(() => async (alert, { acceptedTransactionHashes }) => {
+        confirmationCalled = true;
+        return confirmedGate(alert, acceptedTransactionHashes);
+      }),
       alertActions: safety.alertRoutes.map(() => async () => {
         alertCalled = true;
         return { delivered: true };
@@ -377,6 +566,7 @@ test("a hung quote shutdown is bounded so the guardian halt and alert still run"
   });
   assert.equal(signalAborted, true);
   assert.equal(haltCalled, true);
+  assert.equal(confirmationCalled, true);
   assert.equal(alertCalled, true);
   assert.equal(result.outcome, "HALT_INCOMPLETE");
   assert.equal(result.onchainGateHalted, true);

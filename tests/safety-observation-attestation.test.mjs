@@ -105,9 +105,9 @@ test("rejects mutation, copied provenance, wrong signer, expiry, and policy subs
 
 test("requires two canonically ordered, independently committed collectors for every safety domain", () => {
   assert.equal(safety.policy.schema, SAFETY_MONITOR_POLICY_SCHEMA);
-  assert.equal(SAFETY_OBSERVATION_SCHEMA, "treeswap.safety-observation-attestation.v3");
+  assert.equal(SAFETY_OBSERVATION_SCHEMA, "treeswap.safety-observation-attestation.v4");
   assert.throws(
-    () => safetyMonitorPolicyDigest({ ...safety.policy, schema: "treeswap.safety-monitor-policy.v2" }),
+    () => safetyMonitorPolicyDigest({ ...safety.policy, schema: "treeswap.safety-monitor-policy.v3" }),
     /schema is invalid/,
   );
   assert.throws(
@@ -149,6 +149,22 @@ test("requires two canonically ordered, independently committed collectors for e
         : collector),
     }),
     /distinct operator commitments/,
+  );
+  assert.throws(
+    () => safetyMonitorPolicyDigest({
+      ...safety.policy,
+      gateConfirmers: [...safety.policy.gateConfirmers].reverse(),
+    }),
+    /canonically ordered/,
+  );
+  assert.throws(
+    () => safetyMonitorPolicyDigest({
+      ...safety.policy,
+      gateConfirmers: safety.policy.gateConfirmers.map((route, index) => index === 0
+        ? { ...route, operatorId: safety.policy.guardianBroadcasters[0].operatorId }
+        : route),
+    }),
+    /globally distinct operator commitments/,
   );
   assert.throws(
     () => safetyMonitorPolicyDigest({
@@ -202,10 +218,12 @@ test("binds exact redundant action routes with same-process policy provenance", 
   assert.equal(plan.schema, SAFETY_MONITOR_ACTION_PLAN_SCHEMA);
   assert.equal(plan.policyDigest, safety.policyDigest);
   assert.deepEqual(plan.guardianBroadcasters, safety.policy.guardianBroadcasters);
+  assert.deepEqual(plan.gateConfirmers, safety.policy.gateConfirmers);
   assert.deepEqual(plan.alertRoutes, safety.policy.alertRoutes);
   const binding = verifiedSafetyMonitorActionBinding(plan);
   assert.equal(binding.policyDigest, safety.policyDigest);
   assert.equal(binding.guardianBroadcasters.length, 2);
+  assert.equal(binding.gateConfirmers.length, 2);
   assert.equal(binding.alertRoutes.length, 2);
   assert.throws(() => verifiedSafetyMonitorActionBinding({ ...plan }), /lacks same-process/);
   assert.throws(() => safety.bindActions({ boundAt: NOW + 3_600 }), /not active/);
@@ -220,6 +238,7 @@ test("binds exact redundant action routes with same-process policy provenance", 
       routeId: index === 0 ? id("wrong-route").toLowerCase() : route.routeId,
       execute: async () => ({}),
     })),
+    gateConfirmers: safety.gateConfirmers.map((route) => ({ ...route, execute: async () => ({}) })),
     alertRoutes: safety.alertRoutes.map((route) => ({ ...route, execute: async () => ({}) })),
   }), /does not match/);
 });

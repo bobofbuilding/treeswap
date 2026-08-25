@@ -24,7 +24,7 @@ if cast chain-id --rpc-url "$monitor_rpc" >/dev/null 2>&1; then
   exit 1
 fi
 anvil --host 127.0.0.1 --port "$monitor_port" --chain-id 31337 --mnemonic "$monitor_mnemonic" \
-  --timestamp 2100000000 --silent >"$monitor_log" 2>&1 &
+  --timestamp 2100000000 --slots-in-an-epoch 2 --silent >"$monitor_log" 2>&1 &
 monitor_pid=$!
 
 for _ in $(seq 1 100); do

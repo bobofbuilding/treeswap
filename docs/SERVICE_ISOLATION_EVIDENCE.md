@@ -4,7 +4,7 @@ Status: strict local evidence schema, three-role EIP-712 attestation ceremony, v
 
 ## Purpose
 
-A diagram or an opaque infrastructure hash does not prove that the public browser, web server, quote relay, coordinator, Lightning adapters, EVM services, monitor, guardian broadcaster, and backup store use separate trust domains and least-privilege credentials. `lib/service-isolation-evidence.mjs` requires a canonical, secret-free inventory for all twelve roles before operational readiness can be signed.
+A diagram or an opaque infrastructure hash does not prove that the public browser, web server, quote relay, coordinator, Lightning adapters, EVM services, monitor, guardian broadcaster, and backup store use separate trust domains and least-privilege credentials. `lib/service-isolation-evidence.mjs` requires a canonical, secret-free inventory for all twelve roles before operational readiness can be signed. The two policy-bound finalized gate-confirmation routes are deliberately assigned to the already-separated EVM finality-authorizer and asset-verifier trust domains; they are not two aliases inside the safety monitor.
 
 Every service has its own committed service identity, trust domain, network policy, and deployment evidence. Every credential-bearing service has its own committed credential set and a review/expiry window. The record contains commitments only: it rejects endpoints, URLs, invoices, raw macaroons, private keys, seeds, passwords, wallet links, email, and preimages.
 
@@ -20,14 +20,14 @@ The policy requires these placements and credential classes:
 | coordinator | private control | no | coordinator database credential |
 | Lightning payer adapter | private Lightning | no | payer macaroon and pinned TLS identity |
 | Lightning invoice adapter | private Lightning | no | invoice macaroon and pinned TLS identity |
-| EVM finality authorizer | private EVM | no | read-provider credential |
+| EVM finality authorizer / gate confirmer A | private EVM | no | read-provider credential |
 | EVM relayer | private EVM | no | transaction signer |
-| asset verifier | private EVM | no | read-provider credential |
+| asset verifier / gate confirmer B | private EVM | no | read-provider credential |
 | safety monitor | private monitoring | no | read-provider credential |
 | guardian broadcaster | private governance | no | guardian transaction signer |
 | backup store | offline backup | no | backup encryption key |
 
-All twelve trust-domain, service, network-policy, and deployment-evidence commitments must be unique. Credential-set commitments must be unique across all credential-bearing services. A credential-free role must use exact zero credential fields. Every transport is required to be encrypted, and credential validity is capped at ninety days.
+All twelve trust-domain, service, network-policy, and deployment-evidence commitments must be unique. Credential-set commitments must be unique across all credential-bearing services. A credential-free role must use exact zero credential fields. Every transport is required to be encrypted, and credential validity is capped at ninety days. At deployment, the finality authorizer and asset verifier must each independently reproduce the same accepted guardian transaction, successful receipt and `Halted` event, finalized block, alert digest, gate address, fully closed state, zero active risk, and no pending reopen through separately governed providers. Their route/operator commitments must match the signed safety policy and must not overlap the guardian-broadcaster commitments. Repository role separation and commitments do not themselves prove provider or organizational independence.
 
 The record and policy are bound to the exact public-testnet chain, gate, source commit, protocol version, deployment manifest, preparation time, and validity window. The infrastructure operator, Lightning operator, and security reviewer must use distinct operator IDs, signers, and identity evidence across at least two organization commitments. Those commitments and signatures do not establish real-world independence; reviewers must inspect the retained deployment, network, secret-scope, and rotation evidence.
 
