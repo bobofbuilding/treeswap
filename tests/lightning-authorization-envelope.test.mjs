@@ -3,6 +3,7 @@ import { generateKeyPairSync } from "node:crypto";
 import test from "node:test";
 import { id } from "ethers";
 import {
+  lightningAuthorizationEnvelopeDigest,
   serializeLightningAuthorizationPayload,
   signLightningAuthorizationEnvelope,
   verifyLightningAuthorizationEnvelope,
@@ -45,6 +46,37 @@ test("canonical serialization is independent of object insertion order", () => {
   const first = payload({ operation: { paymentRequest: "lnbcrt...", feeLimitSats: "10", timeoutSeconds: 10 } });
   const second = payload({ operation: { timeoutSeconds: 10, feeLimitSats: "10", paymentRequest: "lnbcrt..." } });
   assert.equal(serializeLightningAuthorizationPayload(first), serializeLightningAuthorizationPayload(second));
+});
+
+test("derives one exact authorization-envelope digest for response binding", () => {
+  const envelope = signLightningAuthorizationEnvelope(payload(), privateKey);
+  const digest = lightningAuthorizationEnvelopeDigest(envelope);
+  assert.match(digest, /^0x[0-9a-f]{64}$/);
+  assert.equal(lightningAuthorizationEnvelopeDigest({
+    signature: envelope.signature,
+    payload: {
+      operation: { paymentRequest: "lnbcrt...", timeoutSeconds: 10, feeLimitSats: "10" },
+      expiresAt: NOW + 15,
+      authorizedAt: NOW,
+      capacityEpoch: 7,
+      amountSats: "10000",
+      invoiceDigest: payload().invoiceDigest,
+      paymentHash: payload().paymentHash,
+      intentDigest: payload().intentDigest,
+      requestId: payload().requestId,
+      method: "/routerrpc.Router/SendPaymentV2",
+      keyId: "coordinator-regtest-1",
+      schema: "treeswap.lightning-authorization.v1",
+    },
+  }), digest);
+  assert.notEqual(
+    lightningAuthorizationEnvelopeDigest(signLightningAuthorizationEnvelope(
+      payload({ requestId: id("other-authorization-request").toLowerCase() }),
+      privateKey,
+    )),
+    digest,
+  );
+  assert.throws(() => lightningAuthorizationEnvelopeDigest({ ...envelope, extra: true }), /fields are not exact/);
 });
 
 test("rejects mutation, expiry, excessive lifetime, and an inactive key", () => {

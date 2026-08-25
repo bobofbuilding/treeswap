@@ -635,9 +635,9 @@ smoke_credential_rotation() {
     echo "old payer adapter remained authorized after root-key revocation" >&2
     return 1
   fi
-  if ! jq -e '.ambiguous == false and .errorCode == "REJECTED"' <<<"$revoked_result" >/dev/null; then
+  if ! jq -e '.payload.body.ambiguous == false and .payload.body.errorCode == "REJECTED"' <<<"$revoked_result" >/dev/null; then
     echo "old payer adapter did not return a deterministic rejection after root-key revocation" >&2
-    jq -c '{errorCode,ambiguous}' <<<"$revoked_result" >&2 || true
+    jq -c '.payload.body | {errorCode,ambiguous}' <<<"$revoked_result" >&2 || true
     return 1
   fi
 
@@ -648,7 +648,7 @@ smoke_credential_rotation() {
   if ! jq -e --arg paymentHash "$payment_hash" \
     '.payload.body.result.paymentHash == $paymentHash and .payload.body.result.amountSats == "10000"' <<<"$next_result" >/dev/null; then
     echo "replacement payer credential stopped working after old-root revocation" >&2
-    jq -c '{errorCode,ambiguous}' <<<"$next_result" >&2 || true
+    jq -c '.payload.body | {errorCode,ambiguous}' <<<"$next_result" >&2 || true
     return 1
   fi
 
@@ -666,7 +666,7 @@ smoke_credential_rotation() {
   if ! jq -e --arg paymentHash "$payment_hash" \
     '.payload.body.result.paymentHash == $paymentHash and .payload.body.result.amountSats == "10000"' <<<"$recovered_result" >/dev/null; then
     echo "standard payer credential did not recover after the rotation drill" >&2
-    jq -c '{errorCode,ambiguous}' <<<"$recovered_result" >&2 || true
+    jq -c '.payload.body | {errorCode,ambiguous}' <<<"$recovered_result" >&2 || true
     return 1
   fi
   compose exec -T bob lncli --network=regtest cancelinvoice "${payment_hash#0x}" >/dev/null
@@ -787,9 +787,9 @@ smoke_tls_certificate_rotation() {
     echo "old pinned adapter accepted the rotated LND certificate" >&2
     return 1
   fi
-  if ! jq -e '.ambiguous == false and .errorCode == "REJECTED"' <<<"$old_pin_result" >/dev/null; then
+  if ! jq -e '.payload.body.ambiguous == false and .payload.body.errorCode == "REJECTED"' <<<"$old_pin_result" >/dev/null; then
     echo "old TLS pin did not fail as a deterministic read-only rejection" >&2
-    jq -c '{errorCode,ambiguous}' <<<"$old_pin_result" >&2 || true
+    jq -c '.payload.body | {errorCode,ambiguous}' <<<"$old_pin_result" >&2 || true
     return 1
   fi
   if [[ "$old_pin_result" == *"$payment_request"* || "$old_pin_result" == *"${payment_hash#0x}"* ]]; then
@@ -816,7 +816,7 @@ smoke_tls_certificate_rotation() {
   if ! jq -e --arg paymentHash "$payment_hash" \
     '.payload.body.result.paymentHash == $paymentHash and .payload.body.result.amountSats == "10000"' <<<"$rollback_result" >/dev/null; then
     echo "old pinned adapter did not recover after certificate rollback" >&2
-    jq -c '{errorCode,ambiguous}' <<<"$rollback_result" >&2 || true
+    jq -c '.payload.body | {errorCode,ambiguous}' <<<"$rollback_result" >&2 || true
     return 1
   fi
   echo "TLS-rotation stage passed: rollback restored the old certificate and adapter pin."
@@ -846,7 +846,7 @@ smoke_tls_certificate_rotation() {
   if ! jq -e --arg paymentHash "$payment_hash" \
     '.payload.body.result.paymentHash == $paymentHash and .payload.body.result.amountSats == "10000"' <<<"$recovered_result" >/dev/null; then
     echo "newly pinned payer adapter did not recover after TLS rotation" >&2
-    jq -c '{errorCode,ambiguous}' <<<"$recovered_result" >&2 || true
+    jq -c '.payload.body | {errorCode,ambiguous}' <<<"$recovered_result" >&2 || true
     return 1
   fi
 
@@ -1090,7 +1090,7 @@ smoke_adapter_hold_invoice() {
     echo "payer adapter accepted a replay after restart" >&2
     return 1
   fi
-  jq -e '.error | test("already used")' <<<"$replay_result" >/dev/null
+  jq -e '.payload.body.error | test("already used")' <<<"$replay_result" >/dev/null
 
   wrong_role_id="0x$(openssl rand -hex 32)"
   wrong_role_envelope=$(sign_adapter_authorization /routerrpc.Router/SendPaymentV2 "$wrong_role_id" "$intent_digest" \
@@ -1100,7 +1100,7 @@ smoke_adapter_hold_invoice() {
     echo "invoice adapter accepted a payer authorization" >&2
     return 1
   fi
-  jq -e '.error | test("does not belong")' <<<"$wrong_role_result" >/dev/null
+  jq -e '.payload.body.error | test("does not belong")' <<<"$wrong_role_result" >/dev/null
   rm -f "$payment_result"
   unset preimage
   echo "Adapter smoke passed: signed intent, pinned TLS, role isolation, accepted hold, settle, 10000-sat payment, and restart-safe replay rejection."
@@ -1197,7 +1197,7 @@ smoke_invoice_faults() {
     echo "invoice adapter accepted a wrong preimage" >&2
     return 1
   fi
-  jq -e '.error | test("preimage does not match")' <<<"$wrong_result" >/dev/null
+  jq -e '.payload.body.error | test("preimage does not match")' <<<"$wrong_result" >/dev/null
   lookup_id="0x$(openssl rand -hex 32)"
   lookup_result=$(call_adapter invoice-adapter /invoicesrpc.Invoices/LookupInvoiceV2 \
     "$lookup_id" "$intent_digest" "$payment_hash" "$invoice_digest" "$amount_sats" '{}')
@@ -1216,7 +1216,7 @@ smoke_invoice_faults() {
     echo "invoice adapter accepted a replayed cancellation" >&2
     return 1
   fi
-  jq -e '.error | test("already used")' <<<"$replay_result" >/dev/null
+  jq -e '.payload.body.error | test("already used")' <<<"$replay_result" >/dev/null
 
   settle_id="0x$(openssl rand -hex 32)"
   settle_operation=$(jq -cn --arg preimage "$preimage" '{preimage:$preimage}')
@@ -1225,14 +1225,14 @@ smoke_invoice_faults() {
     echo "canceled hold invoice accepted a late settlement" >&2
     return 1
   fi
-  jq -e '.error | test("not accepted")' <<<"$settle_result" >/dev/null
+  jq -e '.payload.body.error | test("not accepted")' <<<"$settle_result" >/dev/null
   if wait "$payment_pid"; then
     payment_pid=""
     echo "payer reported success for a canceled hold invoice" >&2
     return 1
   fi
   payment_pid=""
-  jq -e '.error | test("Lightning payment failed")' "$payment_result" >/dev/null
+  jq -e '.payload.body.error | test("Lightning payment failed")' "$payment_result" >/dev/null
   rm -f "$payment_result"
   payment_result=""
   unset preimage wrong_preimage pay_req payment_envelope
@@ -1313,9 +1313,9 @@ assert_adapter_payment_not_found() {
     echo "payment was dispatched despite a pre-dispatch rejection" >&2
     return 1
   fi
-  if ! jq -e '.errorCode == "NOT_FOUND"' <<<"$result" >/dev/null; then
+  if ! jq -e '.payload.body.errorCode == "NOT_FOUND"' <<<"$result" >/dev/null; then
     echo "read-only tracking did not return NOT_FOUND after pre-dispatch rejection" >&2
-    jq -c '{error,errorCode,ambiguous}' <<<"$result" >&2
+    jq -c '.payload.body | {error,errorCode,ambiguous}' <<<"$result" >&2
     return 1
   fi
   payment_hash_base64=$(printf '%s' "${payment_hash#0x}" | xxd -r -p | openssl base64 -A)
@@ -1360,9 +1360,9 @@ smoke_policy_faults() {
     echo "payer adapter accepted a routing fee above its cap" >&2
     return 1
   fi
-  if ! jq -e '.error | test("routing fee limit exceeds policy")' <<<"$result" >/dev/null; then
+  if ! jq -e '.payload.body.error | test("routing fee limit exceeds policy")' <<<"$result" >/dev/null; then
     echo "routing-fee probe failed for an unexpected reason" >&2
-    jq -c '{error,errorCode,ambiguous}' <<<"$result" >&2
+    jq -c '.payload.body | {error,errorCode,ambiguous}' <<<"$result" >&2
     return 1
   fi
   assert_adapter_payment_not_found "$intent_digest" "$payment_hash" "$invoice_digest" 10000
@@ -1384,9 +1384,9 @@ smoke_policy_faults() {
     echo "payer adapter accepted a payment above its per-payment cap" >&2
     return 1
   fi
-  if ! jq -e '.error | test("per-payment Lightning cap exceeded")' <<<"$result" >/dev/null; then
+  if ! jq -e '.payload.body.error | test("per-payment Lightning cap exceeded")' <<<"$result" >/dev/null; then
     echo "per-payment probe failed for an unexpected reason" >&2
-    jq -c '{error,errorCode,ambiguous}' <<<"$result" >&2
+    jq -c '.payload.body | {error,errorCode,ambiguous}' <<<"$result" >&2
     return 1
   fi
   assert_adapter_payment_not_found "$intent_digest" "$payment_hash" "$invoice_digest" 100001
@@ -1453,7 +1453,7 @@ smoke_policy_faults() {
     echo "payer adapter opened exposure above its live in-flight cap" >&2
     return 1
   fi
-  jq -e '.error | test("Lightning in-flight cap exceeded")' <<<"$result" >/dev/null
+  jq -e '.payload.body.error | test("Lightning in-flight cap exceeded")' <<<"$result" >/dev/null
   assert_adapter_payment_not_found "$intent_digest" "$payment_hash" "$invoice_digest" 10000
   echo "Policy fault stage passed: live in-flight cap and no dispatch."
   compose exec -T bob lncli --network=regtest cancelinvoice "$hold_hash_one" >/dev/null
@@ -1505,7 +1505,7 @@ smoke_policy_faults() {
     echo "payer adapter dispatched while its only channel was offline" >&2
     return 1
   fi
-  jq -e '.error | test("service is unhealthy or unsynced")' <<<"$offline_result" >/dev/null
+  jq -e '.payload.body.error | test("service is unhealthy or unsynced")' <<<"$offline_result" >/dev/null
   compose start bob >/dev/null
   wait_for_wallet_rpc bob
   initialize_wallet bob
@@ -1621,7 +1621,7 @@ smoke_directional_capacity() {
     echo "payer adapter dispatched without enough outbound liquidity" >&2
     return 1
   fi
-  jq -e '.ambiguous == false and (.error | test("directional Lightning liquidity is insufficient"))' \
+  jq -e '.payload.body.ambiguous == false and (.payload.body.error | test("directional Lightning liquidity is insufficient"))' \
     <<<"$payer_result" >/dev/null
   assert_adapter_payment_not_found "$payer_intent" "$payer_hash" "$payer_digest" "$amount_sats"
 
@@ -1637,7 +1637,7 @@ smoke_directional_capacity() {
     echo "invoice adapter opened exposure without enough inbound liquidity" >&2
     return 1
   fi
-  jq -e '.ambiguous == false and (.error | test("directional Lightning liquidity is insufficient"))' \
+  jq -e '.payload.body.ambiguous == false and (.payload.body.error | test("directional Lightning liquidity is insufficient"))' \
     <<<"$invoice_result" >/dev/null
   if compose exec -T bob lncli --network=regtest lookupinvoice "${invoice_hash#0x}" >/dev/null 2>&1; then
     echo "inbound-capacity rejection still created a hold invoice" >&2
@@ -1780,7 +1780,7 @@ smoke_daily_cap() {
     echo "restarted payer adapter exceeded its daily cap" >&2
     return 1
   fi
-  jq -e '.ambiguous == false and (.error | test("daily Lightning cap exceeded"))' \
+  jq -e '.payload.body.ambiguous == false and (.payload.body.error | test("daily Lightning cap exceeded"))' \
     <<<"$rejected_result" >/dev/null
   assert_adapter_payment_not_found "$rejected_intent" "$rejected_hash" "$rejected_digest" 1
   compose exec -T bob lncli --network=regtest cancelinvoice "${rejected_hash#0x}" >/dev/null
@@ -1829,7 +1829,7 @@ smoke_daily_cap() {
     echo "restarted invoice adapter exceeded its daily cap" >&2
     return 1
   fi
-  jq -e '.ambiguous == false and (.error | test("daily Lightning cap exceeded"))' \
+  jq -e '.payload.body.ambiguous == false and (.payload.body.error | test("daily Lightning cap exceeded"))' \
     <<<"$rejected_hold_result" >/dev/null
   if compose exec -T bob lncli --network=regtest lookupinvoice "${rejected_hold_hash#0x}" >/dev/null 2>&1; then
     echo "daily-cap rejection still created a hold invoice" >&2
@@ -1899,7 +1899,7 @@ smoke_stateless_chain_initialization() {
     echo "fresh chain-progress state opened Lightning exposure" >&2
     return 1
   fi
-  jq -e '.ambiguous == false and (.error | test("chain progress baseline is not initialized"))' \
+  jq -e '.payload.body.ambiguous == false and (.payload.body.error | test("chain progress baseline is not initialized"))' \
     <<<$first_result >/dev/null
   assert_adapter_payment_not_found "$intent_digest" "$payment_hash" "$invoice_digest" "$amount_sats"
   echo "Stateless-initialization stage passed: fresh state failed closed before dispatch."
@@ -1918,7 +1918,7 @@ smoke_stateless_chain_initialization() {
     echo "adapter restart erased the uninitialized chain-progress gate" >&2
     return 1
   fi
-  jq -e '.ambiguous == false and (.error | test("chain progress baseline is not initialized"))' \
+  jq -e '.payload.body.ambiguous == false and (.payload.body.error | test("chain progress baseline is not initialized"))' \
     <<<$restart_result >/dev/null
   assert_adapter_payment_not_found "$intent_digest" "$payment_hash" "$invoice_digest" "$amount_sats"
   echo "Stateless-initialization stage passed: restart preserved the closed baseline."
@@ -2156,10 +2156,10 @@ smoke_production_duration_chain_delay() {
     echo "production-duration stale adapter dispatched a new payment" >&2
     return 1
   fi
-  if ! jq -e '.ambiguous == false and (.error | test("chain made no observed progress"))' \
+  if ! jq -e '.payload.body.ambiguous == false and (.payload.body.error | test("chain made no observed progress"))' \
     <<<$stale_result >/dev/null; then
     echo "production-duration adapter failed for an unexpected reason" >&2
-    jq -c '{error,errorCode,ambiguous}' <<<$stale_result >&2
+    jq -c '.payload.body | {error,errorCode,ambiguous}' <<<$stale_result >&2
     return 1
   fi
   payment_count=$(compose exec -T alice lncli --network=regtest listpayments |
@@ -2272,9 +2272,9 @@ smoke_stale_chain_header() {
     echo "stale-header adapter dispatched a new payment" >&2
     return 1
   fi
-  if ! jq -e '.ambiguous == false and (.error | test("chain made no observed progress"))' <<<"$result" >/dev/null; then
+  if ! jq -e '.payload.body.ambiguous == false and (.payload.body.error | test("chain made no observed progress"))' <<<"$result" >/dev/null; then
     echo "stale-header adapter failed for an unexpected reason" >&2
-    jq -c '{error,errorCode,ambiguous}' <<<"$result" >&2
+    jq -c '.payload.body | {error,errorCode,ambiguous}' <<<"$result" >&2
     return 1
   fi
 
@@ -2334,10 +2334,10 @@ smoke_unsynced_chain_catchup() {
     echo "payer adapter dispatched while LND was catching up" >&2
     return 1
   fi
-  if ! jq -e '.ambiguous == false and (.error | test("unhealthy or unsynced|wallet is unsynced"))' \
+  if ! jq -e '.payload.body.ambiguous == false and (.payload.body.error | test("unhealthy or unsynced|wallet is unsynced"))' \
     <<<"$unsynced_result" >/dev/null; then
     echo "unsynced-node adapter rejection was unexpected" >&2
-    jq -c '{error,errorCode,ambiguous}' <<<"$unsynced_result" >&2
+    jq -c '.payload.body | {error,errorCode,ambiguous}' <<<"$unsynced_result" >&2
     return 1
   fi
 
@@ -2488,10 +2488,10 @@ smoke_force_close_recovery() {
     echo "payer adapter dispatched while its only channel was force-closing" >&2
     return 1
   fi
-  if ! jq -e '.ambiguous == false and (.error | test("service is unhealthy or unsynced"))' \
+  if ! jq -e '.payload.body.ambiguous == false and (.payload.body.error | test("service is unhealthy or unsynced"))' \
     <<<"$force_result" >/dev/null; then
     echo "force-close adapter rejection was unexpected" >&2
-    jq -c '{error,errorCode,ambiguous}' <<<"$force_result" >&2
+    jq -c '.payload.body | {error,errorCode,ambiguous}' <<<"$force_result" >&2
     return 1
   fi
 
@@ -2652,9 +2652,9 @@ smoke_route_and_duplicate_failure() {
     echo "unrouted payment unexpectedly succeeded" >&2
     return 1
   fi
-  if ! jq -e '.ambiguous == false and (.error | test("Lightning payment failed.*NO_ROUTE"))' <<<"$result" >/dev/null; then
+  if ! jq -e '.payload.body.ambiguous == false and (.payload.body.error | test("Lightning payment failed.*NO_ROUTE"))' <<<"$result" >/dev/null; then
     echo "unrouted payment failed for an unexpected reason" >&2
-    jq -c '{error,errorCode,ambiguous}' <<<"$result" >&2
+    jq -c '.payload.body | {error,errorCode,ambiguous}' <<<"$result" >&2
     return 1
   fi
 
@@ -2665,9 +2665,9 @@ smoke_route_and_duplicate_failure() {
       '.payload.body.result.status == "FAILED" and .payload.body.result.paymentHash == $paymentHash and .payload.body.result.amountSats == "10000"' \
       <<<"$track_result" >/dev/null
   else
-    if ! jq -e '.errorCode == "NOT_FOUND" and .ambiguous == false' <<<"$track_result" >/dev/null; then
+    if ! jq -e '.payload.body.errorCode == "NOT_FOUND" and .payload.body.ambiguous == false' <<<"$track_result" >/dev/null; then
       echo "read-only tracking returned an unsafe no-route observation" >&2
-      jq -c '{error,errorCode,ambiguous}' <<<"$track_result" >&2 || true
+      jq -c '.payload.body | {error,errorCode,ambiguous}' <<<"$track_result" >&2 || true
       return 1
     fi
     payment_hash_base64=$(printf '%s' "${payment_hash#0x}" | xxd -r -p | openssl base64 -A)
@@ -2683,7 +2683,7 @@ smoke_route_and_duplicate_failure() {
     echo "failed payment authorization was replayed" >&2
     return 1
   fi
-  jq -e '.error | test("request identifier was already used")' <<<"$replay_result" >/dev/null
+  jq -e '.payload.body.error | test("request identifier was already used")' <<<"$replay_result" >/dev/null
 
   duplicate_id="0x$(openssl rand -hex 32)"
   duplicate_envelope=$(sign_adapter_authorization /routerrpc.Router/SendPaymentV2 \
@@ -2692,7 +2692,7 @@ smoke_route_and_duplicate_failure() {
     echo "failed payment hash opened a second Lightning exposure" >&2
     return 1
   fi
-  jq -e '.error | test("payment hash was already used for Lightning exposure")' <<<"$duplicate_result" >/dev/null
+  jq -e '.payload.body.error | test("payment hash was already used for Lightning exposure")' <<<"$duplicate_result" >/dev/null
 
   matching_after=""
   for _ in $(seq 1 30); do
@@ -2881,7 +2881,7 @@ smoke_cross_chain_deadline() {
     echo "cross-chain hold invoice settled at its safety boundary" >&2
     return 1
   fi
-  if ! jq -e '.error | test("inside the settlement safety margin|not accepted")' <<<"$settle_result" >/dev/null; then
+  if ! jq -e '.payload.body.error | test("inside the settlement safety margin|not accepted")' <<<"$settle_result" >/dev/null; then
     echo "cross-chain boundary settlement failed for an unexpected reason" >&2
     return 1
   fi
@@ -2905,7 +2905,7 @@ smoke_cross_chain_deadline() {
     return 1
   fi
   hold_payment_pid=""
-  jq -e '.error | test("Lightning payment failed")' "$hold_payment_result" >/dev/null
+  jq -e '.payload.body.error | test("Lightning payment failed")' "$hold_payment_result" >/dev/null
   rm -f "$hold_payment_result"
   hold_payment_result=""
 
@@ -3026,7 +3026,7 @@ smoke_htlc_cutoff() {
   if ! lookup_result=$(call_adapter invoice-adapter /invoicesrpc.Invoices/LookupInvoiceV2 \
     "$lookup_id" "$intent_digest" "$payment_hash" "$invoice_digest" "$amount_sats" '{}'); then
     echo "invoice lookup failed after rapid block advancement" >&2
-    jq -c '{error,errorCode,ambiguous}' <<<"$lookup_result" >&2
+    jq -c '.payload.body | {error,errorCode,ambiguous}' <<<"$lookup_result" >&2
     return 1
   fi
   state=$(jq -er '.payload.body.result.state' <<<"$lookup_result")
@@ -3061,14 +3061,14 @@ smoke_htlc_cutoff() {
     return 1
   fi
   if [[ "$boundary_outcome" == "adapter-cutoff" ]]; then
-    if ! jq -e '.error | test("inside the settlement safety margin")' <<<"$settle_result" >/dev/null; then
+    if ! jq -e '.payload.body.error | test("inside the settlement safety margin")' <<<"$settle_result" >/dev/null; then
       echo "CLTV cutoff settlement failed for an unexpected reason" >&2
-      jq -c '{error,errorCode,ambiguous}' <<<"$settle_result" >&2
+      jq -c '.payload.body | {error,errorCode,ambiguous}' <<<"$settle_result" >&2
       return 1
     fi
-  elif ! jq -e '.error | test("not accepted")' <<<"$settle_result" >/dev/null; then
+  elif ! jq -e '.payload.body.error | test("not accepted")' <<<"$settle_result" >/dev/null; then
     echo "CLTV cutoff settlement failed for an unexpected reason" >&2
-    jq -c '{error,errorCode,ambiguous}' <<<"$settle_result" >&2
+    jq -c '.payload.body | {error,errorCode,ambiguous}' <<<"$settle_result" >&2
     return 1
   fi
 
@@ -3085,7 +3085,7 @@ smoke_htlc_cutoff() {
     return 1
   fi
   payment_pid=""
-  jq -e '.error | test("Lightning payment failed")' "$payment_result" >/dev/null
+  jq -e '.payload.body.error | test("Lightning payment failed")' "$payment_result" >/dev/null
   rm -f "$payment_result"
   payment_result=""
   unset preimage payment_request payment_envelope

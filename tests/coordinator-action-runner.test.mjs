@@ -10,6 +10,7 @@ import {
 } from "../lib/coordinator-action-runner.mjs";
 import { CoordinatorStore } from "../lib/coordinator-store.mjs";
 import { signLightningAdapterResponseEnvelope } from "../lib/lightning-adapter-response.mjs";
+import { lightningAuthorizationEnvelopeDigest } from "../lib/lightning-authorization-envelope.mjs";
 
 const NOW = 2_000_000_000;
 const PREIMAGE = id("coordinator-runner-preimage").toLowerCase();
@@ -175,12 +176,36 @@ function adapterAudit(action, {
   };
 }
 
-function signedResponse(body, { privateKey: signingKey = responseKeys.privateKey, keyId = RESPONSE_KEY_ID } = {}) {
+function signedResponse(body, {
+  privateKey: signingKey = responseKeys.privateKey,
+  keyId = RESPONSE_KEY_ID,
+  status = 200,
+} = {}) {
   return new Response(JSON.stringify(signLightningAdapterResponseEnvelope({
     body,
     keyId,
     privateKey: signingKey,
-  })), { status: 200, headers: { "content-type": "application/json" } });
+  })), { status, headers: { "content-type": "application/json" } });
+}
+
+function signedErrorResponse(authorizationEnvelope, {
+  status = 403,
+  error = "policy denied",
+  errorCode = "REJECTED",
+  ambiguous = false,
+  requestId = authorizationEnvelope.payload.requestId,
+  authorizationDigest = lightningAuthorizationEnvelopeDigest(authorizationEnvelope),
+  signing = {},
+  extra = {},
+} = {}) {
+  return signedResponse({
+    error,
+    errorCode,
+    ambiguous,
+    requestId,
+    authorizationDigest,
+    ...extra,
+  }, { ...signing, status });
 }
 
 function successResponse(action, overrides = {}, auditOverrides = {}, signing = {}) {
@@ -512,9 +537,10 @@ test("treats every adapter rejection as unproven after durable dispatch", async 
       keyId: "coordinator-test-1",
       adapterUrl: "http://payer-adapter:3000",
       nowSeconds: () => NOW + 21,
-      requestImpl: async () => new Response(JSON.stringify({ error: "policy denied", ambiguous: false }), { status: 403 }),
+      requestImpl: async (_url, options) => signedErrorResponse(JSON.parse(options.body)),
     }), (error) => error.ambiguous === true && error.actionState === "UNKNOWN");
     assert.equal(rejected.store.getAction(rejected.action.actionId).state, "UNKNOWN");
+    assert.equal(rejected.store.getAction(rejected.action.actionId).resultCode, "ADAPTER_REJECTED_UNPROVEN");
     assert.equal(rejected.store.getSettlement(rejected.value.settlementId).reconciliationRequired, true);
   } finally {
     rejected.store.close();
@@ -530,11 +556,37 @@ test("treats every adapter rejection as unproven after durable dispatch", async 
       keyId: "coordinator-test-1",
       adapterUrl: "http://payer-adapter:3000",
       nowSeconds: () => NOW + 21,
-      requestImpl: async () => new Response(JSON.stringify({ error: "already used", ambiguous: false }), { status: 409 }),
+      requestImpl: async (_url, options) => signedErrorResponse(JSON.parse(options.body), {
+        status: 409,
+        error: "already used",
+      }),
     }), (error) => error.ambiguous === true && error.actionState === "UNKNOWN");
     assert.equal(conflict.store.getAction(conflict.action.actionId).state, "UNKNOWN");
+    assert.equal(conflict.store.getAction(conflict.action.actionId).resultCode, "ADAPTER_AMBIGUOUS");
   } finally {
     conflict.store.close();
+  }
+
+  const forged = await setup("dispatch-forged-rejection");
+  try {
+    await assert.rejects(() => dispatchLightningAction({
+      store: forged.store,
+      actionId: forged.action.actionId,
+      operation: operation(),
+      privateKey,
+      keyId: "coordinator-test-1",
+      adapterUrl: "http://payer-adapter:3000",
+      nowSeconds: () => NOW + 21,
+      requestImpl: async () => new Response(JSON.stringify({
+        error: "policy denied",
+        errorCode: "REJECTED",
+        ambiguous: false,
+      }), { status: 403 }),
+    }), (error) => error.ambiguous === true && error.actionState === "UNKNOWN");
+    assert.equal(forged.store.getAction(forged.action.actionId).state, "UNKNOWN");
+    assert.equal(forged.store.getAction(forged.action.actionId).resultCode, "UNAUTHENTICATED_ADAPTER_ERROR");
+  } finally {
+    forged.store.close();
   }
 });
 
@@ -668,6 +720,48 @@ test("recovers a confirmed payment preimage after restart without changing durab
       },
     });
     assert.equal(proof.preimage, PREIMAGE);
+    assert.deepEqual(store.getAction(action.actionId), before);
+  } finally {
+    store.close();
+  }
+});
+
+test("requires confirmed-proof lookup rejections to authenticate the exact read authorization", async () => {
+  const { store, action } = await setup("confirmed-proof-rejection-authentication");
+  try {
+    await dispatchLightningAction({
+      store,
+      actionId: action.actionId,
+      operation: operation(),
+      privateKey,
+      keyId: "coordinator-test-1",
+      adapterUrl: "http://payer-adapter:3000",
+      nowSeconds: () => NOW + 21,
+      requestImpl: async () => successResponse(action),
+    });
+    const before = store.getAction(action.actionId);
+    await assert.rejects(() => readConfirmedLightningPaymentProof({
+      store,
+      actionId: action.actionId,
+      requestId: hash("confirmed-proof-rejection-authentication:forged"),
+      privateKey,
+      keyId: "coordinator-test-1",
+      adapterUrl: "http://payer-adapter:3000",
+      nowSeconds: () => NOW + 30,
+      requestImpl: async (_url, options) => signedErrorResponse(JSON.parse(options.body), {
+        authorizationDigest: hash("another-confirmed-proof-authorization"),
+      }),
+    }), /unauthenticated rejection/);
+    await assert.rejects(() => readConfirmedLightningPaymentProof({
+      store,
+      actionId: action.actionId,
+      requestId: hash("confirmed-proof-rejection-authentication:valid"),
+      privateKey,
+      keyId: "coordinator-test-1",
+      adapterUrl: "http://payer-adapter:3000",
+      nowSeconds: () => NOW + 31,
+      requestImpl: async (_url, options) => signedErrorResponse(JSON.parse(options.body)),
+    }), /lookup was rejected/);
     assert.deepEqual(store.getAction(action.actionId), before);
   } finally {
     store.close();
@@ -830,16 +924,56 @@ test("keeps IN_FLIGHT and NOT_FOUND observations blocked until a terminal proof 
       keyId: "coordinator-test-1",
       adapterUrl: "http://payer-adapter:3000",
       nowSeconds: () => NOW + 30,
-      requestImpl: async () => new Response(JSON.stringify({
+      requestImpl: async (_url, options) => signedErrorResponse(JSON.parse(options.body), {
+        status: 502,
         error: "payment not found",
         errorCode: "NOT_FOUND",
-        ambiguous: false,
-      }), { status: 502 }),
+      }),
     });
     assert.equal(notFound.disposition, "unresolved");
     assert.equal(missing.store.getAction(missing.action.actionId).state, "UNKNOWN");
+    assert.equal(missing.store.getAction(missing.action.actionId).resultCode, "NOT_FOUND");
   } finally {
     missing.store.close();
+  }
+});
+
+test("does not record unauthenticated or request-replayed NOT_FOUND evidence", async () => {
+  for (const mode of ["unsigned", "wrong-key", "wrong-key-id", "wrong-request", "wrong-authorization"]) {
+    const unknown = await makeUnknown(`reconcile-not-found-authentication-${mode}`);
+    const requestId = hash(`reconcile-not-found-authentication-${mode}:request`);
+    try {
+      await assert.rejects(() => reconcileLightningAction({
+        store: unknown.store,
+        actionId: unknown.action.actionId,
+        reconciliationRequestId: requestId,
+        privateKey,
+        keyId: "coordinator-test-1",
+        adapterUrl: "http://payer-adapter:3000",
+        nowSeconds: () => NOW + 30,
+        requestImpl: async (_url, options) => {
+          const response = signedErrorResponse(JSON.parse(options.body), {
+            status: 502,
+            error: "payment not found",
+            errorCode: "NOT_FOUND",
+            requestId: mode === "wrong-request" ? hash("another-read-request") : undefined,
+            authorizationDigest: mode === "wrong-authorization" ? hash("another-authorization") : undefined,
+            signing: mode === "wrong-key"
+              ? { privateKey: wrongResponseKeys.privateKey }
+              : mode === "wrong-key-id"
+                ? { keyId: "retired-response-key" }
+                : {},
+          });
+          if (mode !== "unsigned") return response;
+          const envelope = await response.json();
+          return new Response(JSON.stringify(envelope.payload.body), { status: 502 });
+        },
+      }), /was rejected/);
+      assert.equal(unknown.store.getAction(unknown.action.actionId).state, "UNKNOWN");
+      assert.notEqual(unknown.store.getAction(unknown.action.actionId).resultCode, "NOT_FOUND");
+    } finally {
+      unknown.store.close();
+    }
   }
 });
 
@@ -904,12 +1038,12 @@ test("keeps reconciliation unknown on a copied audit, unsupported state, or malf
       keyId: "coordinator-test-1",
       adapterUrl: "http://payer-adapter:3000",
       nowSeconds: () => NOW + 30,
-      requestImpl: async () => new Response(JSON.stringify({
+      requestImpl: async (_url, options) => signedErrorResponse(JSON.parse(options.body), {
+        status: 502,
         error: "payment not found",
         errorCode: "NOT_FOUND",
-        ambiguous: false,
-        requestId: hash("attacker-added-binding"),
-      }), { status: 502 }),
+        extra: { attackerAddedBinding: hash("attacker-added-binding") },
+      }),
     }), /was rejected/);
     assert.equal(malformedMissing.store.getAction(malformedMissing.action.actionId).state, "UNKNOWN");
   } finally {

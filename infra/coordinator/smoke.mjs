@@ -244,9 +244,9 @@ const lightning = {
         schema: String(body?.payload?.schema ?? "none"),
         responseKeyId: String(body?.payload?.keyId ?? "none"),
         resultStatus: String(body?.payload?.body?.result?.status ?? "none"),
-        errorCode: String(body?.errorCode ?? "none"),
-        error: String(body?.error ?? "none").slice(0, 120),
-        ambiguous: body?.ambiguous === true,
+        errorCode: String(body?.payload?.body?.errorCode ?? "none"),
+        error: String(body?.payload?.body?.error ?? "none").slice(0, 120),
+        ambiguous: body?.payload?.body?.ambiguous === true,
       };
       if (method === "/routerrpc.Router/SendPaymentV2"
           && response.ok && body?.payload?.body?.result?.status === "SUCCEEDED") {
