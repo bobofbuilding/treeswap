@@ -165,11 +165,10 @@ function recoveryRuntime(policy = evidencePolicy(), { evidenceRequestImpl, packe
   const lightning = createCoordinatorLightningActionConfig({
     privateKey: lightningActionKeys.privateKey,
     keyId: "coordinator-recovery-action-one",
-    adapterUrl: "http://payer-adapter",
+    adapterUrl: "https://payer-adapter.internal",
     responsePublicKey: lightningResponseKeys.publicKey,
     responseKeyId: "payer-response-recovery-one",
     authorizationLifetimeSeconds: 15,
-    requestImpl: async () => { throw new Error("Lightning adapter must not run during composition"); },
     dispatchTimeoutMs: 30_000,
     requestTimeoutMs: 5_000,
   });

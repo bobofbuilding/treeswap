@@ -216,7 +216,10 @@ function lightningAdapter() {
           },
           audit,
           },
-        })), { status: 200, headers: { "content-type": "application/json" } });
+        })), {
+          status: 200,
+          headers: { "cache-control": "no-store", "content-type": "application/json" },
+        });
       }
       if (method === SETTLE_INVOICE) {
         return new Response(JSON.stringify(signLightningAdapterResponseEnvelope({
@@ -225,7 +228,7 @@ function lightningAdapter() {
           body: { result: { state: "SETTLED" }, audit },
         })), {
           status: 200,
-          headers: { "content-type": "application/json" },
+          headers: { "cache-control": "no-store", "content-type": "application/json" },
         });
       }
       throw new Error(`unexpected method ${method}`);

@@ -17,8 +17,10 @@ must contain all of the following original same-process objects:
 - a `createSolverDaemonEvidenceControls` result using two distinct private
   HTTPS routes, the module-owned fixed Node HTTPS transport, and a policy
   digest that exactly matches the policy being prepared;
-- a `createCoordinatorLightningActionConfig` result for one isolated private
-  Lightning adapter and one private Ed25519 authorization-key handle; and
+- a `createCoordinatorLightningActionConfig` result for one credential-free
+  private HTTPS Lightning-adapter origin on port 443, one private Ed25519
+  authorization-key handle, and the module-owned fixed Node HTTPS transport;
+  and
 - a `createCoordinatorEvmActionConfig` result for one gas-only claim signer,
   one broadcast RPC client, and exactly two reconciliation providers with
   different labels, origins, and client functions.
@@ -36,7 +38,10 @@ solver endpoint requests; a late result cannot be handed to the active
 lifecycle. A copied client, runtime, config, controls object, or preparer has no
 factory provenance and is rejected. Private-packet clients or evidence controls
 made with an injected request callback are test-only and reject before runtime
-creation. Every launcher, action configuration, policy entry, policy array, and
+creation. Lightning action configuration has no transport-callback field at
+all: plaintext, a nonstandard port, public or credential-bearing origins, and
+caller transport substitution reject before runtime creation. Every launcher,
+action configuration, policy entry, policy array, and
 lower-level policy-set input is read only through exact own enumerable data
 properties. Symbols, hidden fields, accessors, sparse or decorated arrays,
 unsupported nested values, and extra prototype-named fields reject without
@@ -68,6 +73,10 @@ The operator must still prove all external facts separately:
   fixed Node HTTPS client path;
 - the private-packet provider uses an independently reviewed TLS identity and
   trust root through its fixed Node HTTPS client path;
+- the Lightning adapter is reached only through reviewed private DNS and a
+  private CA or equivalent service-mesh identity on port 443; its TLS
+  terminator forwards only to the non-published adapter listener, and its trust
+  root and certificate rotation are tested without disabling Node verification;
 - the Lightning adapter and EVM claim signer have least-privilege credentials;
 - the coordinator database and crash journal are on a persistent private
   volume;

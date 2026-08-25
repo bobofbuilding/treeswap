@@ -27,8 +27,9 @@ For every retained policy the operator must construct:
   evidence routes through the module-owned fixed Node HTTPS transport and
   exposing only reservation observation, EVM-claim authorization, and terminal
   asset verification;
-- a `createCoordinatorLightningActionConfig` result used only to reconcile an
-  already-created Lightning action; and
+- a `createCoordinatorLightningActionConfig` result bound to the module-owned
+  fixed Node HTTPS transport and one credential-free private port-443 adapter
+  origin, used only to reconcile an already-created Lightning action; and
 - a `createCoordinatorEvmActionConfig` result with the gas-only claim signer,
   one broadcast route, and two distinct read-only reconciliation providers.
 
@@ -39,7 +40,9 @@ controls constructed with an injected request callback are test-only and reject
 before runtime creation. The runtime still contains the Lightning reconciliation
 adapter because an interrupted historical action may need a read-only status
 lookup; the recovery planner and execution fence independently reject Lightning
-planning and dispatch.
+planning and dispatch. The configuration accepts no adapter request callback;
+plaintext, nonstandard-port, public, credential-bearing, and path-bearing
+origins cannot enter the recovery runtime.
 
 ## One uninterrupted preparation
 

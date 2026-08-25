@@ -4,7 +4,9 @@ import test from "node:test";
 import { id, sha256 } from "ethers";
 import {
   dispatchLightningAction as dispatchLightningActionRaw,
+  fixedLightningAdapterHttpsRequest,
   lightningActionCommitment,
+  privateLightningAdapterOrigin,
   readConfirmedLightningPaymentProof as readConfirmedLightningPaymentProofRaw,
   reconcileLightningAction as reconcileLightningActionRaw,
 } from "../lib/coordinator-action-runner.mjs";
@@ -185,7 +187,10 @@ function signedResponse(body, {
     body,
     keyId,
     privateKey: signingKey,
-  })), { status, headers: { "content-type": "application/json" } });
+  })), {
+    status,
+    headers: { "cache-control": "no-store", "content-type": "application/json" },
+  });
 }
 
 function signedErrorResponse(authorizationEnvelope, {
@@ -342,7 +347,10 @@ test("keeps an action unknown when adapter response authentication is missing or
   const responses = [
     async (action) => {
       const envelope = await successResponse(action).json();
-      return new Response(JSON.stringify(envelope.payload.body), { status: 200 });
+      return new Response(JSON.stringify(envelope.payload.body), {
+        status: 200,
+        headers: { "cache-control": "no-store", "content-type": "application/json" },
+      });
     },
     async (action) => successResponse(action, {}, {}, { privateKey: wrongResponseKeys.privateKey }),
     async (action) => successResponse(action, {}, {}, { keyId: "retired-response-key" }),
@@ -581,7 +589,10 @@ test("treats every adapter rejection as unproven after durable dispatch", async 
         error: "policy denied",
         errorCode: "REJECTED",
         ambiguous: false,
-      }), { status: 403 }),
+      }), {
+        status: 403,
+        headers: { "cache-control": "no-store", "content-type": "application/json" },
+      }),
     }), (error) => error.ambiguous === true && error.actionState === "UNKNOWN");
     assert.equal(forged.store.getAction(forged.action.actionId).state, "UNKNOWN");
     assert.equal(forged.store.getAction(forged.action.actionId).resultCode, "UNAUTHENTICATED_ADAPTER_ERROR");
@@ -604,6 +615,138 @@ test("refuses public or credential-bearing adapter URLs before dispatch", async 
     assert.equal(store.getAction(action.actionId).state, "PENDING");
   } finally {
     store.close();
+  }
+});
+
+test("the production transport rejects plaintext, nonstandard ports, disabled verification, and route substitution", async () => {
+  for (const [label, adapterUrl, pattern] of [
+    ["plaintext", "http://payer-adapter:3000", /private HTTPS on port 443/],
+    ["nonstandard-port", "https://payer-adapter.internal:8443", /private HTTPS on port 443/],
+  ]) {
+    const { store, action } = await setup(`dispatch-production-transport-${label}`);
+    try {
+      await assert.rejects(() => dispatchLightningAction({
+        store,
+        actionId: action.actionId,
+        operation: operation(),
+        privateKey,
+        keyId: "coordinator-test-1",
+        adapterUrl,
+      }), pattern);
+      assert.equal(store.getAction(action.actionId).state, "PENDING");
+    } finally {
+      store.close();
+    }
+  }
+
+  const verification = await setup("dispatch-production-transport-verification");
+  const previous = process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+  try {
+    process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+    await assert.rejects(() => dispatchLightningAction({
+      store: verification.store,
+      actionId: verification.action.actionId,
+      operation: operation(),
+      privateKey,
+      keyId: "coordinator-test-1",
+      adapterUrl: "https://payer-adapter.internal",
+    }), /certificate verification is disabled/);
+    assert.equal(verification.store.getAction(verification.action.actionId).state, "PENDING");
+  } finally {
+    if (previous === undefined) delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+    else process.env.NODE_TLS_REJECT_UNAUTHORIZED = previous;
+    verification.store.close();
+  }
+
+  const options = {
+    method: "POST",
+    redirect: "error",
+    headers: { "content-type": "application/json" },
+    body: "{}",
+  };
+  assert.throws(() => fixedLightningAdapterHttpsRequest(
+    "https://payer-adapter.internal/v1/other",
+    options,
+  ), /fixed HTTPS request is invalid/);
+  assert.throws(() => fixedLightningAdapterHttpsRequest(
+    "https://payer-adapter.internal/v1/action",
+    { ...options, method: "GET" },
+  ), /fixed HTTPS request is invalid/);
+
+  let coerced = false;
+  assert.throws(() => privateLightningAdapterOrigin({
+    toString() {
+      coerced = true;
+      return "https://payer-adapter.internal";
+    },
+  }), /bounded string/);
+  assert.equal(coerced, false);
+  assert.throws(
+    () => privateLightningAdapterOrigin("https://payer-adapter.internal?"),
+    /private origin/,
+  );
+  assert.throws(
+    () => privateLightningAdapterOrigin("https://payer-adapter.internal#"),
+    /private origin/,
+  );
+});
+
+test("cacheable or ambiguous adapter responses never become action evidence", async () => {
+  for (const mode of ["cacheable", "wrong-content-type"]) {
+    const prepared = await setup(`dispatch-response-transport-policy-${mode}`);
+    try {
+      await assert.rejects(() => dispatchLightningAction({
+        store: prepared.store,
+        actionId: prepared.action.actionId,
+        operation: operation(),
+        privateKey,
+        keyId: "coordinator-test-1",
+        adapterUrl: "http://payer-adapter:3000",
+        nowSeconds: () => NOW + 21,
+        requestImpl: async (_url, options) => {
+          assert.equal(options.redirect, "error");
+          assert.equal(options.headers.accept, "application/json");
+          assert.equal(options.headers["cache-control"], "no-store");
+          const valid = successResponse(prepared.action);
+          return new Response(await valid.text(), {
+            status: 200,
+            headers: mode === "cacheable"
+              ? { "content-type": "application/json" }
+              : { "cache-control": "no-store", "content-type": "text/plain" },
+          });
+        },
+      }), (error) => error.ambiguous === true && error.actionState === "UNKNOWN");
+      assert.equal(prepared.store.getAction(prepared.action.actionId).resultCode, "TRANSPORT_AMBIGUOUS");
+    } finally {
+      prepared.store.close();
+    }
+  }
+});
+
+test("the dispatch deadline cancels a stalled response body and leaves the action unknown", async () => {
+  const prepared = await setup("dispatch-stalled-response-body");
+  let cancelled = false;
+  try {
+    await assert.rejects(() => dispatchLightningAction({
+      store: prepared.store,
+      actionId: prepared.action.actionId,
+      operation: operation(),
+      privateKey,
+      keyId: "coordinator-test-1",
+      adapterUrl: "http://payer-adapter:3000",
+      nowSeconds: () => NOW + 21,
+      dispatchTimeoutMs: 20,
+      requestImpl: async () => new Response(new ReadableStream({
+        cancel() { cancelled = true; },
+      }), {
+        status: 200,
+        headers: { "cache-control": "no-store", "content-type": "application/json" },
+      }),
+    }), (error) => error.ambiguous === true && error.actionState === "UNKNOWN");
+    assert.equal(cancelled, true);
+    assert.equal(prepared.store.getAction(prepared.action.actionId).state, "UNKNOWN");
+  } finally {
+    prepared.store.close();
   }
 });
 
@@ -966,7 +1109,10 @@ test("does not record unauthenticated or request-replayed NOT_FOUND evidence", a
           });
           if (mode !== "unsigned") return response;
           const envelope = await response.json();
-          return new Response(JSON.stringify(envelope.payload.body), { status: 502 });
+          return new Response(JSON.stringify(envelope.payload.body), {
+            status: 502,
+            headers: { "cache-control": "no-store", "content-type": "application/json" },
+          });
         },
       }), /was rejected/);
       assert.equal(unknown.store.getAction(unknown.action.actionId).state, "UNKNOWN");
@@ -1084,7 +1230,10 @@ test("keeps reconciliation unknown when response authentication is missing or wr
           });
           if (mode !== "unsigned") return signed;
           const envelope = await signed.json();
-          return new Response(JSON.stringify(envelope.payload.body), { status: 200 });
+          return new Response(JSON.stringify(envelope.payload.body), {
+            status: 200,
+            headers: { "cache-control": "no-store", "content-type": "application/json" },
+          });
         },
       }), /proof was invalid/);
       assert.equal(unknown.store.getAction(unknown.action.actionId).state, "UNKNOWN");

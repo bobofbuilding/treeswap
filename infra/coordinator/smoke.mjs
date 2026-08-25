@@ -318,6 +318,7 @@ const restartedProof = await readConfirmedLightningPaymentProof({
   responsePublicKey,
   responseKeyId: required("PAYER_ADAPTER_RESPONSE_KEY_ID"),
   nowSeconds: () => Math.floor(Date.now() / 1_000),
+  requestImpl: fetch,
 });
 const recoveredPreimage = restartedProof.preimage;
 if (!BYTES32.test(String(recoveredPreimage)) || paymentHashFor(recoveredPreimage) !== paymentHash) {

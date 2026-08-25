@@ -157,6 +157,7 @@ const reconciled = await reconcileLightningAction({
   responsePublicKey,
   responseKeyId: required("INVOICE_ADAPTER_RESPONSE_KEY_ID"),
   nowSeconds: () => Math.floor(Date.now() / 1_000),
+  requestImpl: fetch,
 });
 if (reconciled.disposition !== "confirmed" || reconciled.action.dispatchCount !== 1) {
   throw new Error(

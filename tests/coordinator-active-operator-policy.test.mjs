@@ -11,6 +11,7 @@ import {
   isCoordinatorActiveOperatorPolicyPreparer,
   startCoordinatorActiveOperatorService,
 } from "../lib/coordinator-active-operator-policy.mjs";
+import { fixedLightningAdapterHttpsRequest } from "../lib/coordinator-action-runner.mjs";
 import {
   buildLightningCapacityObservation,
   createAuthenticatedLightningCapacityReader,
@@ -262,11 +263,10 @@ function runtime(policy = evidencePolicy(), { evidenceRequestImpl, packetRequest
   const lightning = createCoordinatorLightningActionConfig({
     privateKey: lightningActionKeys.privateKey,
     keyId: "coordinator-action-one",
-    adapterUrl: "http://payer-adapter",
+    adapterUrl: "https://payer-adapter.internal",
     responsePublicKey: lightningResponseKeys.publicKey,
     responseKeyId: "payer-response-active-one",
     authorizationLifetimeSeconds: 15,
-    requestImpl: async () => { throw new Error("Lightning adapter must not run during composition"); },
     dispatchTimeoutMs: 30_000,
     requestTimeoutMs: 5_000,
   });
@@ -323,6 +323,8 @@ test("accepts only the complete original operator runtime and matching evidence 
   const policy = evidencePolicy();
   const client = await capabilityClient();
   const activeRuntime = runtime(policy);
+  assert.equal(activeRuntime.lightning.requestImpl, fixedLightningAdapterHttpsRequest);
+  assert.equal(activeRuntime.lightning.adapterUrl, "https://payer-adapter.internal");
   assert.equal(
     authenticatedPrivatePacketClientTransportMode(activeRuntime.packetClient),
     "fixed-node-https",
@@ -438,11 +440,10 @@ test("rejects lookalike readers, packet clients, action configs, and non-indepen
   const lightningConfig = {
     privateKey: lightningActionKeys.privateKey,
     keyId: "coordinator-action-one",
-    adapterUrl: "http://payer-adapter",
+    adapterUrl: "https://payer-adapter.internal",
     responsePublicKey: lightningResponseKeys.publicKey,
     responseKeyId: "payer-response-active-one",
     authorizationLifetimeSeconds: 15,
-    requestImpl: async () => {},
     dispatchTimeoutMs: 30_000,
     requestTimeoutMs: 5_000,
   };
@@ -454,6 +455,25 @@ test("rejects lookalike readers, packet clients, action configs, and non-indepen
     ...lightningConfig,
     responsePublicKey: lightningResponseKeys.privateKey,
   }), /public Ed25519 key handle/);
+  assert.throws(() => createCoordinatorLightningActionConfig({
+    ...lightningConfig,
+    requestImpl: async () => {},
+  }), /fields are not exact/);
+  assert.throws(() => createCoordinatorLightningActionConfig({
+    ...lightningConfig,
+    adapterUrl: "http://payer-adapter",
+  }), /private HTTPS on port 443/);
+  const previousTlsSetting = process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+  try {
+    process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+    assert.throws(
+      () => createCoordinatorLightningActionConfig(lightningConfig),
+      /certificate verification is disabled/,
+    );
+  } finally {
+    if (previousTlsSetting === undefined) delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+    else process.env.NODE_TLS_REJECT_UNAUTHORIZED = previousTlsSetting;
+  }
 
   const sameRpc = async () => {};
   assert.throws(() => createCoordinatorEvmActionConfig({
