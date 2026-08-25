@@ -2226,6 +2226,137 @@ test("activates funding only after same-process evidence, approvals, reconciliat
       store: prototypeSpoof,
       settlementId: wrapperSettlementId,
     }), /original coordinator store/);
+
+    Date.now = () => (now + 15) * 1_000;
+    const unmatchedEvidencePolicy = {
+      ...evidencePolicy,
+      settlementContract: unmatchedBinding.settlementContract,
+      settlementContractCodeHash: unmatchedBinding.settlementContractCodeHash,
+      solver: unmatchedBinding.solverId,
+      direction: unmatchedBinding.direction,
+    };
+    assert.equal(unmatchedSettlementId < wrapperSettlementId, true);
+    const unmatchedSettlement = waitingStore.getSettlement(unmatchedSettlementId);
+    const haltedActivation = await activatePublicTestnetRelease({
+      candidate,
+      approvalBundle,
+      providerSet,
+      reconciliation: reconciliation.reconciliation,
+      reconciliationApprovals: reconciliation.approvals,
+      now,
+    });
+    const haltedSupervisor = createCoordinatorReleaseVerificationSupervisor({
+      manifestPath: "/injected-halted-settlement-manifest.json",
+      activate: async () => ({
+        manifestDigest: id("halted settlement manifest").toLowerCase(),
+        candidate,
+        activation: haltedActivation,
+      }),
+    });
+    assert.equal((await haltedSupervisor.refresh({ now: now + 15 })).state, "active");
+    const unmatchedExecutionContext = createActiveSolverDaemonContext({
+      solverCapabilityVerification: unmatchedSolverCapability.verification,
+      deployment: haltedActivation.deployment,
+      capabilities: haltedActivation.capabilities,
+      evidencePolicy: unmatchedEvidencePolicy,
+      now: now + 15,
+    });
+    await bindActiveSolverSettlementExecutionPolicy({
+      executionContext: unmatchedExecutionContext,
+      executionFence: activeExecutionFence,
+      serviceLease,
+      settlementId: unmatchedSettlementId,
+      store: waitingStore,
+    });
+    waitingStore.recordReservation({
+      settlementId: unmatchedSettlementId,
+      reservationId: id("unmatched active lifecycle reservation").toLowerCase(),
+      reservationTxHash: id("unmatched active lifecycle reservation transaction").toLowerCase(),
+      reservationBlockNumber: 101,
+      reservationBlockHash: id("unmatched active lifecycle reservation block").toLowerCase(),
+      reservationIntentDigest: unmatchedSettlement.intentDigest,
+      observedAt: now + 15,
+    });
+    waitingStore.planAction({
+      actionId: id("unmatched active lifecycle incompatible EVM action").toLowerCase(),
+      settlementId: unmatchedSettlementId,
+      method: "evm:claim",
+      requestId: id("unmatched active lifecycle incompatible EVM request").toLowerCase(),
+      payloadDigest: id("unmatched active lifecycle incompatible EVM payload").toLowerCase(),
+      intentDigest: unmatchedSettlement.intentDigest,
+      paymentHash: unmatchedSettlement.paymentHash,
+      invoiceDigest: unmatchedSettlement.invoiceDigest,
+      amountSats: unmatchedSettlement.amountSats,
+      capacityEpoch: unmatchedSettlement.capacityEpoch,
+      plannedAt: now + 15,
+    });
+    const haltedPreparation = await prepareCoordinatorActiveExecutionPolicySet({
+      executionPolicies: [
+        {
+          solverCapabilityVerification: solverCapability.verification,
+          evidencePolicy,
+          runtime: { packetClient: null, controls: {}, lightning: null, evm: null },
+        },
+        {
+          solverCapabilityVerification: unmatchedSolverCapability.verification,
+          evidencePolicy: unmatchedEvidencePolicy,
+          runtime: { packetClient: null, controls: {}, lightning: null, evm: null },
+        },
+      ],
+      releaseSupervisor: haltedSupervisor,
+      serviceLease,
+      store: waitingStore,
+    });
+    const haltedLifecycle = createCoordinatorActiveExecutionLifecycle({
+      intervalSeconds: 5,
+      maxSettlementsPerCycle: 16,
+      policyPreparation: haltedPreparation,
+      releaseRefreshSeconds: 10,
+      releaseSupervisor: haltedSupervisor,
+      serviceLease,
+      store: waitingStore,
+    });
+    const haltedCycle = await haltedLifecycle.runCycle();
+    assert.equal(haltedCycle.state, "degraded");
+    assert.deepEqual(haltedCycle.counts, {
+      discovered: 2,
+      eligible: 2,
+      attempted: 1,
+      advanced: 0,
+      waiting: 0,
+      gateClosed: 0,
+      done: 0,
+      halted: 1,
+      backlog: 1,
+    });
+    assert.deepEqual(haltedCycle.authorizations, {
+      funding: false,
+      lightningDispatch: false,
+      newExposure: false,
+    });
+    assert.equal(JSON.stringify(haltedCycle).includes(wrapperSettlementId), false);
+    assert.equal(JSON.stringify(haltedCycle).includes(unmatchedSettlementId), false);
+    assert.equal(waitingStore.getSettlement(wrapperSettlementId).haltCode, null);
+    const preflightHaltedCycle = await haltedLifecycle.runCycle();
+    assert.equal(preflightHaltedCycle.state, "degraded");
+    assert.deepEqual(preflightHaltedCycle.counts, {
+      discovered: 2,
+      eligible: 1,
+      attempted: 0,
+      advanced: 0,
+      waiting: 0,
+      gateClosed: 1,
+      done: 0,
+      halted: 1,
+      backlog: 1,
+    });
+    assert.deepEqual(preflightHaltedCycle.authorizations, {
+      funding: false,
+      lightningDispatch: false,
+      newExposure: false,
+    });
+    await haltedLifecycle.stop();
+    assert.equal(isPublicTestnetReleaseActive(haltedActivation), false);
   } finally {
     Date.now = originalDateNow;
     deactivateRecoverySolverDaemonExecutionFence(recoveryExecutionFence);

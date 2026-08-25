@@ -45,6 +45,8 @@ launcher. Do not pass raw private keys, macaroons, RPC credentials, invoices, or
 private packet data through command arguments, logs, health output, or the web
 application.
 
+Active health is also liability-wide: one unmatched or halted nonterminal settlement closes all advertised authority before any cycle work, and a halt or gate closure reached during execution stops the remaining cycle. Operators must alert on degraded state and clear or safely recover the liability; restarting the same release cannot turn that state healthy.
+
 The operator must still prove all external facts separately:
 
 - the BIT providers, Lightning capacity observer, Lightning node-signature
