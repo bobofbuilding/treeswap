@@ -742,7 +742,7 @@ test("rejects nominal both-assets completion evidence and does not create comple
   assert.equal(fixture.store.getSettlement(fixture.value.settlementId).terminalState, null);
 });
 
-test("rejects an unverified packet result before planning any action", async (t) => {
+test("rejects an unverified or copied packet result before planning any action", async (t) => {
   const fixture = await openStore("unverified-packet", "lightning-to-bit");
   t.after(() => fixture.store.close());
   await assert.rejects(
@@ -753,6 +753,18 @@ test("rejects an unverified packet result before planning any action", async (t)
             responseDigest: hash("forged-response"),
             packet: { operation: { preimage: PREIMAGE } },
           };
+        },
+      },
+    })),
+    /not authenticated/,
+  );
+
+  const authenticated = packetClient(fixture.value);
+  await assert.rejects(
+    executeSolverDaemonStep(runtimeArgs(fixture, {
+      packetClient: {
+        async read(input) {
+          return { ...await authenticated.read(input) };
         },
       },
     })),

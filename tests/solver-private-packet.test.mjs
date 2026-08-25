@@ -6,6 +6,7 @@ import {
   buildPrivatePacketRequest,
   buildSignedPrivatePacketResponse,
   fetchVerifiedPrivatePacket,
+  isVerifiedPrivatePacketResult,
   signPrivatePacketRequest,
   verifyPrivatePacketRequest,
   verifyPrivatePacketResponse,
@@ -119,6 +120,8 @@ test("authenticates a fresh exact send-payment packet and private transport", as
     timeoutSeconds: 30,
   }));
   const verified = verify(signed, request);
+  assert.equal(isVerifiedPrivatePacketResult(verified), true);
+  assert.equal(isVerifiedPrivatePacketResult({ ...verified }), false);
   assert.equal(verified.packet.operation.paymentRequest, value.paymentRequest);
   assert.match(verified.responseDigest, /^0x[0-9a-f]{64}$/);
 
