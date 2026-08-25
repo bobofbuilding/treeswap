@@ -734,6 +734,52 @@ test("derives every authority field from the signed request, not the evidence re
   assert.equal((await replacement.handle(providerRequest(replacementEnvelope))).status, 400);
 });
 
+test("preserves prototype-named fields so exact schemas reject them", async (t) => {
+  const requestStore = await memoryStore();
+  t.after(() => requestStore.close());
+  let requestReads = 0;
+  const requestProvider = await route({
+    replayStore: requestStore,
+    read: async (request) => {
+      requestReads += 1;
+      return observationFor(request);
+    },
+  });
+  const pollutedRequest = structuredClone(envelope({ requestId: hash("prototype request") }));
+  Object.defineProperty(pollutedRequest, "__proto__", {
+    configurable: true,
+    enumerable: true,
+    writable: true,
+    value: { injected: true },
+  });
+  assert.equal((await requestProvider.handle(providerRequest(pollutedRequest))).status, 400);
+  assert.equal(requestReads, 0);
+  assert.equal(requestStore.status({ now: NOW + 1 }).liveClaimedRequests, 0);
+
+  const readerStore = await memoryStore();
+  t.after(() => readerStore.close());
+  let readerCalls = 0;
+  const readerProvider = await route({
+    replayStore: readerStore,
+    read: async (request) => {
+      readerCalls += 1;
+      const observation = observationFor(request);
+      Object.defineProperty(observation, "__proto__", {
+        configurable: true,
+        enumerable: true,
+        writable: true,
+        value: { injected: true },
+      });
+      return observation;
+    },
+  });
+  const readerEnvelope = envelope({ requestId: hash("prototype reader") });
+  assert.equal((await readerProvider.handle(providerRequest(readerEnvelope))).status, 400);
+  assert.equal(readerCalls, 1);
+  assert.equal(readerStore.status({ now: NOW + 1 }).liveClaimedRequests, 1);
+  assert.equal(Object.prototype.injected, undefined);
+});
+
 test("rejects wrong signers, copied readers and stores, and another release policy", async (t) => {
   const store = await memoryStore();
   t.after(() => store.close());

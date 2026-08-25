@@ -111,6 +111,20 @@ test("enforces exact job, runtime, control, identifier, duplicate, and count bou
     beforeSideEffect: async () => {},
   }), /fields are not exact/);
   assert.throws(() => snapshotCoordinatorRecoveryEvidencePolicy([]), /must be an object/);
+  const prototypeConfig = { timeoutMs: 1_000 };
+  Object.defineProperty(prototypeConfig, "__proto__", {
+    configurable: true,
+    enumerable: true,
+    writable: true,
+    value: { timeoutMs: 0 },
+  });
+  assert.throws(() => snapshotCoordinatorRecoveryRuntime({
+    packetClient: null,
+    controls: {},
+    lightning: prototypeConfig,
+    evm: null,
+  }), /forbidden prototype key/);
+  assert.equal(Object.prototype.timeoutMs, undefined);
 });
 
 test("active runtime snapshots the Lightning authorizer without widening recovery authority", async () => {

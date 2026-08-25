@@ -19,6 +19,9 @@ network server. Operator-owned code must terminate authenticated private HTTPS
 on port 443, construct the native request without rewriting its target or body,
 and pass it to the handler. Plain HTTP, another port, a path or query change,
 compressed, cacheable, malformed, or oversized input rejects generically.
+Snapshotting preserves prototype-named properties as ordinary own data, so an
+extra `__proto__` field reaches exact-schema validation and rejects instead of
+being silently reinterpreted as an object prototype.
 
 The provider has no pricing, quote-selection, inventory, Lightning payment,
 EVM broadcast, release-gate, or funding authority. TreeSwap settlement remains

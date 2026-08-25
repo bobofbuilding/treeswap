@@ -12,7 +12,9 @@ absolute private custody-manifest path, one release-record digest, distinct
 restored-host and restored-process commitments, and every retained execution
 policy before the coordinator opens. Accessors, symbol fields, extra fields,
 unbounded nested policy data, copied factory objects, duplicate policies, and
-relative custody paths reject.
+relative custody paths reject. Prototype-named policy fields remain visible to
+exact-schema validation and reject; nested runtime configuration rejects a
+`__proto__` key rather than copying it into an authority-bearing prototype.
 
 For every retained policy the operator must construct:
 

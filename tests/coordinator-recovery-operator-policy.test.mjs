@@ -424,6 +424,21 @@ test("accepts only a complete recovery-only runtime and an exact reviewed policy
     restoredProcessInstanceId: id("nested accessor process").toLowerCase(),
     policies: [{ capabilityClient: client, evidencePolicy: accessorPolicy, runtime }],
   }), /enumerable data property/);
+  const prototypePolicy = { ...policy };
+  Object.defineProperty(prototypePolicy, "__proto__", {
+    configurable: true,
+    enumerable: true,
+    writable: true,
+    value: { solver: Wallet.createRandom().address },
+  });
+  assert.throws(() => createCoordinatorRecoveryOperatorPolicyPreparer({
+    custodyManifestPath: "/private/treeswap/recovery-custody.json",
+    releaseRecordDigest: RELEASE_RECORD_DIGEST,
+    restoredHostInstanceId: id("prototype host").toLowerCase(),
+    restoredProcessInstanceId: id("prototype process").toLowerCase(),
+    policies: [{ capabilityClient: client, evidencePolicy: prototypePolicy, runtime }],
+  }), /fields are not exact/);
+  assert.equal(Object.prototype.solver, undefined);
   assert.throws(() => createCoordinatorRecoveryOperatorPolicyPreparer({
     custodyManifestPath: "/private/treeswap/recovery-custody.json",
     releaseRecordDigest: RELEASE_RECORD_DIGEST,
