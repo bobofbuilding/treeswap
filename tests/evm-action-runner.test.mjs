@@ -1,15 +1,20 @@
 import assert from "node:assert/strict";
+import { EventEmitter } from "node:events";
 import { mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { PassThrough, Readable } from "node:stream";
 import test from "node:test";
 import { Transaction, Wallet, id, keccak256, sha256 } from "ethers";
 import { CoordinatorStore } from "../lib/coordinator-store.mjs";
 import {
   dispatchEvmClaimAction,
   EvmProviderQuorumError,
+  evmRpcHttpsRequest,
   evmClaimActionCommitment,
+  fixedEvmRpcHttpsRequest,
   prepareEvmClaimAction,
+  productionEvmRpcUrl,
   reconcileEvmClaimAction,
   reconcileEvmClaimActionWithQuorum,
 } from "../lib/evm-action-runner.mjs";
@@ -25,6 +30,161 @@ const PREIMAGE = `0x${"22".repeat(32)}`;
 const PAYMENT_HASH = sha256(PREIMAGE).toLowerCase();
 const QUOTE_ID = id("evm-runner:quote").toLowerCase();
 const CLAIMED_TOPIC = id("Claimed(bytes32,address,uint256,uint256)").toLowerCase();
+
+function mockHttpsRpc({
+  result = "0x1",
+  responseBody = null,
+  statusCode = 200,
+  headers = null,
+  onOptions = () => {},
+  onRequest = () => {},
+}) {
+  return (options, callback) => {
+    onOptions(options);
+    const request = new EventEmitter();
+    request.destroy = () => {};
+    request.end = (rawBody) => {
+      const parsed = JSON.parse(rawBody);
+      onRequest(parsed);
+      const bytes = Buffer.from(responseBody ?? JSON.stringify({
+        jsonrpc: "2.0",
+        id: parsed.id,
+        result,
+      }));
+      const incoming = Readable.from([bytes]);
+      incoming.statusCode = statusCode;
+      incoming.headers = headers ?? {
+        "content-type": "application/json; charset=utf-8",
+        "content-length": String(bytes.length),
+      };
+      queueMicrotask(() => callback(incoming));
+    };
+    return request;
+  };
+}
+
+test("uses one fixed certificate-verifying HTTPS JSON-RPC transport", async () => {
+  assert.equal(
+    productionEvmRpcUrl("https://provider.example/v2/opaque-path?network=mainnet"),
+    "https://provider.example/v2/opaque-path?network=mainnet",
+  );
+  for (const value of [
+    "http://provider.example/rpc",
+    "http://127.0.0.1:8545",
+    "https://provider.example:444/rpc",
+    "https://user:secret@provider.example/rpc",
+    "https://provider.example/rpc#fragment",
+    " https://provider.example/rpc",
+    { toString: () => "https://provider.example/rpc" },
+  ]) assert.throws(() => productionEvmRpcUrl(value), /EVM RPC URL|HTTPS on port 443/);
+
+  let requestBody;
+  const result = await evmRpcHttpsRequest({
+    url: "https://provider.example/v2/opaque-path?network=mainnet",
+    method: "eth_chainId",
+    params: [],
+    signal: new AbortController().signal,
+  }, {
+    randomBytesImpl: () => Buffer.alloc(16, 0x42),
+    httpsRequestImpl: mockHttpsRpc({
+      result: "0x1",
+      onOptions(options) {
+        assert.equal(options.protocol, "https:");
+        assert.equal(options.hostname, "provider.example");
+        assert.equal(options.port, 443);
+        assert.equal(options.servername, "provider.example");
+        assert.equal(options.method, "POST");
+        assert.equal(options.path, "/v2/opaque-path?network=mainnet");
+        assert.equal(options.agent, false);
+        assert.equal(options.rejectUnauthorized, true);
+        assert.equal(options.headers.host, "provider.example");
+        assert.equal(options.headers["cache-control"], "no-store");
+      },
+      onRequest(body) { requestBody = body; },
+    }),
+  });
+  assert.equal(result, "0x1");
+  assert.deepEqual(requestBody, {
+    jsonrpc: "2.0",
+    id: `0x${"42".repeat(16)}`,
+    method: "eth_chainId",
+    params: [],
+  });
+  assert.notEqual(fixedEvmRpcHttpsRequest, evmRpcHttpsRequest);
+});
+
+test("rejects ambiguous, malformed, oversized, or stalled HTTPS JSON-RPC responses", async () => {
+  const input = {
+    url: "https://provider.example/rpc",
+    method: "eth_chainId",
+    params: [],
+    signal: new AbortController().signal,
+  };
+  const dependencies = (overrides) => ({
+    randomBytesImpl: () => Buffer.alloc(16, 0x43),
+    httpsRequestImpl: mockHttpsRpc(overrides),
+  });
+  await assert.rejects(evmRpcHttpsRequest(input, dependencies({
+    headers: { "content-type": "text/plain" },
+  })), /content type/);
+  await assert.rejects(evmRpcHttpsRequest(input, dependencies({
+    headers: { "content-type": "application/json", "content-encoding": "gzip" },
+  })), /encoding/);
+  await assert.rejects(evmRpcHttpsRequest(input, dependencies({
+    headers: { "content-type": "application/json", "content-length": "999" },
+  })), /content length/);
+  await assert.rejects(evmRpcHttpsRequest(input, dependencies({
+    responseBody: "not-json",
+    headers: { "content-type": "application/json" },
+  })), /malformed JSON/);
+  await assert.rejects(evmRpcHttpsRequest(input, dependencies({
+    responseBody: JSON.stringify({ jsonrpc: "2.0", id: "wrong", result: "0x1" }),
+  })), /exact matching result/);
+  await assert.rejects(evmRpcHttpsRequest(input, dependencies({
+    responseBody: JSON.stringify({ jsonrpc: "2.0", id: `0x${"43".repeat(16)}`, result: "0x1", extra: true }),
+  })), /exact matching result/);
+  await assert.rejects(evmRpcHttpsRequest(input, dependencies({
+    statusCode: 302,
+  })), /HTTP status/);
+  await assert.rejects(evmRpcHttpsRequest({
+    ...input,
+    url: "https://provider.example/v2/opaque-secret-path",
+  }, {
+    randomBytesImpl: () => Buffer.alloc(16, 0x43),
+    httpsRequestImpl: () => { throw new Error("opaque-secret-path"); },
+  }), (error) => error.message === "EVM RPC transport failed"
+    && !error.message.includes("opaque-secret-path"));
+  await assert.rejects(evmRpcHttpsRequest(input, dependencies({
+    responseBody: JSON.stringify({ jsonrpc: "2.0", id: `0x${"43".repeat(16)}`, result: "x".repeat(140_000) }),
+    headers: { "content-type": "application/json" },
+  })), /size limit/);
+
+  const controller = new AbortController();
+  let responseDestroyed = false;
+  const pending = evmRpcHttpsRequest({ ...input, signal: controller.signal }, {
+    randomBytesImpl: () => Buffer.alloc(16, 0x44),
+    httpsRequestImpl: (_options, callback) => {
+      const request = new EventEmitter();
+      request.destroy = () => {};
+      request.end = () => {
+        const incoming = new PassThrough();
+        const originalDestroy = incoming.destroy.bind(incoming);
+        incoming.destroy = (...args) => {
+          responseDestroyed = true;
+          return originalDestroy(...args);
+        };
+        incoming.statusCode = 200;
+        incoming.headers = { "content-type": "application/json" };
+        queueMicrotask(() => callback(incoming));
+      };
+      return request;
+    },
+  });
+  await new Promise((resolve) => setImmediate(resolve));
+  controller.abort();
+  await assert.rejects(pending, /aborted/);
+  assert.equal(responseDestroyed, true);
+});
 
 function hash(label) {
   return id(label).toLowerCase();

@@ -46,6 +46,27 @@ function quantity(value) {
   return BigInt(value);
 }
 
+async function isolatedLoopbackRpcRequest({ url, method, params, signal }) {
+  const endpoint = new URL(url);
+  if (endpoint.protocol !== "http:"
+      || (endpoint.hostname !== "127.0.0.1" && endpoint.hostname !== "localhost" && endpoint.hostname !== "::1")) {
+    throw new Error("local EVM evidence client accepts loopback HTTP only");
+  }
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+    signal,
+  });
+  const text = await response.text();
+  if (Buffer.byteLength(text) > 128 * 1024) throw new Error("local EVM evidence response is too large");
+  const body = JSON.parse(text);
+  if (!response.ok || body?.jsonrpc !== "2.0" || body?.id !== 1 || body.error || !("result" in body)) {
+    throw new Error("local EVM evidence RPC failed");
+  }
+  return body.result;
+}
+
 async function waitForReceipt(provider, transactionHash, attempts = 80) {
   for (let attempt = 0; attempt < attempts; attempt += 1) {
     const receipt = await provider.send("eth_getTransactionReceipt", [transactionHash]);
@@ -206,6 +227,7 @@ async function dispatchClaim(claim, signer, observedOffset) {
     expectedContractCodeHash: contractCodeHash,
     maximumGasCostWei: MAXIMUM_GAS_COST_WEI,
     rpcUrl: PRIMARY_RPC_URL,
+    rpcRequestImpl: isolatedLoopbackRpcRequest,
     nowSeconds: () => NOW + observedOffset,
   });
 }
@@ -216,8 +238,8 @@ function sameBackendQuorum(claim, observedOffset) {
     actionId: claim.action.actionId,
     expectedContractCodeHash: contractCodeHash,
     providers: [
-      { label: "primary-direct", rpcUrl: PRIMARY_RPC_URL },
-      { label: "primary-proxy", rpcUrl: proxyUrl },
+      { label: "primary-direct", rpcUrl: PRIMARY_RPC_URL, rpcRequestImpl: isolatedLoopbackRpcRequest },
+      { label: "primary-proxy", rpcUrl: proxyUrl, rpcRequestImpl: isolatedLoopbackRpcRequest },
     ],
     nowSeconds: () => NOW + observedOffset,
   });
@@ -260,8 +282,8 @@ try {
       actionId: disagreementClaim.action.actionId,
       expectedContractCodeHash: contractCodeHash,
       providers: [
-        { label: "primary-chain", rpcUrl: PRIMARY_RPC_URL },
-        { label: "divergent-chain", rpcUrl: SECONDARY_RPC_URL },
+        { label: "primary-chain", rpcUrl: PRIMARY_RPC_URL, rpcRequestImpl: isolatedLoopbackRpcRequest },
+        { label: "divergent-chain", rpcUrl: SECONDARY_RPC_URL, rpcRequestImpl: isolatedLoopbackRpcRequest },
       ],
       nowSeconds: () => NOW + 201,
     }),

@@ -27,6 +27,27 @@ const directory = await mkdtemp(join(tmpdir(), "treeswap-evm-smoke-"));
 const databasePath = join(directory, "coordinator.sqlite");
 let store;
 
+async function isolatedLoopbackRpcRequest({ url, method, params, signal }) {
+  const endpoint = new URL(url);
+  if (endpoint.protocol !== "http:"
+      || (endpoint.hostname !== "127.0.0.1" && endpoint.hostname !== "localhost" && endpoint.hostname !== "::1")) {
+    throw new Error("local EVM evidence client accepts loopback HTTP only");
+  }
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+    signal,
+  });
+  const text = await response.text();
+  if (Buffer.byteLength(text) > 128 * 1024) throw new Error("local EVM evidence response is too large");
+  const body = JSON.parse(text);
+  if (!response.ok || body?.jsonrpc !== "2.0" || body?.id !== 1 || body.error || !("result" in body)) {
+    throw new Error("local EVM evidence RPC failed");
+  }
+  return body.result;
+}
+
 async function reconcileUntilIncluded({ actionId, contractCodeHash, now }) {
   const maximumAttempts = 40;
   for (let attempt = 0; attempt < maximumAttempts; attempt += 1) {
@@ -34,6 +55,7 @@ async function reconcileUntilIncluded({ actionId, contractCodeHash, now }) {
       store,
       actionId,
       rpcUrl: RPC_URL,
+      rpcRequestImpl: isolatedLoopbackRpcRequest,
       expectedContractCodeHash: contractCodeHash,
       nowSeconds: () => now + attempt,
     });
@@ -139,6 +161,7 @@ try {
     expectedContractCodeHash: contractCodeHash,
     maximumGasCostWei: 1_000_000_000_000_000n,
     rpcUrl: RPC_URL,
+    rpcRequestImpl: isolatedLoopbackRpcRequest,
     nowSeconds: () => now + 4,
   });
   assert.equal(dispatched.action.state, "UNKNOWN");
@@ -157,6 +180,7 @@ try {
     store,
     actionId: action.actionId,
     rpcUrl: RPC_URL,
+    rpcRequestImpl: isolatedLoopbackRpcRequest,
     expectedContractCodeHash: contractCodeHash,
     nowSeconds: () => now + 6,
   });

@@ -12,6 +12,7 @@ import {
   startCoordinatorActiveOperatorService,
 } from "../lib/coordinator-active-operator-policy.mjs";
 import { fixedLightningAdapterHttpsRequest } from "../lib/coordinator-action-runner.mjs";
+import { fixedEvmRpcHttpsRequest } from "../lib/evm-action-runner.mjs";
 import {
   buildLightningCapacityObservation,
   createAuthenticatedLightningCapacityReader,
@@ -270,9 +271,6 @@ function runtime(policy = evidencePolicy(), { evidenceRequestImpl, packetRequest
     dispatchTimeoutMs: 30_000,
     requestTimeoutMs: 5_000,
   });
-  const broadcastRpc = async () => { throw new Error("EVM broadcast must not run during composition"); };
-  const primaryRpc = async () => { throw new Error("primary EVM observer must not run during composition"); };
-  const secondaryRpc = async () => { throw new Error("secondary EVM observer must not run during composition"); };
   const evm = createCoordinatorEvmActionConfig({
     signer: EVM_RELAYER,
     expectedChainId: CHAIN_ID,
@@ -280,10 +278,9 @@ function runtime(policy = evidencePolicy(), { evidenceRequestImpl, packetRequest
     expectedContractCodeHash: BIT_TO_LIGHTNING_CODE_HASH,
     maximumGasCostWei: "1000000000000000",
     rpcUrl: "https://broadcast.example/rpc",
-    rpcRequestImpl: broadcastRpc,
     reconciliationProviders: [
-      { label: "provider-one", rpcUrl: "https://provider-one.example/rpc", rpcRequestImpl: primaryRpc },
-      { label: "provider-two", rpcUrl: "https://provider-two.example/rpc", rpcRequestImpl: secondaryRpc },
+      { label: "provider-one", rpcUrl: "https://provider-one.example/rpc" },
+      { label: "provider-two", rpcUrl: "https://provider-two.example/rpc" },
     ],
     requestTimeoutMs: 5_000,
   });
@@ -324,6 +321,9 @@ test("accepts only the complete original operator runtime and matching evidence 
   const client = await capabilityClient();
   const activeRuntime = runtime(policy);
   assert.equal(activeRuntime.lightning.requestImpl, fixedLightningAdapterHttpsRequest);
+  assert.equal(activeRuntime.evm.rpcRequestImpl, fixedEvmRpcHttpsRequest);
+  assert.equal(activeRuntime.evm.reconciliationProviders[0].rpcRequestImpl, fixedEvmRpcHttpsRequest);
+  assert.equal(activeRuntime.evm.reconciliationProviders[1].rpcRequestImpl, fixedEvmRpcHttpsRequest);
   assert.equal(activeRuntime.lightning.adapterUrl, "https://payer-adapter.internal");
   assert.equal(
     authenticatedPrivatePacketClientTransportMode(activeRuntime.packetClient),
@@ -475,7 +475,19 @@ test("rejects lookalike readers, packet clients, action configs, and non-indepen
     else process.env.NODE_TLS_REJECT_UNAUTHORIZED = previousTlsSetting;
   }
 
-  const sameRpc = async () => {};
+  assert.throws(() => createCoordinatorEvmActionConfig({
+    signer: EVM_RELAYER,
+    expectedChainId: CHAIN_ID,
+    expectedContract: BIT_TO_LIGHTNING,
+    expectedContractCodeHash: BIT_TO_LIGHTNING_CODE_HASH,
+    maximumGasCostWei: "1",
+    rpcUrl: "https://broadcast.example/rpc",
+    reconciliationProviders: [
+      { label: "provider-one", rpcUrl: "https://provider.example/a" },
+      { label: "provider-two", rpcUrl: "https://provider.example/b" },
+    ],
+    requestTimeoutMs: 5_000,
+  }), /distinct labels and origins/);
   assert.throws(() => createCoordinatorEvmActionConfig({
     signer: EVM_RELAYER,
     expectedChainId: CHAIN_ID,
@@ -485,11 +497,56 @@ test("rejects lookalike readers, packet clients, action configs, and non-indepen
     rpcUrl: "https://broadcast.example/rpc",
     rpcRequestImpl: async () => {},
     reconciliationProviders: [
-      { label: "provider-one", rpcUrl: "https://provider.example/a", rpcRequestImpl: sameRpc },
-      { label: "provider-two", rpcUrl: "https://provider.example/b", rpcRequestImpl: sameRpc },
+      { label: "provider-one", rpcUrl: "https://provider-one.example/rpc" },
+      { label: "provider-two", rpcUrl: "https://provider-two.example/rpc" },
     ],
     requestTimeoutMs: 5_000,
-  }), /distinct labels, origins, and clients/);
+  }), /fields are not exact/);
+  assert.throws(() => createCoordinatorEvmActionConfig({
+    signer: EVM_RELAYER,
+    expectedChainId: CHAIN_ID,
+    expectedContract: BIT_TO_LIGHTNING,
+    expectedContractCodeHash: BIT_TO_LIGHTNING_CODE_HASH,
+    maximumGasCostWei: "1",
+    rpcUrl: "https://broadcast.example/rpc",
+    reconciliationProviders: [
+      { label: "provider-one", rpcUrl: "https://provider-one.example/rpc", rpcRequestImpl: async () => {} },
+      { label: "provider-two", rpcUrl: "https://provider-two.example/rpc" },
+    ],
+    requestTimeoutMs: 5_000,
+  }), /fields are not exact/);
+  assert.throws(() => createCoordinatorEvmActionConfig({
+    signer: EVM_RELAYER,
+    expectedChainId: CHAIN_ID,
+    expectedContract: BIT_TO_LIGHTNING,
+    expectedContractCodeHash: BIT_TO_LIGHTNING_CODE_HASH,
+    maximumGasCostWei: "1",
+    rpcUrl: "http://127.0.0.1:8545",
+    reconciliationProviders: [
+      { label: "provider-one", rpcUrl: "https://provider-one.example/rpc" },
+      { label: "provider-two", rpcUrl: "https://provider-two.example/rpc" },
+    ],
+    requestTimeoutMs: 5_000,
+  }), /certificate-verified HTTPS on port 443/);
+  try {
+    process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+    assert.throws(() => createCoordinatorEvmActionConfig({
+      signer: EVM_RELAYER,
+      expectedChainId: CHAIN_ID,
+      expectedContract: BIT_TO_LIGHTNING,
+      expectedContractCodeHash: BIT_TO_LIGHTNING_CODE_HASH,
+      maximumGasCostWei: "1",
+      rpcUrl: "https://broadcast.example/rpc",
+      reconciliationProviders: [
+        { label: "provider-one", rpcUrl: "https://provider-one.example/rpc" },
+        { label: "provider-two", rpcUrl: "https://provider-two.example/rpc" },
+      ],
+      requestTimeoutMs: 5_000,
+    }), /certificate verification is disabled/);
+  } finally {
+    if (previousTlsSetting === undefined) delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+    else process.env.NODE_TLS_REJECT_UNAUTHORIZED = previousTlsSetting;
+  }
 });
 
 test("rejects non-data, symbol, array-smuggled, and prototype-key active operator inputs", async () => {

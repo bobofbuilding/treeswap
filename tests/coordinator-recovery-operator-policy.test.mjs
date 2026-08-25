@@ -172,9 +172,6 @@ function recoveryRuntime(policy = evidencePolicy(), { evidenceRequestImpl, packe
     dispatchTimeoutMs: 30_000,
     requestTimeoutMs: 5_000,
   });
-  const broadcastRpc = async () => { throw new Error("EVM broadcast must not run during composition"); };
-  const primaryRpc = async () => { throw new Error("primary EVM observer must not run during composition"); };
-  const secondaryRpc = async () => { throw new Error("secondary EVM observer must not run during composition"); };
   const evm = createCoordinatorEvmActionConfig({
     signer: EVM_RELAYER,
     expectedChainId: CHAIN_ID,
@@ -182,10 +179,9 @@ function recoveryRuntime(policy = evidencePolicy(), { evidenceRequestImpl, packe
     expectedContractCodeHash: BIT_TO_LIGHTNING_CODE_HASH,
     maximumGasCostWei: "1000000000000000",
     rpcUrl: "https://broadcast.example/rpc",
-    rpcRequestImpl: broadcastRpc,
     reconciliationProviders: [
-      { label: "provider-one", rpcUrl: "https://provider-one.example/rpc", rpcRequestImpl: primaryRpc },
-      { label: "provider-two", rpcUrl: "https://provider-two.example/rpc", rpcRequestImpl: secondaryRpc },
+      { label: "provider-one", rpcUrl: "https://provider-one.example/rpc" },
+      { label: "provider-two", rpcUrl: "https://provider-two.example/rpc" },
     ],
     requestTimeoutMs: 5_000,
   });

@@ -22,8 +22,9 @@ must contain all of the following original same-process objects:
   authorization-key handle, and the module-owned fixed Node HTTPS transport;
   and
 - a `createCoordinatorEvmActionConfig` result for one gas-only claim signer,
-  one broadcast RPC client, and exactly two reconciliation providers with
-  different labels, origins, and client functions.
+  one exact HTTPS broadcast URL, and exactly two reconciliation providers with
+  different labels and origins, all using the module-owned fixed Node HTTPS
+  JSON-RPC transport.
 
 The preparer refreshes all solver capabilities during the active service's
 bounded unhealthy preparation phase. The fresh capability's chain, settlement
@@ -40,8 +41,13 @@ factory provenance and is rejected. Private-packet clients or evidence controls
 made with an injected request callback are test-only and reject before runtime
 creation. Lightning action configuration has no transport-callback field at
 all: plaintext, a nonstandard port, public or credential-bearing origins, and
-caller transport substitution reject before runtime creation. Every launcher,
-action configuration, policy entry, policy array, and
+caller transport substitution reject before runtime creation.
+EVM action configuration likewise accepts no RPC callback: broadcast and both
+reconciliation routes must use HTTPS on port 443 through fresh
+certificate-verifying connections, and disabled process-wide TLS verification
+rejects before runtime creation. Lower-level loopback request injection remains
+an explicit test-only path. Every launcher, action configuration, policy entry,
+policy array, and
 lower-level policy-set input is read only through exact own enumerable data
 properties. Symbols, hidden fields, accessors, sparse or decorated arrays,
 unsupported nested values, and extra prototype-named fields reject without
@@ -78,6 +84,11 @@ The operator must still prove all external facts separately:
   terminator forwards only to the non-published adapter listener, and its trust
   root and certificate rotation are tested without disabling Node verification;
 - the Lightning adapter and EVM claim signer have least-privilege credentials;
+- each EVM URL and its TLS identity or trust root is independently reviewed;
+  any path/query RPC credential is loaded only inside the operator process and
+  never enters command arguments, logs, health, alerts, or public evidence;
+  distinct URLs remain configuration separation rather than proof of distinct
+  upstream provider control;
 - the coordinator database and crash journal are on a persistent private
   volume;
 - the orchestrator enforces exactly one funded replica and delivers alerts for

@@ -33,6 +33,22 @@ Every verification refresh revokes the prior module-private activation before re
 
 `lib/coordinator-recovery-operator-policy.mjs` is the reviewed deployment composition above that reusable service. Its one-use preparer fixes the private custody path, release, restored host/process, concrete authenticated capability clients, recovery-only evidence controls, packet provider, Lightning reconciliation adapter, EVM claim signer, and two EVM reconciliation routes before startup. It inspects custody, refreshes every solver capability, matches solver/direction/chain/escrow/code/policy, derives readiness from the current same-process recovery activation, and produces the database-derived job set without accepting an identifier or callback-selected job. It checks the original lease before and after each external phase. The dedicated evidence control set deliberately has no Lightning-authorization method; active controls or copied lookalikes reject. See [Recovery operator entrypoint](./RECOVERY_OPERATOR_ENTRYPOINT.md).
 
+`lib/evm-action-runner.mjs` owns the production JSON-RPC request path used by
+both official operator runtimes. It opens fresh certificate-verifying HTTPS
+port-443 connections without global `fetch`, a shared agent, or caller request
+callbacks; binds one unpredictable JSON-RPC ID per call; accepts only the six
+methods required by claim broadcast and reconciliation; snapshots bounded
+plain JSON params; and requires an exact matching HTTP 200 JSON result with a
+bounded complete body. Redirect-like status, wrong ID, extra envelope fields,
+wrong content type or encoding, malformed or inconsistent content length,
+oversized or stalled bodies, plaintext, nonstandard ports, URL credentials,
+fragments, and globally disabled TLS verification fail closed. Broadcast
+failure remains durable ambiguity, while any reconciliation transport failure
+prevents quorum mutation. Explicit injected HTTP remains a lower-level
+loopback-only testing facility and cannot enter active or recovery operator
+composition. Deployed TLS identity, upstream-provider independence, endpoint
+credential custody, and public-testnet evidence remain external gates.
+
 Operator cancellation, timeout, heartbeat/publication failure, or startup failure aborts preparation and synchronously revokes the verifier. The deployment-owned preparation function must treat its signal as mandatory and cooperatively stop before returning or throwing; JavaScript cannot safely preempt arbitrary same-process code. Only after preparation and any action cycle have drained does the service close the store and release the lease. Missing evidence, wrong mode, an already-aborted signal, a copied lease, expired verification, failed custody construction, or an invalid/reused job-set proof never reaches healthy execution. The callback is a local composition hook, not a network work queue, and the default container continues to refuse environment-only execution.
 
 `lib/coordinator-active-execution-policy.mjs` and `lib/coordinator-active-execution-lifecycle.mjs` close the equivalent local work-discovery and shutdown gap for a current funded Lightning/BIT release. Preparation accepts one to 32 solver policies only through the original same-process release supervisor, original service lease, and original coordinator store. It verifies each current solver capability against that activation, recursively snapshots only the permitted packet, evidence, Lightning, and EVM runtime surface, commits a secret-free policy-set digest, and returns an uncopyable one-use preparation proof. A supervisor can be claimed by only one active lifecycle. It accepts no settlement identifier or externally delivered job. Each cycle derives every nonterminal settlement from the store, matches its exact selected solver, direction, capacity epoch, capability, release, and evidence policy, and binds an unbound settlement only through the existing fully authorized firm-offer boundary. It executes at most one planner step per selected settlement and rotates a private cursor under a configurable 1–64 settlement bound.

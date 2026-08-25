@@ -70,6 +70,19 @@ The v1 mechanism is a bilateral RFQ followed by one full-fill hash-locked settle
 
 The prototype is appropriate for product exploration. Real funds should remain disabled until every critical and high item below is implemented, tested in adversarial regtest/fork environments, and independently reviewed.
 
+The official active and retained-recovery runtimes now also remove
+deployment-supplied request functions from the EVM claim path. Broadcast and
+two-provider reconciliation use a module-owned port-443 Node HTTPS client with
+certificate verification, fresh connections, unpredictable request IDs, a
+fixed method allowlist, bounded exact params, and bounded exact responses.
+Plaintext, URL credentials, nonstandard ports, globally disabled verification,
+envelope mismatch, oversized or stalled bodies, and caller transport
+substitution fail closed. This prevents an injected client from bypassing the
+pre-broadcast chain/code checks or manufacturing reconciliation agreement; it
+does not prove the truth or organizational independence of deployed providers,
+their TLS/trust-root identity, or custody of credentials embedded in an RPC
+path or query.
+
 ## Release-blocking findings
 
 ### TS-C01 — Fixed-par inventory drain

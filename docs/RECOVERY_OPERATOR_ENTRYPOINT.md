@@ -31,7 +31,8 @@ For every retained policy the operator must construct:
   fixed Node HTTPS transport and one credential-free private port-443 adapter
   origin, used only to reconcile an already-created Lightning action; and
 - a `createCoordinatorEvmActionConfig` result with the gas-only claim signer,
-  one broadcast route, and two distinct read-only reconciliation providers.
+  one exact HTTPS broadcast route, and two distinct read-only reconciliation
+  origins, all using the module-owned fixed Node HTTPS JSON-RPC transport.
 
 The recovery-only evidence object has no `authorizeLightning` method. Passing
 the active evidence object, a copied recovery object, or a caller-built
@@ -43,6 +44,11 @@ lookup; the recovery planner and execution fence independently reject Lightning
 planning and dispatch. The configuration accepts no adapter request callback;
 plaintext, nonstandard-port, public, credential-bearing, and path-bearing
 origins cannot enter the recovery runtime.
+
+The EVM configuration likewise has no request callback. Plaintext,
+nonstandard-port, URL-credential, fragment, caller-transport, and globally
+disabled TLS-verification paths reject before recovery startup; explicit
+loopback injection remains confined to lower-level local evidence campaigns.
 
 ## One uninterrupted preparation
 
@@ -76,7 +82,8 @@ accept recovery jobs over a network or restore a preparation proof from disk.
 The launcher proves local composition, not deployment truth. Before funded
 testnet operation, operators must still demonstrate a private persistent
 restored volume, one enforced replica, independently operated provider and
-evidence routes, reviewed TLS identity, least-privilege Lightning and EVM
+evidence routes, reviewed TLS identities and trust roots for every Lightning
+and EVM route, least-privilege Lightning and EVM
 credentials, retained compatible runtime bytes and solver recovery keys,
 external alerts, and witnessed process/host restart drills against real
 nonterminal testnet liabilities. Funded operation remains closed until those
