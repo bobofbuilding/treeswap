@@ -97,7 +97,7 @@ Start with the ordered [TreeSwap adoption handoff](docs/ADOPTION_HANDOFF.md). It
 - Repeat the passing EVM outbox/reorg campaigns on public testnet using two independently operated authenticated providers and genuine finality transitions
 - Obtain matching signed observations from two genuinely independent authenticated Ethereum providers, complete the two-role BIT review with retained reports, and derive the short-lived reviewed BIT manifest
 - Independently rebuild and review the closed Sepolia plan, deploy its exact transactions through hardware-backed operators, and capture matching finalized v2 TreeSwap manifests proving reconciled zero balances before test inventory
-- Deploy and qualify the bounded solver daemon and restart-only recovery loop with authenticated job transport, continuous safety monitor, backup/restore drills, redundant guardian delivery, and external alert routing
+- Deploy and qualify the bounded solver daemon and restart-only recovery loop from its exact restored-database job set, with retained-custody wiring, continuous safety monitoring, backup/restore drills, redundant guardian delivery, and external alert routing
 - Deploy the persistent activation coordinator with independently operated runtime reconciliation signers; never restore funding authority from serialized activation output
 - Deploy the implemented solver endpoint, private-packet, and capacity-reader protocols plus independent quote-delivery paths
 - Create and mature the BIT/WBTC pool in observation-only mode, then independently review its exact pool/feed/quoter policy and the other executable BIT venues before it can help bound funded quotes

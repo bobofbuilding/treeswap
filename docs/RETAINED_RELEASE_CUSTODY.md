@@ -64,6 +64,14 @@ The restored database's complete liability commitment must equal the retained ba
 
 The readiness result is short-lived at the earliest provider-observation or solver-capability expiry. It is module-private provenance; copying or serializing it removes validity. It proves only that the inputs and authorities can be reconstructed. It does not claim that a recovery action succeeded.
 
+## Fixed recovery job set
+
+`prepareRetainedReleaseRecoveryJobSet` turns the original readiness result into the only input accepted by the packaged recovery loop. It does not accept settlement identifiers. Instead, it reads every nonterminal settlement from the exact restored `CoordinatorStore`, filters the release covered by readiness, and requires the count and complete liability snapshot to remain identical to the retained backup. It also commits every field of every fixed startup settlement and re-derives that commitment immediately before loop activation. Every settlement must already contain its release, historical solver capability, daemon-evidence policy, and execution-policy binding.
+
+The caller supplies one runtime/evidence-policy/fresh-capability tuple for every and only execution-policy group—not one arbitrary job per settlement. Each tuple must use the original capability verification already admitted by readiness and must match the retained solver, endpoint key, Lightning node, direction, escrow, and runtime hash. The policy, nested provider records, adapter functions, signer methods, and mutable byte inputs are recursively snapshotted before the proof is returned. The derived job set is capped at 64, exposes only an aggregate count and commitment, grants no Lightning dispatch, new exposure, or funding authority, and can be consumed by exactly one loop in the same process. An uncopyable lease permits only one active loop for a release in the restored store; stop retains that lease until any in-flight cycle has exited, then permits a fresh one-use proof to take over. Copies, reuse, concurrent activation, another store, replaced inspection methods, stale authority, omitted or duplicate policy groups, added settlements, runtime mutation, or any settlement/liability change between preparation and loop construction fail closed.
+
+This removes a dynamic recovery work queue from the design. A deployed recovery process must rebuild custody/readiness and this fixed job set locally after every restart; it must never restore the proof from JSON or accept jobs over a network. If the database changes before the loop starts, operators must make a fresh backup/readiness decision rather than reuse the stale set.
+
 ## Witnessed old/new drill
 
 `buildRetainedReleaseRecoveryDrillApproval` derives the exact EIP-712 statement for an actual recovery action. The statement binds:
