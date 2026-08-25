@@ -264,6 +264,66 @@ test("persists atomic replay claims in one exact private SQLite schema", async (
   assert.equal(reopened.status({ now: NOW + 2 }).liveConsumedRequests, 1);
 });
 
+test("persists a clock high-water mark so prune then rollback cannot resurrect a request", async (t) => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "treeswap-evidence-clock-")));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const path = join(root, "replay.sqlite");
+  const store = await SolverDaemonEvidenceReplayStore.open({
+    path,
+    allowMemory: false,
+    initialize: true,
+    maximumLiveRequests: 8,
+  });
+  const oldRequestId = hash("clock rollback old request");
+  const oldClaim = store.claim({
+    requesterKeyId: REQUESTER_KEY_ID,
+    requestId: oldRequestId,
+    expiresAt: NOW + 10,
+    now: NOW,
+  });
+  assert.equal(store.consume(oldClaim, {
+    requesterKeyId: REQUESTER_KEY_ID,
+    requestId: oldRequestId,
+    expiresAt: NOW + 10,
+    now: NOW + 1,
+  }), true);
+  assert.ok(store.claim({
+    requesterKeyId: REQUESTER_KEY_ID,
+    requestId: hash("clock rollback advancing request"),
+    expiresAt: NOW + 30,
+    now: NOW + 20,
+  }));
+
+  const probe = new DatabaseSync(path);
+  assert.equal(Number(probe.prepare(`
+    SELECT COUNT(*) AS count FROM solver_evidence_replay_requests
+    WHERE requester_key_id = ? AND request_id = ?
+  `).get(REQUESTER_KEY_ID, oldRequestId).count), 0);
+  assert.equal(probe.prepare(`
+    SELECT value FROM solver_evidence_replay_meta WHERE key = 'clock_high_water'
+  `).get().value, String(NOW + 20));
+  probe.close();
+
+  assert.throws(() => store.claim({
+    requesterKeyId: REQUESTER_KEY_ID,
+    requestId: oldRequestId,
+    expiresAt: NOW + 10,
+    now: NOW + 2,
+  }), /clock regressed/);
+  assert.throws(() => store.status({ now: NOW + 19 }), /clock regressed/);
+  store.close();
+
+  const reopened = await SolverDaemonEvidenceReplayStore.open({
+    path,
+    allowMemory: false,
+    initialize: false,
+    maximumLiveRequests: 8,
+  });
+  t.after(() => reopened.close());
+  assert.throws(() => reopened.observeTime({ now: NOW + 19 }), /clock regressed/);
+  assert.equal(reopened.observeTime({ now: NOW + 20 }), true);
+});
+
 test("rejects relative, permissive, symlinked, and altered replay databases", async (t) => {
   await assert.rejects(SolverDaemonEvidenceReplayStore.open({
     path: "relative.sqlite",
@@ -332,6 +392,47 @@ test("rejects relative, permissive, symlinked, and altered replay databases", as
     initialize: false,
     maximumLiveRequests: 8,
   }), /regular file/);
+
+  const clockPath = join(root, "malformed-clock.sqlite");
+  const clockStore = await SolverDaemonEvidenceReplayStore.open({
+    path: clockPath,
+    allowMemory: false,
+    initialize: true,
+    maximumLiveRequests: 8,
+  });
+  clockStore.close();
+  const malformedClock = new DatabaseSync(clockPath);
+  malformedClock.prepare(`
+    UPDATE solver_evidence_replay_meta SET value = '01' WHERE key = 'clock_high_water'
+  `).run();
+  malformedClock.close();
+  await assert.rejects(SolverDaemonEvidenceReplayStore.open({
+    path: clockPath,
+    allowMemory: false,
+    initialize: false,
+    maximumLiveRequests: 8,
+  }), /canonical stored integer/);
+});
+
+test("fails closed when the exact replay layout changes while the provider is running", async (t) => {
+  const root = await realpath(await mkdtemp(join(tmpdir(), "treeswap-evidence-live-layout-")));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const path = join(root, "replay.sqlite");
+  const store = await SolverDaemonEvidenceReplayStore.open({
+    path,
+    allowMemory: false,
+    initialize: true,
+    maximumLiveRequests: 8,
+  });
+  t.after(() => store.close());
+  assert.equal(store.observeTime({ now: NOW }), true);
+
+  const mutator = new DatabaseSync(path);
+  mutator.exec("CREATE TABLE injected (value TEXT) STRICT");
+  mutator.close();
+
+  assert.throws(() => store.observeTime({ now: NOW + 1 }), /layout is unsupported/);
+  assert.throws(() => store.status({ now: NOW + 1 }), /layout is unsupported/);
 });
 
 test("serves one policy-bound signed response and persists replay before returning", async (t) => {
@@ -362,7 +463,7 @@ test("serves one policy-bound signed response and persists replay before returni
   assert.equal(body.requestEnvelope.payload.requestId, requestEnvelope.payload.requestId);
   assert.equal(body.approval.role, "lightningOperator");
   assert.equal(body.record.reservationId, hash("observed reservation"));
-  assert.equal(provider.status({ now: NOW + 1 }).liveConsumedRequests, 1);
+  assert.equal(provider.status().liveConsumedRequests, 1);
   const duplicate = await provider.handle(providerRequest(requestEnvelope));
   assert.equal(duplicate.status, 400);
   assert.deepEqual(await duplicate.json(), { error: "solver evidence request rejected" });
@@ -461,6 +562,40 @@ test("fails before the evidence read when durable replay storage is unavailable"
   assert.equal(reads, 0);
 });
 
+test("halts an expired request and health status after wall-clock rollback", async (t) => {
+  const store = await memoryStore();
+  t.after(() => store.close());
+  let reads = 0;
+  const expiredProvider = await route({
+    replayStore: store,
+    nowSeconds: () => NOW + 20,
+    read: async (request) => {
+      reads += 1;
+      return observationFor(request);
+    },
+  });
+  const oldEnvelope = envelope({
+    requestId: hash("route clock rollback"),
+  });
+  assert.equal((await expiredProvider.handle(providerRequest(oldEnvelope))).status, 400);
+  assert.equal(reads, 0);
+
+  const rollbackProvider = await route({
+    replayStore: store,
+    nowSeconds: () => NOW + 5,
+    read: async (request) => {
+      reads += 1;
+      return observationFor(request, { observedAt: NOW + 5, expiresAt: NOW + 10 });
+    },
+  });
+  const response = await rollbackProvider.handle(providerRequest(oldEnvelope));
+  assert.equal(response.status, 400);
+  assert.deepEqual(await response.json(), { error: "solver evidence request rejected" });
+  assert.equal(reads, 0);
+  assert.throws(() => rollbackProvider.status(), /clock regressed/);
+  assert.equal(store.status({ now: NOW + 20 }).liveClaimedRequests, 0);
+});
+
 test("two independent provider routes integrate with the original dual-route client", async (t) => {
   const lightningStore = await memoryStore();
   const securityStore = await memoryStore();
@@ -533,7 +668,7 @@ test("two independent provider routes integrate with the original dual-route cli
 test("withholds a response when the request expires during signing", async (t) => {
   const store = await memoryStore();
   t.after(() => store.close());
-  const times = [NOW + 1, NOW + 2, NOW + 16];
+  const times = [NOW + 1, NOW + 1, NOW + 2, NOW + 16];
   const provider = await route({
     replayStore: store,
     nowSeconds: () => times.shift() ?? NOW + 16,
@@ -576,7 +711,7 @@ test("derives every authority field from the signed request, not the evidence re
       return NOW + 1;
     },
   });
-  assert.throws(() => provider.status(statusInput), /data properties/);
+  assert.throws(() => provider.status(statusInput), /accepts no caller input/);
   assert.equal(statusGetterCalls, 0);
 
   const replacementStore = await memoryStore();

@@ -237,9 +237,14 @@ request; the assigned EIP-712 role signs; and the claim is durably consumed
 before a response leaves. A duplicate, concurrent request, read/sign failure,
 closed or full database, copied reader/store, or expiry cannot produce a second
 response. Normal startup refuses a missing or empty ledger, so storage loss
-cannot silently reset replay history. A suspected loss or rollback requires the
-route to remain offline, requester-key and key-ID rotation, expiry of all old
-requests, explicit new-ledger initialization, and a witnessed replay drill.
+cannot silently reset replay history. The ledger also durably latches the
+highest locally observed clock second before validation and across every
+authority boundary. A forward clock jump may prune an expired request, but a
+later backward step cannot make it live again; route health fails through a
+restart until real time catches up. A suspected volume loss or rollback still
+requires the route to remain offline, requester-key and key-ID rotation, expiry
+of all old requests, explicit new-ledger initialization, and a witnessed replay
+drill.
 Different deployments can still share a dishonest observation backend or
 administrator; TLS, persistent volumes, operators, data-path independence, and
 live drills remain external evidence gates. See [Durable solver-evidence

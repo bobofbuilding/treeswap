@@ -47,7 +47,7 @@ The prototype assumes a business par value of **1 BIT = 100 sats**. This value i
 - Immutable public-testnet operator campaign snapshots via `npm run manage:testnet-campaign`
 - Authenticated solver request/response boundary in [`docs/SOLVER_ENDPOINT.md`](docs/SOLVER_ENDPOINT.md)
 - Concrete two-route active-daemon evidence client and provider replay boundary in [`docs/SOLVER_DAEMON_EVIDENCE_CLIENT.md`](docs/SOLVER_DAEMON_EVIDENCE_CLIENT.md)
-- Fail-closed provider handler, strict durable replay ledger, and loss/rotation runbook in [`docs/DURABLE_EVIDENCE_PROVIDER.md`](docs/DURABLE_EVIDENCE_PROVIDER.md)
+- Fail-closed provider handler, strict durable replay and clock-rollback ledger, and loss/rotation runbook in [`docs/DURABLE_EVIDENCE_PROVIDER.md`](docs/DURABLE_EVIDENCE_PROVIDER.md)
 - Optional Lightning account linking in [`docs/LIGHTNING_ACCOUNTS.md`](docs/LIGHTNING_ACCOUNTS.md)
 - Immutable version transitions in [`docs/UPGRADES.md`](docs/UPGRADES.md)
 - Pinned two-node Lightning lab in [`docs/LIGHTNING_REGTEST.md`](docs/LIGHTNING_REGTEST.md)

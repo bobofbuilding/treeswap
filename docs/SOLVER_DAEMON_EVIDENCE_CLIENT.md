@@ -52,7 +52,9 @@ atomically before reading or signing and consumes the claim before responding.
 A duplicate, concurrent request, storage failure, copied reader/store, policy
 mismatch, or expired response fails closed. The strict SQLite store must be
 initialized explicitly once; normal startup refuses a missing or empty ledger.
-In-memory storage is test-only. See [Durable solver-evidence
+It also persists the highest locally observed clock second and rejects any
+request or health check after a backward clock step, including after expiry has
+pruned an older request. In-memory storage is test-only. See [Durable solver-evidence
 provider](./DURABLE_EVIDENCE_PROVIDER.md) for the deployment and loss-recovery
 rules.
 

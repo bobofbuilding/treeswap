@@ -60,15 +60,19 @@ The operator must still prove all external facts separately:
   volume;
 - the orchestrator enforces exactly one funded replica and delivers alerts for
   preparation, degraded health, stale heartbeat, and crash-loop state; and
-- shutdown, provider loss, evidence-route loss, replay-store loss, adapter
-  ambiguity, process crash, host restart, and retained-liability recovery drills
-  pass against the deployed services.
+- shutdown, provider loss, evidence-route loss, replay-store loss, wall-clock
+  rollback after request pruning, adapter ambiguity, process crash, host restart,
+  and retained-liability recovery drills pass against the deployed services.
 
 A provider restart must open its existing ledger with `initialize: false`.
 Missing, empty, corrupted, or rolled-back state is an outage, not permission to
 create a fresh ledger. Loss recovery requires the old route to remain offline,
 requester-key and key-ID rotation, expiry of every old request, explicit new
 ledger initialization, and a witnessed replay drill.
+
+Provider health must page on a persisted clock-regression failure. Operators may
+wait until real time reaches the durable high-water mark or perform the complete
+loss-recovery ceremony above; they must never edit the recorded mark backward.
 
 Different labels, URLs, callback objects, keys, or processes are configuration
 separation, not proof of organizational independence or honest observations.

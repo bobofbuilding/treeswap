@@ -29,16 +29,18 @@ price policy but cannot enter this evidence path or authorize a swap.
 
 For every request, the handler performs this order:
 
-1. authenticate the exact Ed25519 request and pinned requester key ID;
-2. match the release, evidence-policy, chain, escrow code, solver, and direction;
-3. atomically insert `(requesterKeyId, requestId)` as `CLAIMED` in the private
+1. sample the local wall clock and durably advance its monotonic high-water mark;
+2. authenticate the exact Ed25519 request and pinned requester key ID;
+3. match the release, evidence-policy, chain, escrow code, solver, and direction;
+4. atomically insert `(requesterKeyId, requestId)` as `CLAIMED` in the private
    replay ledger;
-4. call the provenance-bound reader through the request's abort signal;
-5. accept only the four-field observation result and derive all authority fields
+5. call the provenance-bound reader through the request's abort signal;
+6. accept only the four-field observation result and derive all authority fields
    from the signed request and pinned policy;
-6. sign the derived EIP-712 record with the exact policy role;
-7. atomically change the claim to `CONSUMED`; and
-8. return one bounded `no-store` response.
+7. sign the derived EIP-712 record with the exact policy role;
+8. re-sample and latch time across the read, signing, and consumption boundaries;
+9. atomically change the claim to `CONSUMED`; and
+10. return one bounded `no-store` response.
 
 A duplicate or concurrent copy cannot reach the evidence reader. If the reader,
 signer, clock, database, or response validation fails after the claim, the claim
@@ -58,19 +60,33 @@ canonical record or the client rejects both responses.
 The database uses an exact strict schema, full synchronous writes, WAL on disk,
 a bounded live-request count, integrity checks, a mode-`0600` regular file, and
 a mode-`0700` parent directory. It stores only requester key ID, request ID,
-expiry, state, and claim/consume times. It never stores an evidence body,
-reservation or transaction commitment, intent, proof digest, approval, or
-request signature. Aggregate status contains no identifiers.
+expiry, state, claim/consume times, and the highest locally observed Unix second.
+It never stores an evidence body, reservation or transaction commitment, intent,
+proof digest, approval, or request signature. Aggregate status contains no
+identifiers or timestamp.
+
+Every handler phase and aggregate route-health check refuses a local time below
+that durable high-water mark. Consequently, a forward clock jump may expire and
+prune a request, but moving the host clock backward cannot make that request
+apparently live again. A restart retains the same bound. This deliberately
+sacrifices availability: clock correction after a forward jump requires operator
+investigation and waiting until real time reaches the recorded mark; manually
+lowering it is forbidden. The mark does not detect a restored or rolled-back
+volume, so the loss procedure below still applies.
 
 Initialization is an explicit one-time ceremony:
 
 - Provision a new private volume and call `SolverDaemonEvidenceReplayStore.open`
   with `initialize: true` before the route accepts traffic.
+- Schema v2 is intentionally not migrated from an earlier replay ledger. An
+  older schema refuses startup. If its requester-key epoch was ever used, treat
+  replacement as ledger loss and follow the rotation/wait procedure below.
 - Every ordinary start and restart must use `initialize: false`. A missing,
   empty, permissive, symlinked, corrupted, altered, or unknown database refuses
   startup. `:memory:` plus `allowMemory: true` is test-only.
 - Retain crash-consistent volume evidence and monitor the provider's aggregate
-  status. Do not copy or restore this database as an ordinary backup.
+  status plus host clock/NTP rollback alerts. Do not copy or restore this
+  database as an ordinary backup.
 
 If the ledger is lost, replaced, or suspected of rollback, keep that route
 offline. Revoke the old requester credential, rotate both the Ed25519 requester
@@ -87,7 +103,8 @@ Before tiny public-testnet inventory, retain and independently review:
 - two private HTTPS endpoints with pinned identity and standard certificate
   verification;
 - two separate persistent volumes and successful restart, full-disk, loss,
-  rollback, corruption, concurrent replay, and abrupt-stop drills;
+  volume rollback, clock rollback after expiry/pruning, corruption, concurrent
+  replay, and abrupt-stop drills;
 - requester and EIP-712 signer provisioning, revocation, and rotation evidence;
 - least-privilege, read-only evidence adapters and proof that the providers do
   not share one observation backend or administrator;
