@@ -63,9 +63,17 @@ const LIGHTNING_TO_BIT = "0x1111111111111111111111111111111111111111";
 const BIT_TO_LIGHTNING = "0x2222222222222222222222222222222222222222";
 const LIGHTNING_TO_BIT_CODE_HASH = id("delivery-lightning-to-bit-runtime");
 const BIT_TO_LIGHTNING_CODE_HASH = id("delivery-bit-to-lightning-runtime");
-const solvers = [new Wallet(`0x${"31".repeat(32)}`), new Wallet(`0x${"32".repeat(32)}`)];
+const solvers = [
+  new Wallet(`0x${"31".repeat(32)}`),
+  new Wallet(`0x${"32".repeat(32)}`),
+  new Wallet(`0x${"34".repeat(32)}`),
+];
 const user = new Wallet(`0x${"33".repeat(32)}`);
-const endpointKeys = [generateKeyPairSync("ed25519"), generateKeyPairSync("ed25519")];
+const endpointKeys = [
+  generateKeyPairSync("ed25519"),
+  generateKeyPairSync("ed25519"),
+  generateKeyPairSync("ed25519"),
+];
 const relayKeys = [generateKeyPairSync("ed25519"), generateKeyPairSync("ed25519"), generateKeyPairSync("ed25519")];
 const privateRequest = {
   requestId: id("private-settlement-request"),
@@ -310,7 +318,7 @@ async function executableEnvelope(blind, index, { request = privateRequest } = {
   };
 }
 
-function pathPlan(verifications, { includeThirdRelay = false } = {}) {
+function pathPlan(verifications, { includeThirdRelay = false, includeThirdSolver = false } = {}) {
   const paths = [
     {
       kind: "relay",
@@ -352,6 +360,15 @@ function pathPlan(verifications, { includeThirdRelay = false } = {}) {
     publicKey: pem(relayKeys[2]),
     operatorCommitment: id("relay-operator-c"),
   });
+  if (includeThirdSolver) paths.push({
+    kind: "direct-solver",
+    pathId: "direct-c",
+    endpointOrigin: "https://direct-3.example",
+    publicKey: pem(endpointKeys[2]),
+    operatorCommitment: id("solver-operator-c"),
+    solverId: solvers[2].address,
+    capabilityVerification: verifications[2],
+  });
   return paths;
 }
 
@@ -361,6 +378,7 @@ function responseKey(pathId) {
   if (pathId === "relay-c") return relayKeys[2].privateKey;
   if (pathId === "direct-a") return endpointKeys[0].privateKey;
   if (pathId === "direct-b") return endpointKeys[1].privateKey;
+  if (pathId === "direct-c") return endpointKeys[2].privateKey;
   throw new Error("unknown test path");
 }
 
@@ -1141,6 +1159,106 @@ test("rejects relay rewriting while retaining valid offers from two other relay 
   assert.match(book.rejected.flatMap((item) => item.reasons).join("; "), /signature is invalid|exact BIT output changed/);
 });
 
+test("invalid relay offers cannot exhaust the retained competition limit", async () => {
+  const data = await fixture();
+  const unknownSolver = new Wallet(`0x${"44".repeat(32)}`);
+  const invalid = Array.from({ length: 7 }, (_, index) => ({
+    offer: {
+      ...data.offers[0].envelope.offer,
+      offerId: id(`relay-cap-poison-${index}`),
+      solver: unknownSolver.address,
+    },
+    signature: `0x${"00".repeat(65)}`,
+  }));
+  const collection = await collectVerifiedRfqDeliveries({
+    paths: data.paths,
+    requestId: pricing.pricingId,
+    requestDigest: rfqDeliveryPayloadDigest(pricing),
+    rfq: pricing,
+    policy: deliveryPolicy,
+    requestImpl: async (url, options, pathId) => {
+      if (pathId !== "relay-a") return data.responder(url, options, pathId);
+      return jsonResponse(buildSignedRfqDeliveryResponse({
+        request: JSON.parse(options.body),
+        envelopes: [data.offers[0].envelope, ...invalid],
+        servedAt: NOW,
+        expiresAt: NOW + 10,
+        privateKey: relayKeys[0].privateKey,
+      }));
+    },
+    nowSeconds: () => NOW,
+    randomBytesImpl: () => Buffer.alloc(32, 6),
+  });
+
+  const book = buildMultipathBlindQuoteBook({
+    pricing,
+    collection,
+    capabilityVerifications: data.verifications,
+    now: NOW,
+    policy: { ...blindPolicy, maxOffersPerRequest: 2 },
+  });
+  assert.equal(book.solverCount, 2);
+  assert.equal(book.relayOfferPathCount, 2);
+  assert.equal(book.directSolverOfferPathCount, 2);
+  assert.equal(book.rejected.length, 7);
+  assert.match(book.rejected.flatMap((item) => item.reasons).join("; "), /locally verified capability/);
+  assert.throws(() => buildMultipathBlindQuoteBook({
+    pricing,
+    collection,
+    capabilityVerifications: Array.from({ length: 129 }, () => data.verifications[0]),
+    now: NOW,
+    policy: blindPolicy,
+  }), /bounded candidate limit/);
+});
+
+test("retained competition limit keeps the deterministic best valid offers", async () => {
+  const data = await fixture();
+  const third = await blindEnvelope(2, 9_900);
+  const offers = [...data.offers, third];
+  const verifications = [...data.verifications, third.verification];
+  const paths = pathPlan(verifications, { includeThirdSolver: true });
+  const collection = await collectVerifiedRfqDeliveries({
+    paths,
+    requestId: pricing.pricingId,
+    requestDigest: rfqDeliveryPayloadDigest(pricing),
+    rfq: pricing,
+    policy: deliveryPolicy,
+    requestImpl: async (_url, options, pathId) => {
+      const delivered = pathId === "direct-a" ? [offers[0].envelope]
+        : pathId === "direct-b" ? [offers[1].envelope]
+          : pathId === "direct-c" ? [offers[2].envelope]
+            : offers.map((item) => item.envelope);
+      return jsonResponse(buildSignedRfqDeliveryResponse({
+        request: JSON.parse(options.body),
+        envelopes: delivered,
+        servedAt: NOW,
+        expiresAt: NOW + 10,
+        privateKey: responseKey(pathId),
+      }));
+    },
+    nowSeconds: () => NOW,
+    randomBytesImpl: () => Buffer.alloc(32, 5),
+  });
+
+  const book = buildMultipathBlindQuoteBook({
+    pricing,
+    collection,
+    capabilityVerifications: verifications,
+    now: NOW,
+    policy: { ...blindPolicy, maxOffersPerRequest: 2 },
+  });
+  assert.deepEqual(
+    book.offers.map(({ offer }) => offer.offerId),
+    [third.envelope.offer.offerId, data.offers[0].envelope.offer.offerId],
+  );
+  assert.equal(book.relayOfferPathCount, 2);
+  assert.equal(book.directSolverOfferPathCount, 2);
+  assert.match(
+    book.rejected.flatMap((item) => item.reasons).join("; "),
+    /outside the deterministic retained-offer limit/,
+  );
+});
+
 test("rejects private or executable fields at the public delivery boundary", async () => {
   const data = await fixture();
   await assert.rejects(collectVerifiedRfqDeliveries({
@@ -1384,6 +1502,15 @@ test("rejects private endpoints and weakened diversity policy before transport",
     requestImpl: async () => { requests += 1; },
     nowSeconds: () => NOW,
   }), /diversity minimum/);
+  await assert.rejects(collectVerifiedRfqDeliveries({
+    paths: data.paths,
+    requestId: pricing.pricingId,
+    requestDigest: rfqDeliveryPayloadDigest(pricing),
+    rfq: pricing,
+    policy: { ...deliveryPolicy, maxOffersPerPath: 17 },
+    requestImpl: async () => { requests += 1; },
+    nowSeconds: () => NOW,
+  }), /too many total offer candidates/);
   assert.equal(requests, 0);
 });
 
