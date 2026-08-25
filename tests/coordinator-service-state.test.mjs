@@ -7,7 +7,10 @@ import test from "node:test";
 import { CoordinatorStore } from "../lib/coordinator-store.mjs";
 import {
   acquireCoordinatorServiceLease,
+  assertCoordinatorServiceLeaseMode,
   assertCoordinatorServiceLeaseOwnership,
+  buildCoordinatorActiveExecutionBootstrapStatus,
+  buildCoordinatorActiveExecutionStatus,
   buildCoordinatorClosedStatus,
   buildCoordinatorRecoveryExecutionBootstrapStatus,
   buildCoordinatorRecoveryExecutionStatus,
@@ -15,6 +18,8 @@ import {
   buildCoordinatorReleaseVerificationStatus,
   normalizeCoordinatorServiceConfig,
   readCoordinatorServiceHealth,
+  validateCoordinatorActiveExecutionBootstrapStatus,
+  validateCoordinatorActiveExecutionStatus,
   validateCoordinatorClosedStatus,
   validateCoordinatorRecoveryExecutionBootstrapStatus,
   validateCoordinatorRecoveryExecutionStatus,
@@ -54,14 +59,14 @@ function wholeSecond(milliseconds) {
   return new Date(Math.floor(milliseconds / 1_000) * 1_000).toISOString();
 }
 
-test("accepts only separated, bounded closed, release, recovery-verification, or recovery-execution configuration", async (t) => {
+test("accepts only separated, bounded closed, release, active, or recovery configuration", async (t) => {
   const paths = await fixture(t);
   const valid = config(paths);
   assert.equal(valid.databasePath, paths.databasePath);
   assert.equal(valid.runtimeDirectory, paths.runtimeDirectory);
   assert.equal(valid.heartbeatSeconds, 5);
   assert.equal(valid.mode, "closed");
-  assert.throws(() => config(paths, { COORDINATOR_MODE: "active" }), /mode is not supported/);
+  assert.throws(() => config(paths, { COORDINATOR_MODE: "unsupported" }), /mode is not supported/);
   assert.throws(() => config(paths, { TREESWAP_FUNDING_ENABLED: "true" }), /cannot enable funding by configuration/);
   const manifestPath = join(paths.root, "inputs", "activation.json");
   const release = config(paths, {
@@ -75,6 +80,23 @@ test("accepts only separated, bounded closed, release, recovery-verification, or
   assert.equal(release.releaseRefreshSeconds, 5);
   assert.equal(release.releaseProviderTimeoutMs, 1000);
   assert.equal(release.recoveryActivationManifestPath, null);
+  const active = config(paths, {
+    COORDINATOR_MODE: "active-execution-only",
+    COORDINATOR_RELEASE_ACTIVATION_MANIFEST_PATH: manifestPath,
+    COORDINATOR_RELEASE_REFRESH_SECONDS: "6",
+    COORDINATOR_RELEASE_PROVIDER_TIMEOUT_MS: "1000",
+    COORDINATOR_ACTIVE_EXECUTION_INTERVAL_SECONDS: "5",
+    COORDINATOR_ACTIVE_MAX_SETTLEMENTS_PER_CYCLE: "8",
+    COORDINATOR_ACTIVE_PREPARATION_TIMEOUT_SECONDS: "45",
+    COORDINATOR_ACTIVE_REPLICA_MODE: "single-host",
+    COORDINATOR_ACTIVE_EXPECTED_REPLICAS: "1",
+  });
+  assert.equal(active.mode, "active-execution-only");
+  assert.equal(active.activeExecutionIntervalSeconds, 5);
+  assert.equal(active.activeMaxSettlementsPerCycle, 8);
+  assert.equal(active.activePreparationTimeoutSeconds, 45);
+  assert.equal(active.activeReplicaMode, "single-host");
+  assert.equal(active.activeExpectedReplicas, 1);
   const recoveryManifestPath = join(paths.root, "recovery-inputs", "activation.json");
   const recovery = config(paths, {
     COORDINATOR_MODE: "recovery-verification-only",
@@ -115,7 +137,33 @@ test("accepts only separated, bounded closed, release, recovery-verification, or
     COORDINATOR_MODE: "recovery-verification-only",
     COORDINATOR_RECOVERY_ACTIVATION_MANIFEST_PATH: recoveryManifestPath,
     COORDINATOR_RELEASE_ACTIVATION_MANIFEST_PATH: manifestPath,
-  }), /cannot accept release verification inputs/);
+  }), /cannot accept release or active execution inputs/);
+  assert.throws(() => config(paths, {
+    COORDINATOR_MODE: "active-execution-only",
+    COORDINATOR_RELEASE_ACTIVATION_MANIFEST_PATH: manifestPath,
+    COORDINATOR_RELEASE_PROVIDER_TIMEOUT_MS: "1000",
+  }), /single-host replica mode/);
+  assert.throws(() => config(paths, {
+    COORDINATOR_MODE: "active-execution-only",
+    COORDINATOR_RELEASE_ACTIVATION_MANIFEST_PATH: manifestPath,
+    COORDINATOR_RELEASE_PROVIDER_TIMEOUT_MS: "1000",
+    COORDINATOR_ACTIVE_REPLICA_MODE: "single-host",
+    COORDINATOR_ACTIVE_EXPECTED_REPLICAS: "2",
+  }), /outside policy/);
+  assert.throws(() => config(paths, {
+    COORDINATOR_MODE: "active-execution-only",
+    COORDINATOR_RELEASE_ACTIVATION_MANIFEST_PATH: manifestPath,
+    COORDINATOR_RELEASE_REFRESH_SECONDS: "5",
+    COORDINATOR_RELEASE_PROVIDER_TIMEOUT_MS: "1000",
+    COORDINATOR_ACTIVE_EXECUTION_INTERVAL_SECONDS: "6",
+    COORDINATOR_ACTIVE_REPLICA_MODE: "single-host",
+    COORDINATOR_ACTIVE_EXPECTED_REPLICAS: "1",
+  }), /cannot exceed its release refresh interval/);
+  assert.throws(() => config(paths, {
+    COORDINATOR_MODE: "release-verification-only",
+    COORDINATOR_RELEASE_ACTIVATION_MANIFEST_PATH: manifestPath,
+    COORDINATOR_ACTIVE_REPLICA_MODE: "single-host",
+  }), /cannot accept active execution inputs/);
   assert.throws(() => config(paths, {
     COORDINATOR_MODE: "release-verification-only",
     COORDINATOR_RELEASE_ACTIVATION_MANIFEST_PATH: join(paths.runtimeDirectory, "activation.json"),
@@ -143,7 +191,7 @@ test("accepts only separated, bounded closed, release, recovery-verification, or
     COORDINATOR_MODE: "recovery-execution-only",
     COORDINATOR_RECOVERY_ACTIVATION_MANIFEST_PATH: recoveryManifestPath,
     COORDINATOR_RELEASE_ACTIVATION_MANIFEST_PATH: manifestPath,
-  }), /cannot accept release verification inputs/);
+  }), /cannot accept release or active execution inputs/);
   assert.throws(() => config(paths, {
     COORDINATOR_MODE: "recovery-execution-only",
     COORDINATOR_RECOVERY_ACTIVATION_MANIFEST_PATH: recoveryManifestPath,
@@ -211,6 +259,43 @@ function activeReleaseVerification(attemptAt, validUntil) {
       gateOpening: false,
       dispatch: false,
       funding: false,
+    },
+  };
+}
+
+function activeExecution(attemptAt, state = "active") {
+  const active = state === "active";
+  const degraded = state === "degraded";
+  return {
+    schema: "treeswap.coordinator-active-execution-lifecycle.v1",
+    state,
+    scope: "database-derived-lightning-bit-settlements-only-no-network-job-intake",
+    workSource: "original-coordinator-store-nonterminal-settlements",
+    networkListener: false,
+    startedAt: attemptAt,
+    lastAttemptAt: attemptAt,
+    lastSuccessAt: active ? attemptAt : null,
+    consecutiveFailures: 0,
+    releaseRecordDigest: `0x${"2".repeat(64)}`,
+    policySetDigest: `0x${"9".repeat(64)}`,
+    policyCount: 2,
+    counts: {
+      discovered: degraded ? 1 : 0,
+      eligible: 0,
+      attempted: 0,
+      advanced: 0,
+      waiting: 0,
+      gateClosed: degraded ? 1 : 0,
+      done: 0,
+      halted: 0,
+      backlog: 0,
+    },
+    cycleDigest: `0x${"a".repeat(64)}`,
+    cursorDigest: null,
+    authorizations: {
+      funding: active,
+      lightningDispatch: active,
+      newExposure: active,
     },
   };
 }
@@ -342,6 +427,91 @@ test("release-verification status can prove fresh verification but never dispatc
         authorizations: { ...status.releaseVerification.authorizations, dispatch: true },
       },
     }), /identity or authority/);
+  } finally {
+    store.close();
+  }
+});
+
+test("active-execution bootstrap stays closed and active health authority is derived from one exact cycle", async (t) => {
+  const paths = await fixture(t);
+  const store = await CoordinatorStore.open(paths.databasePath);
+  const heartbeatAt = "2033-05-18T03:33:21.000Z";
+  const validUntil = Math.floor(Date.parse(heartbeatAt) / 1_000) + 60;
+  try {
+    const bootstrap = buildCoordinatorActiveExecutionBootstrapStatus({
+      store,
+      serviceStartedAt: "2033-05-18T03:33:19.000Z",
+      heartbeatAt,
+      leaseIdentifier: `sha256:${"1".repeat(64)}`,
+      recoveredInterruptedActions: 0,
+      releaseVerification: activeReleaseVerification(heartbeatAt, validUntil),
+    });
+    assert.equal(bootstrap.schema, "treeswap.coordinator-active-execution-bootstrap-status.v1");
+    assert.equal(bootstrap.phase, "preparing-active-execution-policy-set");
+    assert.equal(bootstrap.replicaPolicy, "single-host-one-process-filesystem-lease");
+    assert.equal(bootstrap.expectedReplicas, 1);
+    assert.equal(bootstrap.fundingAuthorization, false);
+    assert.equal(bootstrap.lightningDispatchAuthorization, false);
+    assert.equal(bootstrap.newExposureAuthorization, false);
+    assert.throws(() => validateCoordinatorActiveExecutionBootstrapStatus({
+      ...bootstrap,
+      fundingAuthorization: true,
+    }), /claims unavailable authority/);
+    assert.throws(() => validateCoordinatorActiveExecutionBootstrapStatus({
+      ...bootstrap,
+      expectedReplicas: 2,
+    }), /one local replica/);
+
+    const status = buildCoordinatorActiveExecutionStatus({
+      store,
+      serviceStartedAt: "2033-05-18T03:33:19.000Z",
+      heartbeatAt,
+      leaseIdentifier: `sha256:${"1".repeat(64)}`,
+      recoveredInterruptedActions: 0,
+      releaseVerification: activeReleaseVerification(heartbeatAt, validUntil),
+      activeExecution: activeExecution(heartbeatAt),
+    });
+    assert.equal(status.mode, "active-execution-only");
+    assert.equal(status.fundingAuthorization, true);
+    assert.equal(status.lightningDispatchAuthorization, true);
+    assert.equal(status.newExposureAuthorization, true);
+    assert.equal(status.networkListener, false);
+    assert.equal(JSON.stringify(status).includes("settlementId"), false);
+    assert.throws(() => validateCoordinatorActiveExecutionStatus({
+      ...status,
+      expectedReplicas: 2,
+    }), /one local replica/);
+    assert.throws(() => validateCoordinatorActiveExecutionStatus({
+      ...status,
+      fundingAuthorization: false,
+    }), /not derived from live state/);
+    assert.throws(() => validateCoordinatorActiveExecutionStatus({
+      ...status,
+      activeExecution: {
+        ...status.activeExecution,
+        authorizations: { ...status.activeExecution.authorizations, funding: false },
+      },
+    }), /authority is not derived/);
+    assert.throws(() => validateCoordinatorActiveExecutionStatus({
+      ...status,
+      activeExecution: {
+        ...status.activeExecution,
+        releaseRecordDigest: `0x${"b".repeat(64)}`,
+      },
+    }), /another verified release/);
+
+    const degraded = buildCoordinatorActiveExecutionStatus({
+      store,
+      serviceStartedAt: "2033-05-18T03:33:19.000Z",
+      heartbeatAt,
+      leaseIdentifier: `sha256:${"1".repeat(64)}`,
+      recoveredInterruptedActions: 0,
+      releaseVerification: activeReleaseVerification(heartbeatAt, validUntil),
+      activeExecution: activeExecution(heartbeatAt, "degraded"),
+    });
+    assert.equal(degraded.fundingAuthorization, false);
+    assert.equal(degraded.lightningDispatchAuthorization, false);
+    assert.equal(degraded.newExposureAuthorization, false);
   } finally {
     store.close();
   }
@@ -562,6 +732,15 @@ test("fresh lease excludes a second supervisor and stale takeover cannot be remo
     startedAt: first.startedAt,
   });
   await assert.rejects(
+    assertCoordinatorServiceLeaseMode(first, "active-execution-only"),
+    /acquired for another mode/,
+  );
+  assert.deepEqual(await assertCoordinatorServiceLeaseMode(first, "closed"), {
+    leaseId: first.leaseId,
+    mode: "closed",
+    startedAt: first.startedAt,
+  });
+  await assert.rejects(
     assertCoordinatorServiceLeaseOwnership(JSON.parse(JSON.stringify(first))),
     /original same-process service lease/,
   );
@@ -646,6 +825,84 @@ test("release-verification health requires a fresh active release and still repo
     await assert.rejects(
       readCoordinatorServiceHealth(policy, { now: () => observedAt + 21_000 }),
       /release verification is expired/,
+    );
+  } finally {
+    store.close();
+    await lease.release();
+  }
+});
+
+test("active-execution health rejects preparation or degradation and exposes only aggregate one-replica readiness", async (t) => {
+  const paths = await fixture(t);
+  const observedAt = Date.parse("2033-05-18T03:33:20.000Z");
+  const policy = config(paths, {
+    COORDINATOR_MODE: "active-execution-only",
+    COORDINATOR_RELEASE_ACTIVATION_MANIFEST_PATH: join(paths.root, "inputs", "activation.json"),
+    COORDINATOR_RELEASE_REFRESH_SECONDS: "5",
+    COORDINATOR_RELEASE_PROVIDER_TIMEOUT_MS: "1000",
+    COORDINATOR_ACTIVE_EXECUTION_INTERVAL_SECONDS: "5",
+    COORDINATOR_ACTIVE_MAX_SETTLEMENTS_PER_CYCLE: "8",
+    COORDINATOR_ACTIVE_PREPARATION_TIMEOUT_SECONDS: "10",
+    COORDINATOR_ACTIVE_REPLICA_MODE: "single-host",
+    COORDINATOR_ACTIVE_EXPECTED_REPLICAS: "1",
+  });
+  const lease = await acquireCoordinatorServiceLease(policy, {
+    now: () => observedAt,
+    randomBytesImpl: deterministicRandom(),
+  });
+  const store = await CoordinatorStore.open(paths.databasePath);
+  const heartbeatAt = wholeSecond(observedAt);
+  const validUntil = Math.floor(observedAt / 1_000) + 20;
+  try {
+    await lease.publish(buildCoordinatorActiveExecutionBootstrapStatus({
+      store,
+      serviceStartedAt: lease.startedAt,
+      heartbeatAt,
+      leaseIdentifier: lease.leaseId,
+      recoveredInterruptedActions: 0,
+      releaseVerification: activeReleaseVerification(heartbeatAt, validUntil),
+    }));
+    await assert.rejects(
+      readCoordinatorServiceHealth(policy, { now: () => observedAt + 5_000 }),
+      /bootstrap is incomplete/,
+    );
+    await lease.publish(buildCoordinatorActiveExecutionStatus({
+      store,
+      serviceStartedAt: lease.startedAt,
+      heartbeatAt,
+      leaseIdentifier: lease.leaseId,
+      recoveredInterruptedActions: 0,
+      releaseVerification: activeReleaseVerification(heartbeatAt, validUntil),
+      activeExecution: activeExecution(heartbeatAt),
+    }));
+    assert.deepEqual(await readCoordinatorServiceHealth(policy, { now: () => observedAt + 5_000 }), {
+      schema: "treeswap.coordinator-active-execution-service-status.v1",
+      mode: "active-execution-only",
+      heartbeatAt,
+      databaseStatus: "ok",
+      fundingAuthorization: true,
+      releaseVerification: "active",
+      releaseValidUntil: validUntil,
+      activeExecution: "active",
+      activePolicyCount: 2,
+      activeCycleDigest: `0x${"a".repeat(64)}`,
+      replicaPolicy: "single-host-one-process-filesystem-lease",
+      expectedReplicas: 1,
+      lightningDispatchAuthorization: true,
+      newExposureAuthorization: true,
+    });
+    await lease.publish(buildCoordinatorActiveExecutionStatus({
+      store,
+      serviceStartedAt: lease.startedAt,
+      heartbeatAt,
+      leaseIdentifier: lease.leaseId,
+      recoveredInterruptedActions: 0,
+      releaseVerification: activeReleaseVerification(heartbeatAt, validUntil),
+      activeExecution: activeExecution(heartbeatAt, "degraded"),
+    }));
+    await assert.rejects(
+      readCoordinatorServiceHealth(policy, { now: () => observedAt + 5_000 }),
+      /lifecycle is not active/,
     );
   } finally {
     store.close();
@@ -1022,6 +1279,38 @@ test("default packaged service refuses recovery execution without a same-process
   });
   assert.equal(child.status, 1);
   assert.match(child.stderr, /deployment-specific same-process retained-custody bootstrap/);
+  await assert.rejects(lstat(paths.databasePath), { code: "ENOENT" });
+  await assert.rejects(lstat(join(paths.runtimeDirectory, "coordinator.lease")), { code: "ENOENT" });
+});
+
+test("default packaged service refuses active execution without a same-process solver-policy bootstrap", async (t) => {
+  const paths = await fixture(t);
+  const environment = {
+    ...process.env,
+    COORDINATOR_MODE: "active-execution-only",
+    COORDINATOR_DATABASE_PATH: paths.databasePath,
+    COORDINATOR_RUNTIME_DIRECTORY: paths.runtimeDirectory,
+    COORDINATOR_HEARTBEAT_SECONDS: "5",
+    COORDINATOR_INTEGRITY_SECONDS: "10",
+    COORDINATOR_LEASE_STALE_SECONDS: "30",
+    COORDINATOR_RELEASE_ACTIVATION_MANIFEST_PATH: join(paths.root, "inputs", "release.json"),
+    COORDINATOR_RELEASE_REFRESH_SECONDS: "5",
+    COORDINATOR_RELEASE_PROVIDER_TIMEOUT_MS: "1000",
+    COORDINATOR_ACTIVE_EXECUTION_INTERVAL_SECONDS: "5",
+    COORDINATOR_ACTIVE_MAX_SETTLEMENTS_PER_CYCLE: "8",
+    COORDINATOR_ACTIVE_PREPARATION_TIMEOUT_SECONDS: "10",
+    COORDINATOR_ACTIVE_REPLICA_MODE: "single-host",
+    COORDINATOR_ACTIVE_EXPECTED_REPLICAS: "1",
+    TREESWAP_FUNDING_ENABLED: "false",
+  };
+  const child = spawnSync(process.execPath, ["infra/coordinator/service.mjs"], {
+    cwd: process.cwd(),
+    env: environment,
+    encoding: "utf8",
+    timeout: 60_000,
+  });
+  assert.equal(child.status, 1);
+  assert.match(child.stderr, /deployment-specific same-process solver-policy bootstrap/);
   await assert.rejects(lstat(paths.databasePath), { code: "ENOENT" });
   await assert.rejects(lstat(join(paths.runtimeDirectory, "coordinator.lease")), { code: "ENOENT" });
 });

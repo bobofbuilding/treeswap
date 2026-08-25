@@ -20,6 +20,11 @@ async function run() {
       "recovery execution requires a deployment-specific same-process retained-custody bootstrap",
     );
   }
+  if (config.mode === "active-execution-only") {
+    throw new Error(
+      "active execution requires a deployment-specific same-process solver-policy bootstrap",
+    );
+  }
   const lease = await acquireCoordinatorServiceLease(config);
   let store;
   let timer = null;
