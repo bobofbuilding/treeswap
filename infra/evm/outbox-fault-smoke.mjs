@@ -273,7 +273,7 @@ try {
   assert.equal(recoveredDisagreement.disposition, "confirmed");
 
   const contentionClaim = await prepareClaim({ label: "nonce-contention", signer: relayerA });
-  await primary.send("evm_setAutomine", [false]);
+  await primary.send("evm_setIntervalMining", [0]);
   await dispatchClaim(contentionClaim, relayerA, 300);
   const replacementRaw = await relayerA.signTransaction({
     type: 2,
@@ -287,7 +287,7 @@ try {
   });
   const replacementHash = String(await primary.send("eth_sendRawTransaction", [replacementRaw])).toLowerCase();
   await primary.send("evm_mine", []);
-  await primary.send("evm_setAutomine", [true]);
+  await primary.send("evm_setIntervalMining", [1]);
   await waitForReceipt(primary, replacementHash);
   const contentionResult = await sameBackendQuorum(contentionClaim, 301);
   assert.equal(contentionResult.disposition, "unresolved");
