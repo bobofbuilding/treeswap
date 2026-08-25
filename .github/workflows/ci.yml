@@ -120,6 +120,7 @@ jobs:
       - run: node --check lib/coordinator-active-execution-supervisor.mjs
       - run: node --check lib/coordinator-active-execution-service.mjs
       - run: node --check lib/solver-private-packet.mjs
+      - run: node --check lib/solver-private-packet-provider.mjs
       - run: node --check lib/safety-monitor.mjs
       - run: node --check lib/lightning-close-monitor.mjs
       - run: node --check lib/lightning-close-collector.mjs
