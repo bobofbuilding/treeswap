@@ -8,6 +8,7 @@ import { Transaction, Wallet, id, keccak256, sha256 } from "ethers";
 import { CoordinatorStore } from "../lib/coordinator-store.mjs";
 import { evmClaimActionCommitment } from "../lib/evm-action-runner.mjs";
 import { invoiceDigest } from "../lib/lnd-rest-client.mjs";
+import { signLightningAdapterResponseEnvelope } from "../lib/lightning-adapter-response.mjs";
 import {
   SOLVER_DAEMON_EVIDENCE_POLICY_SCHEMA,
   SOLVER_DAEMON_EVIDENCE_SCHEMA,
@@ -38,6 +39,7 @@ const PAYMENT_HASH = sha256(PREIMAGE).toLowerCase();
 const PAYMENT_REQUEST = "lnbcrt100u1solverdaemonruntime";
 const CLAIMED_TOPIC = id("Claimed(bytes32,address,uint256,uint256)").toLowerCase();
 const lightningKeys = generateKeyPairSync("ed25519");
+const adapterResponseKeys = generateKeyPairSync("ed25519");
 const packetRequesterKeys = generateKeyPairSync("ed25519");
 const packetProviderKeys = generateKeyPairSync("ed25519");
 const evidenceLightningOperator = new Wallet(`0x${"31".repeat(32)}`);
@@ -178,6 +180,8 @@ function lightningAdapter() {
     privateKey: lightningKeys.privateKey,
     keyId: "coordinator-daemon-test",
     adapterUrl: "http://lightning-adapter.internal:3000",
+    responsePublicKey: adapterResponseKeys.publicKey,
+    responseKeyId: "daemon-adapter-response-test",
     nowSeconds: () => NOW + 10,
     async requestImpl(_url, options) {
       calls += 1;
@@ -199,7 +203,10 @@ function lightningAdapter() {
         reasons: [],
       };
       if (method === SEND_PAYMENT || method === "/routerrpc.Router/TrackPaymentV2") {
-        return new Response(JSON.stringify({
+        return new Response(JSON.stringify(signLightningAdapterResponseEnvelope({
+          keyId: "daemon-adapter-response-test",
+          privateKey: adapterResponseKeys.privateKey,
+          body: {
           result: {
             status: "SUCCEEDED",
             paymentHash: PAYMENT_HASH,
@@ -208,10 +215,15 @@ function lightningAdapter() {
             preimage: PREIMAGE,
           },
           audit,
-        }), { status: 200, headers: { "content-type": "application/json" } });
+          },
+        })), { status: 200, headers: { "content-type": "application/json" } });
       }
       if (method === SETTLE_INVOICE) {
-        return new Response(JSON.stringify({ result: { state: "SETTLED" }, audit }), {
+        return new Response(JSON.stringify(signLightningAdapterResponseEnvelope({
+          keyId: "daemon-adapter-response-test",
+          privateKey: adapterResponseKeys.privateKey,
+          body: { result: { state: "SETTLED" }, audit },
+        })), {
           status: 200,
           headers: { "content-type": "application/json" },
         });

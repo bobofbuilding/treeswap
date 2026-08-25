@@ -41,6 +41,14 @@ ensure_runtime_env() {
     node "$LAB_DIR/../../scripts/generate-lightning-coordinator-key.mjs" \
       "$STATE_DIR/bob-capacity-private.pem" "$STATE_DIR/bob-capacity-public.pem"
   fi
+  if [[ ! -f "$STATE_DIR/alice-response-private.pem" || ! -f "$STATE_DIR/alice-response-public.pem" ]]; then
+    node "$LAB_DIR/../../scripts/generate-lightning-coordinator-key.mjs" \
+      "$STATE_DIR/alice-response-private.pem" "$STATE_DIR/alice-response-public.pem"
+  fi
+  if [[ ! -f "$STATE_DIR/bob-response-private.pem" || ! -f "$STATE_DIR/bob-response-public.pem" ]]; then
+    node "$LAB_DIR/../../scripts/generate-lightning-coordinator-key.mjs" \
+      "$STATE_DIR/bob-response-private.pem" "$STATE_DIR/bob-response-public.pem"
+  fi
   if [[ ! -f "$STATE_DIR/alice-close-collector-a-private.pem" || ! -f "$STATE_DIR/alice-close-collector-a-public.pem" ]]; then
     node "$LAB_DIR/../../scripts/generate-lightning-coordinator-key.mjs" \
       "$STATE_DIR/alice-close-collector-a-private.pem" "$STATE_DIR/alice-close-collector-a-public.pem"
@@ -66,6 +74,18 @@ ensure_runtime_env() {
   fi
   if ! grep -q '^BOB_CAPACITY_PUBLIC_KEY_PATH=' "$ENV_FILE"; then
     set_runtime_value BOB_CAPACITY_PUBLIC_KEY_PATH "$STATE_DIR/bob-capacity-public.pem"
+  fi
+  if ! grep -q '^ALICE_RESPONSE_PRIVATE_KEY_PATH=' "$ENV_FILE"; then
+    set_runtime_value ALICE_RESPONSE_PRIVATE_KEY_PATH "$STATE_DIR/alice-response-private.pem"
+  fi
+  if ! grep -q '^ALICE_RESPONSE_PUBLIC_KEY_PATH=' "$ENV_FILE"; then
+    set_runtime_value ALICE_RESPONSE_PUBLIC_KEY_PATH "$STATE_DIR/alice-response-public.pem"
+  fi
+  if ! grep -q '^BOB_RESPONSE_PRIVATE_KEY_PATH=' "$ENV_FILE"; then
+    set_runtime_value BOB_RESPONSE_PRIVATE_KEY_PATH "$STATE_DIR/bob-response-private.pem"
+  fi
+  if ! grep -q '^BOB_RESPONSE_PUBLIC_KEY_PATH=' "$ENV_FILE"; then
+    set_runtime_value BOB_RESPONSE_PUBLIC_KEY_PATH "$STATE_DIR/bob-response-public.pem"
   fi
   if ! grep -q '^ALICE_CLOSE_COLLECTOR_A_PRIVATE_KEY_PATH=' "$ENV_FILE"; then
     set_runtime_value ALICE_CLOSE_COLLECTOR_A_PRIVATE_KEY_PATH "$STATE_DIR/alice-close-collector-a-private.pem"
@@ -594,13 +614,13 @@ smoke_credential_rotation() {
   old_result=$(call_adapter payer-adapter /lnrpc.Lightning/DecodePayReq \
     "$old_id" "$intent_digest" "$payment_hash" "$invoice_digest" 10000 "$operation")
   jq -e --arg paymentHash "$payment_hash" \
-    '.result.paymentHash == $paymentHash and .result.amountSats == "10000"' <<<"$old_result" >/dev/null
+    '.payload.body.result.paymentHash == $paymentHash and .payload.body.result.amountSats == "10000"' <<<"$old_result" >/dev/null
   next_id="0x$(openssl rand -hex 32)"
   next_result=$(sign_adapter_authorization /lnrpc.Lightning/DecodePayReq \
     "$next_id" "$intent_digest" "$payment_hash" "$invoice_digest" 10000 "$operation" |
     docker exec -i "$next_container" node /app/infra/lightning-adapter/client.mjs)
   jq -e --arg paymentHash "$payment_hash" \
-    '.result.paymentHash == $paymentHash and .result.amountSats == "10000"' <<<"$next_result" >/dev/null
+    '.payload.body.result.paymentHash == $paymentHash and .payload.body.result.amountSats == "10000"' <<<"$next_result" >/dev/null
   echo "Credential-rotation stage passed: old and next exact-role credentials overlapped successfully."
 
   if ! compose exec -T "$node" lncli --network=regtest \
@@ -626,7 +646,7 @@ smoke_credential_rotation() {
     "$next_id" "$intent_digest" "$payment_hash" "$invoice_digest" 10000 "$operation" |
     docker exec -i "$next_container" node /app/infra/lightning-adapter/client.mjs)
   if ! jq -e --arg paymentHash "$payment_hash" \
-    '.result.paymentHash == $paymentHash and .result.amountSats == "10000"' <<<"$next_result" >/dev/null; then
+    '.payload.body.result.paymentHash == $paymentHash and .payload.body.result.amountSats == "10000"' <<<"$next_result" >/dev/null; then
     echo "replacement payer credential stopped working after old-root revocation" >&2
     jq -c '{errorCode,ambiguous}' <<<"$next_result" >&2 || true
     return 1
@@ -644,7 +664,7 @@ smoke_credential_rotation() {
   recovered_result=$(call_adapter payer-adapter /lnrpc.Lightning/DecodePayReq \
     "$recovered_id" "$intent_digest" "$payment_hash" "$invoice_digest" 10000 "$operation")
   if ! jq -e --arg paymentHash "$payment_hash" \
-    '.result.paymentHash == $paymentHash and .result.amountSats == "10000"' <<<"$recovered_result" >/dev/null; then
+    '.payload.body.result.paymentHash == $paymentHash and .payload.body.result.amountSats == "10000"' <<<"$recovered_result" >/dev/null; then
     echo "standard payer credential did not recover after the rotation drill" >&2
     jq -c '{errorCode,ambiguous}' <<<"$recovered_result" >&2 || true
     return 1
@@ -744,7 +764,7 @@ smoke_tls_certificate_rotation() {
   baseline_result=$(call_adapter payer-adapter /lnrpc.Lightning/DecodePayReq \
     "$baseline_id" "$intent_digest" "$payment_hash" "$invoice_digest" 10000 "$operation")
   jq -e --arg paymentHash "$payment_hash" \
-    '.result.paymentHash == $paymentHash and .result.amountSats == "10000"' <<<"$baseline_result" >/dev/null
+    '.payload.body.result.paymentHash == $paymentHash and .payload.body.result.amountSats == "10000"' <<<"$baseline_result" >/dev/null
 
   rotate_alice_tls_pair
 
@@ -794,7 +814,7 @@ smoke_tls_certificate_rotation() {
   rollback_result=$(call_adapter payer-adapter /lnrpc.Lightning/DecodePayReq \
     "$rollback_id" "$intent_digest" "$payment_hash" "$invoice_digest" 10000 "$operation")
   if ! jq -e --arg paymentHash "$payment_hash" \
-    '.result.paymentHash == $paymentHash and .result.amountSats == "10000"' <<<"$rollback_result" >/dev/null; then
+    '.payload.body.result.paymentHash == $paymentHash and .payload.body.result.amountSats == "10000"' <<<"$rollback_result" >/dev/null; then
     echo "old pinned adapter did not recover after certificate rollback" >&2
     jq -c '{errorCode,ambiguous}' <<<"$rollback_result" >&2 || true
     return 1
@@ -824,7 +844,7 @@ smoke_tls_certificate_rotation() {
   recovered_result=$(call_adapter payer-adapter /lnrpc.Lightning/DecodePayReq \
     "$recovered_id" "$intent_digest" "$payment_hash" "$invoice_digest" 10000 "$operation")
   if ! jq -e --arg paymentHash "$payment_hash" \
-    '.result.paymentHash == $paymentHash and .result.amountSats == "10000"' <<<"$recovered_result" >/dev/null; then
+    '.payload.body.result.paymentHash == $paymentHash and .payload.body.result.amountSats == "10000"' <<<"$recovered_result" >/dev/null; then
     echo "newly pinned payer adapter did not recover after TLS rotation" >&2
     jq -c '{errorCode,ambiguous}' <<<"$recovered_result" >&2 || true
     return 1
@@ -1011,8 +1031,8 @@ smoke_adapter_hold_invoice() {
     printf '%s\n' "$create_result" >&2
     return 1
   fi
-  pay_req=$(jq -er '.result.paymentRequest' <<<"$create_result")
-  invoice_digest=$(jq -er '.result.invoiceDigest' <<<"$create_result")
+  pay_req=$(jq -er '.payload.body.result.paymentRequest' <<<"$create_result")
+  invoice_digest=$(jq -er '.payload.body.result.invoiceDigest' <<<"$create_result")
 
   payment_id="0x$(openssl rand -hex 32)"
   pay_operation=$(jq -cn --arg paymentRequest "$pay_req" '{paymentRequest:$paymentRequest,timeoutSeconds:30,feeLimitSats:"10"}')
@@ -1034,7 +1054,7 @@ smoke_adapter_hold_invoice() {
       printf '%s\n' "$lookup_result" >&2
       return 1
     fi
-    state=$(jq -r '.result.state' <<<"$lookup_result")
+    state=$(jq -r '.payload.body.result.state' <<<"$lookup_result")
     if [[ "$state" == "ACCEPTED" ]]; then
       accepted=true
       break
@@ -1057,10 +1077,10 @@ smoke_adapter_hold_invoice() {
     printf '%s\n' "$settle_result" >&2
     return 1
   fi
-  jq -e '.result.state == "SETTLED"' <<<"$settle_result" >/dev/null
+  jq -e '.payload.body.result.state == "SETTLED"' <<<"$settle_result" >/dev/null
   wait "$payment_pid"
   jq -e --arg preimage "$preimage" \
-    '.result.status == "SUCCEEDED" and .result.amountSats == "10000" and .result.preimage == $preimage' \
+    '.payload.body.result.status == "SUCCEEDED" and .payload.body.result.amountSats == "10000" and .payload.body.result.preimage == $preimage' \
     "$payment_result" >/dev/null
 
   compose --profile adapter restart payer-adapter >/dev/null
@@ -1140,8 +1160,8 @@ smoke_invoice_faults() {
   create_operation=$(jq -cn '{memo:"treeswap-cancel-regtest",expirySeconds:600,cltvExpiry:80,isPrivate:true}')
   create_result=$(call_adapter invoice-adapter /invoicesrpc.Invoices/AddHoldInvoice \
     "$create_id" "$intent_digest" "$payment_hash" "$zero_hash" "$amount_sats" "$create_operation")
-  pay_req=$(jq -er '.result.paymentRequest' <<<"$create_result")
-  invoice_digest=$(jq -er '.result.invoiceDigest' <<<"$create_result")
+  pay_req=$(jq -er '.payload.body.result.paymentRequest' <<<"$create_result")
+  invoice_digest=$(jq -er '.payload.body.result.invoiceDigest' <<<"$create_result")
   payment_id="0x$(openssl rand -hex 32)"
   pay_operation=$(jq -cn --arg paymentRequest "$pay_req" \
     '{paymentRequest:$paymentRequest,timeoutSeconds:30,feeLimitSats:"10"}')
@@ -1157,7 +1177,7 @@ smoke_invoice_faults() {
     lookup_id="0x$(openssl rand -hex 32)"
     lookup_result=$(call_adapter invoice-adapter /invoicesrpc.Invoices/LookupInvoiceV2 \
       "$lookup_id" "$intent_digest" "$payment_hash" "$invoice_digest" "$amount_sats" '{}')
-    state=$(jq -er '.result.state' <<<"$lookup_result")
+    state=$(jq -er '.payload.body.result.state' <<<"$lookup_result")
     if [[ "$state" == "ACCEPTED" ]]; then
       accepted=true
       break
@@ -1181,17 +1201,17 @@ smoke_invoice_faults() {
   lookup_id="0x$(openssl rand -hex 32)"
   lookup_result=$(call_adapter invoice-adapter /invoicesrpc.Invoices/LookupInvoiceV2 \
     "$lookup_id" "$intent_digest" "$payment_hash" "$invoice_digest" "$amount_sats" '{}')
-  jq -e '.result.state == "ACCEPTED"' <<<"$lookup_result" >/dev/null
+  jq -e '.payload.body.result.state == "ACCEPTED"' <<<"$lookup_result" >/dev/null
 
   cancel_id="0x$(openssl rand -hex 32)"
   cancel_envelope=$(sign_adapter_authorization /invoicesrpc.Invoices/CancelInvoice \
     "$cancel_id" "$intent_digest" "$payment_hash" "$invoice_digest" "$amount_sats" '{}')
   cancel_result=$(printf '%s\n' "$cancel_envelope" | call_signed_adapter invoice-adapter)
-  jq -e '.result.state == "CANCELED"' <<<"$cancel_result" >/dev/null
+  jq -e '.payload.body.result.state == "CANCELED"' <<<"$cancel_result" >/dev/null
   lookup_id="0x$(openssl rand -hex 32)"
   lookup_result=$(call_adapter invoice-adapter /invoicesrpc.Invoices/LookupInvoiceV2 \
     "$lookup_id" "$intent_digest" "$payment_hash" "$invoice_digest" "$amount_sats" '{}')
-  jq -e '.result.state == "CANCELED"' <<<"$lookup_result" >/dev/null
+  jq -e '.payload.body.result.state == "CANCELED"' <<<"$lookup_result" >/dev/null
   if replay_result=$(printf '%s\n' "$cancel_envelope" | call_signed_adapter invoice-adapter); then
     echo "invoice adapter accepted a replayed cancellation" >&2
     return 1
@@ -1225,8 +1245,8 @@ smoke_invoice_faults() {
   restart_create_result=$(call_adapter invoice-adapter /invoicesrpc.Invoices/AddHoldInvoice \
     "$restart_create_id" "$restart_intent" "$restart_hash" "$zero_hash" "$amount_sats" \
     "$(jq -cn '{memo:"treeswap-restart-regtest",expirySeconds:600,cltvExpiry:80,isPrivate:true}')")
-  restart_pay_req=$(jq -er '.result.paymentRequest' <<<"$restart_create_result")
-  restart_invoice_digest=$(jq -er '.result.invoiceDigest' <<<"$restart_create_result")
+  restart_pay_req=$(jq -er '.payload.body.result.paymentRequest' <<<"$restart_create_result")
+  restart_invoice_digest=$(jq -er '.payload.body.result.invoiceDigest' <<<"$restart_create_result")
   restart_payment_id="0x$(openssl rand -hex 32)"
   restart_payment_envelope=$(sign_adapter_authorization /routerrpc.Router/SendPaymentV2 \
     "$restart_payment_id" "$restart_intent" "$restart_hash" "$restart_invoice_digest" "$amount_sats" \
@@ -1241,7 +1261,7 @@ smoke_invoice_faults() {
     restart_lookup_id="0x$(openssl rand -hex 32)"
     restart_lookup_result=$(call_adapter invoice-adapter /invoicesrpc.Invoices/LookupInvoiceV2 \
       "$restart_lookup_id" "$restart_intent" "$restart_hash" "$restart_invoice_digest" "$amount_sats" '{}')
-    state=$(jq -er '.result.state' <<<"$restart_lookup_result")
+    state=$(jq -er '.payload.body.result.state' <<<"$restart_lookup_result")
     if [[ "$state" == "ACCEPTED" ]]; then
       accepted=true
       break
@@ -1261,18 +1281,18 @@ smoke_invoice_faults() {
   restart_lookup_id="0x$(openssl rand -hex 32)"
   restart_lookup_result=$(call_adapter invoice-adapter /invoicesrpc.Invoices/LookupInvoiceV2 \
     "$restart_lookup_id" "$restart_intent" "$restart_hash" "$restart_invoice_digest" "$amount_sats" '{}')
-  jq -e '.result.state == "ACCEPTED"' <<<"$restart_lookup_result" >/dev/null
+  jq -e '.payload.body.result.state == "ACCEPTED"' <<<"$restart_lookup_result" >/dev/null
 
   restart_settle_id="0x$(openssl rand -hex 32)"
   restart_settle_operation=$(jq -cn --arg preimage "$restart_preimage" '{preimage:$preimage}')
   restart_settle_result=$(call_adapter invoice-adapter /invoicesrpc.Invoices/SettleInvoice \
     "$restart_settle_id" "$restart_intent" "$restart_hash" "$restart_invoice_digest" \
     "$amount_sats" "$restart_settle_operation")
-  jq -e '.result.state == "SETTLED"' <<<"$restart_settle_result" >/dev/null
+  jq -e '.payload.body.result.state == "SETTLED"' <<<"$restart_settle_result" >/dev/null
   wait "$restart_pid"
   restart_pid=""
   jq -e --arg preimage "$restart_preimage" \
-    '.result.status == "SUCCEEDED" and .result.preimage == $preimage' "$restart_result" >/dev/null
+    '.payload.body.result.status == "SUCCEEDED" and .payload.body.result.preimage == $preimage' "$restart_result" >/dev/null
   rm -f "$restart_result"
   restart_result=""
   unset restart_preimage restart_pay_req restart_payment_envelope
@@ -1510,7 +1530,7 @@ smoke_policy_faults() {
     "$request_id" "$offline_intent" "$offline_hash" "$offline_digest" 10000 \
     "$(jq -cn --arg paymentRequest "$offline_request" '{paymentRequest:$paymentRequest}')")
   jq -e --arg paymentHash "$offline_hash" \
-    '.result.paymentHash == $paymentHash and .result.amountSats == "10000"' <<<"$decode_result" >/dev/null
+    '.payload.body.result.paymentHash == $paymentHash and .payload.body.result.amountSats == "10000"' <<<"$decode_result" >/dev/null
   echo "Policy fault stage passed: mismatched TLS pin and healthy pinned adapter."
   compose exec -T bob lncli --network=regtest cancelinvoice "${offline_hash#0x}" >/dev/null
   trap - EXIT
@@ -1655,7 +1675,7 @@ smoke_directional_capacity() {
   payer_result=$(call_adapter payer-adapter /routerrpc.Router/SendPaymentV2 \
     "$payer_id" "$payer_intent" "$payer_hash" "$payer_digest" "$amount_sats" "$payer_operation")
   jq -e --arg paymentHash "$payer_hash" --arg amount "$amount_sats" \
-    '.result.status == "SUCCEEDED" and .result.paymentHash == $paymentHash and .result.amountSats == $amount' \
+    '.payload.body.result.status == "SUCCEEDED" and .payload.body.result.paymentHash == $paymentHash and .payload.body.result.amountSats == $amount' \
     <<<"$payer_result" >/dev/null
   final_payer_paid=true
   compose exec -T bob lncli --network=regtest \
@@ -1667,12 +1687,12 @@ smoke_directional_capacity() {
   invoice_id="0x$(openssl rand -hex 32)"
   invoice_result=$(call_adapter invoice-adapter /invoicesrpc.Invoices/AddHoldInvoice \
     "$invoice_id" "$invoice_intent" "$invoice_hash" "$zero_hash" "$amount_sats" "$invoice_operation")
-  invoice_digest=$(jq -er '.result.invoiceDigest' <<<"$invoice_result")
+  invoice_digest=$(jq -er '.payload.body.result.invoiceDigest' <<<"$invoice_result")
   hold_created=true
   cancel_id="0x$(openssl rand -hex 32)"
   cancel_result=$(call_adapter invoice-adapter /invoicesrpc.Invoices/CancelInvoice \
     "$cancel_id" "$invoice_intent" "$invoice_hash" "$invoice_digest" "$amount_sats" '{}')
-  jq -e '.result.state == "CANCELED"' <<<"$cancel_result" >/dev/null
+  jq -e '.payload.body.result.state == "CANCELED"' <<<"$cancel_result" >/dev/null
   hold_created=false
   invoice_hash=""
   unset payer_request invoice_preimage
@@ -1732,7 +1752,7 @@ smoke_daily_cap() {
     "$payer_id" "$payer_intent" "$payer_hash" "$payer_digest" "$cap_sats" "$payer_operation" |
     docker exec -i "$payer_container" node /app/infra/lightning-adapter/client.mjs)
   jq -e --arg paymentHash "$payer_hash" --arg amount "$cap_sats" \
-    '.result.status == "SUCCEEDED" and .result.paymentHash == $paymentHash and .result.amountSats == $amount' \
+    '.payload.body.result.status == "SUCCEEDED" and .payload.body.result.paymentHash == $paymentHash and .payload.body.result.amountSats == $amount' \
     <<<"$payer_result" >/dev/null
   payer_paid=true
 
@@ -1787,7 +1807,7 @@ smoke_daily_cap() {
   hold_result=$(sign_adapter_authorization /invoicesrpc.Invoices/AddHoldInvoice \
     "$hold_id" "$hold_intent" "$hold_hash" "$zero_hash" "$cap_sats" "$hold_operation" |
     docker exec -i "$invoice_container" node /app/infra/lightning-adapter/client.mjs)
-  hold_digest=$(jq -er '.result.invoiceDigest' <<<"$hold_result")
+  hold_digest=$(jq -er '.payload.body.result.invoiceDigest' <<<"$hold_result")
   hold_created=true
 
   docker rm -f "$invoice_container" >/dev/null
@@ -1819,7 +1839,7 @@ smoke_daily_cap() {
   cancel_id="0x$(openssl rand -hex 32)"
   cancel_result=$(call_adapter invoice-adapter /invoicesrpc.Invoices/CancelInvoice \
     "$cancel_id" "$hold_intent" "$hold_hash" "$hold_digest" "$cap_sats" '{}')
-  jq -e '.result.state == "CANCELED"' <<<"$cancel_result" >/dev/null
+  jq -e '.payload.body.result.state == "CANCELED"' <<<"$cancel_result" >/dev/null
   hold_created=false
   hold_hash=""
   unset payer_request rejected_request hold_preimage rejected_preimage
@@ -1912,7 +1932,7 @@ smoke_stateless_chain_initialization() {
     "$progressed_id" "$intent_digest" "$payment_hash" "$invoice_digest" "$amount_sats" "$operation" |
     docker exec -i "$payer_container" node /app/infra/lightning-adapter/client.mjs)
   jq -e --arg paymentHash "$payment_hash" --arg amount "$amount_sats" \
-    '.result.status == "SUCCEEDED" and .result.paymentHash == $paymentHash and .result.amountSats == $amount' \
+    '.payload.body.result.status == "SUCCEEDED" and .payload.body.result.paymentHash == $paymentHash and .payload.body.result.amountSats == $amount' \
     <<<$progressed_result >/dev/null
   payer_paid=true
   payment_count=$(compose exec -T alice lncli --network=regtest listpayments |
@@ -2005,7 +2025,7 @@ smoke_production_duration_chain_delay() {
     "$baseline_id" "$baseline_intent" "$baseline_hash" "$baseline_digest" "$amount_sats" "$baseline_operation" |
     docker exec -i "$payer_container" node /app/infra/lightning-adapter/client.mjs)
   jq -e --arg paymentHash "$baseline_hash" --arg amount "$amount_sats" \
-    '.result.status == "SUCCEEDED" and .result.paymentHash == $paymentHash and .result.amountSats == $amount' \
+    '.payload.body.result.status == "SUCCEEDED" and .payload.body.result.paymentHash == $paymentHash and .payload.body.result.amountSats == $amount' \
     <<<$baseline_result >/dev/null
   baseline_paid=true
   compose exec -T bob lncli --network=regtest \
@@ -2232,7 +2252,7 @@ smoke_stale_chain_header() {
   baseline_result=$(printf '%s\n' "$baseline_envelope" |
     docker exec -i "$stale_container" node /app/infra/lightning-adapter/client.mjs)
   jq -e --arg paymentHash "$payment_hash" \
-    '.result.paymentHash == $paymentHash and .result.amountSats == "10000"' <<<"$baseline_result" >/dev/null
+    '.payload.body.result.paymentHash == $paymentHash and .payload.body.result.amountSats == "10000"' <<<"$baseline_result" >/dev/null
 
   sleep 3
   info=$(compose exec -T alice lncli --network=regtest getinfo)
@@ -2264,7 +2284,7 @@ smoke_stale_chain_header() {
     "$request_id" "$intent_digest" "$payment_hash" "$invoice_digest" 10000 \
     "$(jq -cn --arg paymentRequest "$payment_request" '{paymentRequest:$paymentRequest}')")
   jq -e --arg paymentHash "$payment_hash" \
-    '.result.paymentHash == $paymentHash and .result.amountSats == "10000"' <<<"$decode_result" >/dev/null
+    '.payload.body.result.paymentHash == $paymentHash and .payload.body.result.amountSats == "10000"' <<<"$decode_result" >/dev/null
 
   docker rm -f "$stale_container" >/dev/null
   unset payment_request envelope
@@ -2329,7 +2349,7 @@ smoke_unsynced_chain_catchup() {
     "$request_id" "$intent_digest" "$payment_hash" "$invoice_digest" 10000 \
     "$(jq -cn --arg paymentRequest "$payment_request" '{paymentRequest:$paymentRequest}')")
   jq -e --arg paymentHash "$payment_hash" \
-    '.result.paymentHash == $paymentHash and .result.amountSats == "10000"' <<<"$decode_result" >/dev/null
+    '.payload.body.result.paymentHash == $paymentHash and .payload.body.result.amountSats == "10000"' <<<"$decode_result" >/dev/null
 
   unset payment_request envelope
   trap - EXIT
@@ -2557,7 +2577,7 @@ smoke_force_close_recovery() {
     "$request_id" "$intent_digest" "$payment_hash" "$invoice_digest" 10000 \
     "$(jq -cn --arg paymentRequest "$payment_request" '{paymentRequest:$paymentRequest}')")
   jq -e --arg paymentHash "$payment_hash" \
-    '.result.paymentHash == $paymentHash and .result.amountSats == "10000"' <<<"$decode_result" >/dev/null
+    '.payload.body.result.paymentHash == $paymentHash and .payload.body.result.amountSats == "10000"' <<<"$decode_result" >/dev/null
 
   unset payment_request envelope
   echo "Force-close smoke passed: two distinct signed collectors and the adapter halted on a genuine close, the CSV close fully swept, aggregate-only bounded anchors remained, and a fresh balanced channel restored service."
@@ -2642,7 +2662,7 @@ smoke_route_and_duplicate_failure() {
   if track_result=$(call_adapter payer-adapter /routerrpc.Router/TrackPaymentV2 \
     "$track_id" "$intent_digest" "$payment_hash" "$invoice_digest" 10000 '{}'); then
     jq -e --arg paymentHash "$payment_hash" \
-      '.result.status == "FAILED" and .result.paymentHash == $paymentHash and .result.amountSats == "10000"' \
+      '.payload.body.result.status == "FAILED" and .payload.body.result.paymentHash == $paymentHash and .payload.body.result.amountSats == "10000"' \
       <<<"$track_result" >/dev/null
   else
     if ! jq -e '.errorCode == "NOT_FOUND" and .ambiguous == false' <<<"$track_result" >/dev/null; then
@@ -2758,7 +2778,7 @@ smoke_cross_chain_deadline() {
       '{paymentRequest:$paymentRequest,timeoutSeconds:30,feeLimitSats:"10"}')")
   standard_preimage=$(jq -er \
     --arg paymentHash "$standard_hash" --arg amountSats "$bit_amount_sats" \
-    'select(.result.status == "SUCCEEDED" and .result.paymentHash == $paymentHash and .result.amountSats == $amountSats) | .result.preimage' \
+    'select(.payload.body.result.status == "SUCCEEDED" and .payload.body.result.paymentHash == $paymentHash and .payload.body.result.amountSats == $amountSats) | .payload.body.result.preimage' \
     <<<"$payment_result")
   if [[ "0x$(printf '%s' "${standard_preimage#0x}" | xxd -r -p | openssl dgst -sha256 -binary | xxd -p -c 256)" != "$standard_hash" ]]; then
     echo "standard Lightning payment proof did not match its invoice" >&2
@@ -2778,8 +2798,8 @@ smoke_cross_chain_deadline() {
     "$create_id" "0x$(openssl rand -hex 32)" "$hold_hash" \
     "0x$(printf '00%.0s' {1..32})" "$hold_amount_sats" \
     "$(jq -cn '{memo:"treeswap-cross-chain-hold",expirySeconds:10800,cltvExpiry:80,isPrivate:true}')")
-  hold_request=$(jq -er '.result.paymentRequest' <<<"$create_result")
-  hold_digest=$(jq -er '.result.invoiceDigest' <<<"$create_result")
+  hold_request=$(jq -er '.payload.body.result.paymentRequest' <<<"$create_result")
+  hold_digest=$(jq -er '.payload.body.result.invoiceDigest' <<<"$create_result")
   hold_decoded=$(compose exec -T alice lncli --network=regtest \
     --macaroonpath=/root/.lnd/treeswap/payer.macaroon decodepayreq "$hold_request")
   if [[ "$(jq -er '.payment_hash | ascii_downcase | "0x" + .' <<<"$hold_decoded")" != "$hold_hash" ]]; then
@@ -2816,7 +2836,7 @@ smoke_cross_chain_deadline() {
     lookup_id="0x$(openssl rand -hex 32)"
     lookup_result=$(call_adapter invoice-adapter /invoicesrpc.Invoices/LookupInvoiceV2 \
       "$lookup_id" "$hold_intent" "$hold_hash" "$hold_digest" "$hold_amount_sats" '{}')
-    hold_state=$(jq -er '.result.state' <<<"$lookup_result")
+    hold_state=$(jq -er '.payload.body.result.state' <<<"$lookup_result")
     if [[ "$hold_state" == "ACCEPTED" ]]; then
       accepted=true
       break
@@ -2827,7 +2847,7 @@ smoke_cross_chain_deadline() {
     echo "cross-chain hold invoice was not accepted" >&2
     return 1
   fi
-  expiry_height=$(jq -er '[.result.htlcs[] | select(.state == "ACCEPTED") | .expiryHeight] | min | tonumber' \
+  expiry_height=$(jq -er '[.payload.body.result.htlcs[] | select(.state == "ACCEPTED") | .expiryHeight] | min | tonumber' \
     <<<"$lookup_result")
   accepted_height=$(compose exec -T bob lncli --network=regtest getinfo | jq -er '.block_height | tonumber')
   evm_result=$(cross_chain_evm observe-lightning-to-bit-accepted \
@@ -2869,12 +2889,12 @@ smoke_cross_chain_deadline() {
   lookup_id="0x$(openssl rand -hex 32)"
   lookup_result=$(call_adapter invoice-adapter /invoicesrpc.Invoices/LookupInvoiceV2 \
     "$lookup_id" "$hold_intent" "$hold_hash" "$hold_digest" "$hold_amount_sats" '{}')
-  hold_state=$(jq -er '.result.state' <<<"$lookup_result")
+  hold_state=$(jq -er '.payload.body.result.state' <<<"$lookup_result")
   if [[ "$hold_state" == "ACCEPTED" ]]; then
     cancel_id="0x$(openssl rand -hex 32)"
     call_adapter invoice-adapter /invoicesrpc.Invoices/CancelInvoice \
       "$cancel_id" "$hold_intent" "$hold_hash" "$hold_digest" "$hold_amount_sats" '{}' | \
-      jq -e '.result.state == "CANCELED"' >/dev/null
+      jq -e '.payload.body.result.state == "CANCELED"' >/dev/null
   elif [[ "$hold_state" != "CANCELED" ]]; then
     echo "cross-chain hold invoice reached an unexpected boundary state" >&2
     return 1
@@ -2952,8 +2972,8 @@ smoke_htlc_cutoff() {
     "$create_id" "$intent_digest" "$payment_hash" \
     "0x$(printf '00%.0s' {1..32})" "$amount_sats" \
     "$(jq -cn '{memo:"treeswap-cltv-cutoff",expirySeconds:600,cltvExpiry:80,isPrivate:true}')")
-  payment_request=$(jq -er '.result.paymentRequest' <<<"$create_result")
-  invoice_digest=$(jq -er '.result.invoiceDigest' <<<"$create_result")
+  payment_request=$(jq -er '.payload.body.result.paymentRequest' <<<"$create_result")
+  invoice_digest=$(jq -er '.payload.body.result.invoiceDigest' <<<"$create_result")
   payment_id="0x$(openssl rand -hex 32)"
   payment_envelope=$(sign_adapter_authorization /routerrpc.Router/SendPaymentV2 \
     "$payment_id" "$intent_digest" "$payment_hash" "$invoice_digest" "$amount_sats" \
@@ -2969,7 +2989,7 @@ smoke_htlc_cutoff() {
     lookup_id="0x$(openssl rand -hex 32)"
     lookup_result=$(call_adapter invoice-adapter /invoicesrpc.Invoices/LookupInvoiceV2 \
       "$lookup_id" "$intent_digest" "$payment_hash" "$invoice_digest" "$amount_sats" '{}')
-    state=$(jq -er '.result.state' <<<"$lookup_result")
+    state=$(jq -er '.payload.body.result.state' <<<"$lookup_result")
     if [[ "$state" == "ACCEPTED" ]]; then
       accepted=true
       break
@@ -2980,7 +3000,7 @@ smoke_htlc_cutoff() {
     echo "CLTV cutoff probe was not accepted" >&2
     return 1
   fi
-  expiry_height=$(jq -er '[.result.htlcs[] | select(.state == "ACCEPTED") | .expiryHeight] | min' \
+  expiry_height=$(jq -er '[.payload.body.result.htlcs[] | select(.state == "ACCEPTED") | .expiryHeight] | min' \
     <<<"$lookup_result")
   current_height=$(compose exec -T bob lncli --network=regtest getinfo |
     jq -er '.block_height | tonumber')
@@ -3009,9 +3029,9 @@ smoke_htlc_cutoff() {
     jq -c '{error,errorCode,ambiguous}' <<<"$lookup_result" >&2
     return 1
   fi
-  state=$(jq -er '.result.state' <<<"$lookup_result")
+  state=$(jq -er '.payload.body.result.state' <<<"$lookup_result")
   if [[ "$state" == "ACCEPTED" ]]; then
-    expiry_height=$(jq -er '[.result.htlcs[] | select(.state == "ACCEPTED") | .expiryHeight] | min' \
+    expiry_height=$(jq -er '[.payload.body.result.htlcs[] | select(.state == "ACCEPTED") | .expiryHeight] | min' \
       <<<"$lookup_result")
     current_height=$(compose exec -T bob lncli --network=regtest getinfo |
       jq -er '.block_height | tonumber')
@@ -3022,7 +3042,7 @@ smoke_htlc_cutoff() {
     fi
     boundary_outcome=adapter-cutoff
   elif [[ "$state" == "CANCELED" ]]; then
-    if ! jq -e '(.result.htlcs | length) > 0 and ([.result.htlcs[] | select(.state != "CANCELED")] | length == 0)' \
+    if ! jq -e '(.payload.body.result.htlcs | length) > 0 and ([.payload.body.result.htlcs[] | select(.state != "CANCELED")] | length == 0)' \
       <<<"$lookup_result" >/dev/null; then
       echo "LND canceled the invoice but left a non-canceled HTLC at the safety boundary" >&2
       return 1
@@ -3056,7 +3076,7 @@ smoke_htlc_cutoff() {
     cancel_id="0x$(openssl rand -hex 32)"
     cancel_result=$(call_adapter invoice-adapter /invoicesrpc.Invoices/CancelInvoice \
       "$cancel_id" "$intent_digest" "$payment_hash" "$invoice_digest" "$amount_sats" '{}')
-    jq -e '.result.state == "CANCELED"' <<<"$cancel_result" >/dev/null
+    jq -e '.payload.body.result.state == "CANCELED"' <<<"$cancel_result" >/dev/null
   fi
   payment_hash=""
   if wait "$payment_pid"; then

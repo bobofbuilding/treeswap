@@ -191,14 +191,16 @@ services:
         cp -f /source/treeswap/payer.macaroon /target/role.macaroon;
         cp -f /coordinator-public.pem /target/coordinator-public.pem;
         cp -f /capacity-private.pem /target/capacity-private.pem;
-        chown 1000:1000 /target/tls.cert /target/role.macaroon /target/coordinator-public.pem /target/capacity-private.pem;
-        chmod 0400 /target/role.macaroon /target/capacity-private.pem;
+        cp -f /response-private.pem /target/response-private.pem;
+        chown 1000:1000 /target/tls.cert /target/role.macaroon /target/coordinator-public.pem /target/capacity-private.pem /target/response-private.pem;
+        chmod 0400 /target/role.macaroon /target/capacity-private.pem /target/response-private.pem;
         chmod 0444 /target/tls.cert /target/coordinator-public.pem
     volumes:
       - alice-data:/source:ro
       - alice-payer-credentials:/target
       - ${COORDINATOR_PUBLIC_KEY_PATH}:/coordinator-public.pem:ro
       - ${ALICE_CAPACITY_PRIVATE_KEY_PATH}:/capacity-private.pem:ro
+      - ${ALICE_RESPONSE_PRIVATE_KEY_PATH}:/response-private.pem:ro
     networks: [regtest]
 
   export-bob-invoice-credential:
@@ -212,14 +214,16 @@ services:
         cp -f /source/treeswap/invoice.macaroon /target/role.macaroon;
         cp -f /coordinator-public.pem /target/coordinator-public.pem;
         cp -f /capacity-private.pem /target/capacity-private.pem;
-        chown 1000:1000 /target/tls.cert /target/role.macaroon /target/coordinator-public.pem /target/capacity-private.pem;
-        chmod 0400 /target/role.macaroon /target/capacity-private.pem;
+        cp -f /response-private.pem /target/response-private.pem;
+        chown 1000:1000 /target/tls.cert /target/role.macaroon /target/coordinator-public.pem /target/capacity-private.pem /target/response-private.pem;
+        chmod 0400 /target/role.macaroon /target/capacity-private.pem /target/response-private.pem;
         chmod 0444 /target/tls.cert /target/coordinator-public.pem
     volumes:
       - bob-data:/source:ro
       - bob-invoice-credentials:/target
       - ${COORDINATOR_PUBLIC_KEY_PATH}:/coordinator-public.pem:ro
       - ${BOB_CAPACITY_PRIVATE_KEY_PATH}:/capacity-private.pem:ro
+      - ${BOB_RESPONSE_PRIVATE_KEY_PATH}:/response-private.pem:ro
     networks: [regtest]
 
   export-alice-close-collector-a-credential:
@@ -270,12 +274,17 @@ services:
         cp -f /coordinator-private.pem /target/coordinator-private.pem;
         cp -f /alice-capacity-public.pem /target/alice-capacity-public.pem;
         cp -f /bob-capacity-public.pem /target/bob-capacity-public.pem;
-        chown 1000:1000 /target/coordinator-private.pem /target/alice-capacity-public.pem /target/bob-capacity-public.pem;
-        chmod 0400 /target/coordinator-private.pem
+        cp -f /alice-response-public.pem /target/alice-response-public.pem;
+        cp -f /bob-response-public.pem /target/bob-response-public.pem;
+        chown 1000:1000 /target/coordinator-private.pem /target/alice-capacity-public.pem /target/bob-capacity-public.pem /target/alice-response-public.pem /target/bob-response-public.pem;
+        chmod 0400 /target/coordinator-private.pem;
+        chmod 0444 /target/alice-capacity-public.pem /target/bob-capacity-public.pem /target/alice-response-public.pem /target/bob-response-public.pem
     volumes:
       - ${COORDINATOR_PRIVATE_KEY_PATH}:/coordinator-private.pem:ro
       - ${ALICE_CAPACITY_PUBLIC_KEY_PATH}:/alice-capacity-public.pem:ro
       - ${BOB_CAPACITY_PUBLIC_KEY_PATH}:/bob-capacity-public.pem:ro
+      - ${ALICE_RESPONSE_PUBLIC_KEY_PATH}:/alice-response-public.pem:ro
+      - ${BOB_RESPONSE_PUBLIC_KEY_PATH}:/bob-response-public.pem:ro
       - coordinator-credentials:/target
     networks: [regtest]
 
@@ -295,6 +304,8 @@ services:
       COORDINATOR_KEY_ID: regtest-coordinator-1
       CAPACITY_SIGNING_PRIVATE_KEY_PATH: /run/treeswap/credentials/capacity-private.pem
       CAPACITY_SIGNING_KEY_ID: alice-capacity-regtest-1
+      RESPONSE_SIGNING_PRIVATE_KEY_PATH: /run/treeswap/credentials/response-private.pem
+      RESPONSE_SIGNING_KEY_ID: alice-payer-response-regtest-1
       ADAPTER_JOURNAL_PATH: /data/actions.jsonl
       CHAIN_PROGRESS_PATH: /data/chain-progress.json
       CREDENTIAL_ID: alice-payer-regtest
@@ -320,6 +331,8 @@ services:
       COORDINATOR_KEY_ID: regtest-coordinator-1
       CAPACITY_SIGNING_PRIVATE_KEY_PATH: /run/treeswap/credentials/capacity-private.pem
       CAPACITY_SIGNING_KEY_ID: bob-capacity-regtest-1
+      RESPONSE_SIGNING_PRIVATE_KEY_PATH: /run/treeswap/credentials/response-private.pem
+      RESPONSE_SIGNING_KEY_ID: bob-invoice-response-regtest-1
       ADAPTER_JOURNAL_PATH: /data/actions.jsonl
       CHAIN_PROGRESS_PATH: /data/chain-progress.json
       CREDENTIAL_ID: bob-invoice-regtest
@@ -383,6 +396,8 @@ services:
       COORDINATOR_PRIVATE_KEY_PATH: /run/treeswap/credentials/coordinator-private.pem
       COORDINATOR_DATABASE_PATH: /data/coordinator.sqlite
       COORDINATOR_KEY_ID: regtest-coordinator-1
+      PAYER_ADAPTER_RESPONSE_PUBLIC_KEY_PATH: /run/treeswap/credentials/alice-response-public.pem
+      PAYER_ADAPTER_RESPONSE_KEY_ID: alice-payer-response-regtest-1
       PAYMENT_HASH: ${COORDINATOR_SMOKE_PAYMENT_HASH:-pending}
     volumes:
       - coordinator-credentials:/run/treeswap/credentials:ro
@@ -405,6 +420,8 @@ services:
       COORDINATOR_PRIVATE_KEY_PATH: /run/treeswap/credentials/coordinator-private.pem
       COORDINATOR_DATABASE_PATH: /data/coordinator-invoice.sqlite
       COORDINATOR_KEY_ID: regtest-coordinator-1
+      INVOICE_ADAPTER_RESPONSE_PUBLIC_KEY_PATH: /run/treeswap/credentials/bob-response-public.pem
+      INVOICE_ADAPTER_RESPONSE_KEY_ID: bob-invoice-response-regtest-1
       PAYMENT_HASH: ${COORDINATOR_SMOKE_PAYMENT_HASH:-pending}
     volumes:
       - coordinator-credentials:/run/treeswap/credentials:ro

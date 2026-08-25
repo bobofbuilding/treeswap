@@ -58,6 +58,7 @@ const packetRequesterKeys = generateKeyPairSync("ed25519");
 const packetProviderKeys = generateKeyPairSync("ed25519");
 const evidenceRequesterKeys = generateKeyPairSync("ed25519");
 const lightningActionKeys = generateKeyPairSync("ed25519");
+const lightningResponseKeys = generateKeyPairSync("ed25519");
 const ENDPOINT_ORIGIN = "https://solver.example";
 const endpointPublicKey = endpointKeys.publicKey.export({ format: "pem", type: "spki" }).toString();
 
@@ -262,6 +263,8 @@ function runtime(policy = evidencePolicy(), { evidenceRequestImpl, packetRequest
     privateKey: lightningActionKeys.privateKey,
     keyId: "coordinator-action-one",
     adapterUrl: "http://payer-adapter",
+    responsePublicKey: lightningResponseKeys.publicKey,
+    responseKeyId: "payer-response-active-one",
     authorizationLifetimeSeconds: 15,
     requestImpl: async () => { throw new Error("Lightning adapter must not run during composition"); },
     dispatchTimeoutMs: 30_000,
@@ -431,6 +434,26 @@ test("rejects lookalike readers, packet clients, action configs, and non-indepen
   assert.throws(() => runtime(evidencePolicy(), {
     packetRequestImpl: async () => { throw new Error("injected private-packet transport"); },
   }), /fixed Node HTTPS private-packet transport/);
+
+  const lightningConfig = {
+    privateKey: lightningActionKeys.privateKey,
+    keyId: "coordinator-action-one",
+    adapterUrl: "http://payer-adapter",
+    responsePublicKey: lightningResponseKeys.publicKey,
+    responseKeyId: "payer-response-active-one",
+    authorizationLifetimeSeconds: 15,
+    requestImpl: async () => {},
+    dispatchTimeoutMs: 30_000,
+    requestTimeoutMs: 5_000,
+  };
+  assert.throws(() => createCoordinatorLightningActionConfig({
+    ...lightningConfig,
+    responsePublicKey: lightningActionKeys.publicKey,
+  }), /must be separate/);
+  assert.throws(() => createCoordinatorLightningActionConfig({
+    ...lightningConfig,
+    responsePublicKey: lightningResponseKeys.privateKey,
+  }), /public Ed25519 key handle/);
 
   const sameRpc = async () => {};
   assert.throws(() => createCoordinatorEvmActionConfig({

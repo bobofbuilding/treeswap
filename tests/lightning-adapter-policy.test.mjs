@@ -94,7 +94,7 @@ test("allows only an exact intent-bound payer RPC and emits a secret-free audit"
   assert.equal("macaroon" in result.audit, false);
   assert.equal(result.audit.invoiceDigest, intent.invoiceDigest);
   assert.equal(result.audit.capacityEpoch, intent.capacityEpoch);
-  assert.equal(result.audit.amountSats, intent.amountSats);
+  assert.equal(result.audit.amountSats, intent.amountSats.toString());
   assert.equal(Object.isFrozen(result.audit.reasons), true);
 });
 

@@ -1,4 +1,4 @@
-import { createHash, createPrivateKey, randomBytes } from "node:crypto";
+import { createHash, createPrivateKey, createPublicKey, randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import {
   dispatchLightningAction,
@@ -66,6 +66,7 @@ if (!BYTES32.test(paymentHash) || paymentHashFor(input.preimage) !== paymentHash
 const health = await fetch("http://invoice-adapter:3000/healthz");
 if (!health.ok) throw new Error("invoice adapter is unavailable");
 const privateKey = createPrivateKey(await readFile(required("COORDINATOR_PRIVATE_KEY_PATH")));
+const responsePublicKey = createPublicKey(await readFile(required("INVOICE_ADAPTER_RESPONSE_PUBLIC_KEY_PATH")));
 const now = Math.floor(Date.now() / 1_000);
 const settlement = {
   settlementId: randomHash(),
@@ -121,11 +122,13 @@ try {
     privateKey,
     keyId: required("COORDINATOR_KEY_ID"),
     adapterUrl: "http://invoice-adapter:3000",
+    responsePublicKey,
+    responseKeyId: required("INVOICE_ADAPTER_RESPONSE_KEY_ID"),
     nowSeconds: () => Math.floor(Date.now() / 1_000),
     requestImpl: async (url, options) => {
       const response = await fetch(url, options);
       const body = await response.clone().json();
-      if (response.ok && body?.result?.state === "SETTLED") {
+      if (response.ok && body?.payload?.body?.result?.state === "SETTLED") {
         responseWasLost = true;
         throw new Error("simulated loss after successful invoice settlement");
       }
@@ -151,6 +154,8 @@ const reconciled = await reconcileLightningAction({
   privateKey,
   keyId: required("COORDINATOR_KEY_ID"),
   adapterUrl: "http://invoice-adapter:3000",
+  responsePublicKey,
+  responseKeyId: required("INVOICE_ADAPTER_RESPONSE_KEY_ID"),
   nowSeconds: () => Math.floor(Date.now() / 1_000),
 });
 if (reconciled.disposition !== "confirmed" || reconciled.action.dispatchCount !== 1) {

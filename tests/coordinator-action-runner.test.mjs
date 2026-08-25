@@ -3,18 +3,38 @@ import { generateKeyPairSync } from "node:crypto";
 import test from "node:test";
 import { id, sha256 } from "ethers";
 import {
-  dispatchLightningAction,
+  dispatchLightningAction as dispatchLightningActionRaw,
   lightningActionCommitment,
-  readConfirmedLightningPaymentProof,
-  reconcileLightningAction,
+  readConfirmedLightningPaymentProof as readConfirmedLightningPaymentProofRaw,
+  reconcileLightningAction as reconcileLightningActionRaw,
 } from "../lib/coordinator-action-runner.mjs";
 import { CoordinatorStore } from "../lib/coordinator-store.mjs";
+import { signLightningAdapterResponseEnvelope } from "../lib/lightning-adapter-response.mjs";
 
 const NOW = 2_000_000_000;
 const PREIMAGE = id("coordinator-runner-preimage").toLowerCase();
 const PAYMENT_HASH = sha256(PREIMAGE).toLowerCase();
 const PAYMENT_REQUEST = "lnbc100u1coordinatorrunner";
 const { privateKey } = generateKeyPairSync("ed25519");
+const responseKeys = generateKeyPairSync("ed25519");
+const wrongResponseKeys = generateKeyPairSync("ed25519");
+const RESPONSE_KEY_ID = "coordinator-test-response-1";
+
+function responseAuthentication() {
+  return { responsePublicKey: responseKeys.publicKey, responseKeyId: RESPONSE_KEY_ID };
+}
+
+function dispatchLightningAction(input) {
+  return dispatchLightningActionRaw({ ...responseAuthentication(), ...input });
+}
+
+function reconcileLightningAction(input) {
+  return reconcileLightningActionRaw({ ...responseAuthentication(), ...input });
+}
+
+function readConfirmedLightningPaymentProof(input) {
+  return readConfirmedLightningPaymentProofRaw({ ...responseAuthentication(), ...input });
+}
 
 function hash(label) {
   return id(label).toLowerCase();
@@ -155,8 +175,16 @@ function adapterAudit(action, {
   };
 }
 
-function successResponse(action, overrides = {}, auditOverrides = {}) {
-  return new Response(JSON.stringify({
+function signedResponse(body, { privateKey: signingKey = responseKeys.privateKey, keyId = RESPONSE_KEY_ID } = {}) {
+  return new Response(JSON.stringify(signLightningAdapterResponseEnvelope({
+    body,
+    keyId,
+    privateKey: signingKey,
+  })), { status: 200, headers: { "content-type": "application/json" } });
+}
+
+function successResponse(action, overrides = {}, auditOverrides = {}, signing = {}) {
+  return signedResponse({
     result: {
       status: "SUCCEEDED",
       paymentHash: PAYMENT_HASH,
@@ -166,7 +194,7 @@ function successResponse(action, overrides = {}, auditOverrides = {}) {
       ...overrides,
     },
     audit: adapterAudit(action, auditOverrides),
-  }), { status: 200, headers: { "content-type": "application/json" } });
+  }, signing);
 }
 
 function reconciliationResponse(action, {
@@ -175,11 +203,12 @@ function reconciliationResponse(action, {
   result,
   observedAt = NOW + 30,
   auditOverrides = {},
+  signing = {},
 }) {
-  return new Response(JSON.stringify({
+  return signedResponse({
     result,
     audit: adapterAudit(action, { method, requestId, observedAt, ...auditOverrides }),
-  }), { status: 200, headers: { "content-type": "application/json" } });
+  }, signing);
 }
 
 test("dispatches the exact committed operation once and persists only its validated proof", async () => {
@@ -267,7 +296,7 @@ test("requires every success audit to bind the exact action and signed authoriza
       keyId: "coordinator-test-1",
       adapterUrl: "http://payer-adapter:3000",
       nowSeconds: () => NOW + 21,
-      requestImpl: async () => new Response(JSON.stringify({
+      requestImpl: async () => signedResponse({
         result: {
           status: "SUCCEEDED",
           paymentHash: PAYMENT_HASH,
@@ -276,11 +305,40 @@ test("requires every success audit to bind the exact action and signed authoriza
           preimage: PREIMAGE,
         },
         audit: { decision: "allowed" },
-      }), { status: 200 }),
+      }),
     }), /invalid success proof/);
     assert.equal(generic.store.getAction(generic.action.actionId).state, "UNKNOWN");
   } finally {
     generic.store.close();
+  }
+});
+
+test("keeps an action unknown when adapter response authentication is missing or wrong", async () => {
+  const responses = [
+    async (action) => {
+      const envelope = await successResponse(action).json();
+      return new Response(JSON.stringify(envelope.payload.body), { status: 200 });
+    },
+    async (action) => successResponse(action, {}, {}, { privateKey: wrongResponseKeys.privateKey }),
+    async (action) => successResponse(action, {}, {}, { keyId: "retired-response-key" }),
+  ];
+  for (let index = 0; index < responses.length; index += 1) {
+    const prepared = await setup(`dispatch-response-authentication-${index}`);
+    try {
+      await assert.rejects(() => dispatchLightningAction({
+        store: prepared.store,
+        actionId: prepared.action.actionId,
+        operation: operation(),
+        privateKey,
+        keyId: "coordinator-test-1",
+        adapterUrl: "http://payer-adapter:3000",
+        nowSeconds: () => NOW + 21,
+        requestImpl: async () => responses[index](prepared.action),
+      }), (error) => error.ambiguous === true && error.actionState === "UNKNOWN");
+      assert.equal(prepared.store.getAction(prepared.action.actionId).state, "UNKNOWN");
+    } finally {
+      prepared.store.close();
+    }
   }
 });
 
@@ -856,6 +914,49 @@ test("keeps reconciliation unknown on a copied audit, unsupported state, or malf
     assert.equal(malformedMissing.store.getAction(malformedMissing.action.actionId).state, "UNKNOWN");
   } finally {
     malformedMissing.store.close();
+  }
+});
+
+test("keeps reconciliation unknown when response authentication is missing or wrong", async () => {
+  const result = {
+    status: "SUCCEEDED",
+    paymentHash: PAYMENT_HASH,
+    amountSats: "10000",
+    feeSats: "2",
+    preimage: PREIMAGE,
+  };
+  for (const mode of ["unsigned", "wrong-key", "wrong-key-id"]) {
+    const unknown = await makeUnknown(`reconcile-response-authentication-${mode}`);
+    const requestId = hash(`reconcile-response-authentication-${mode}:request`);
+    try {
+      await assert.rejects(() => reconcileLightningAction({
+        store: unknown.store,
+        actionId: unknown.action.actionId,
+        reconciliationRequestId: requestId,
+        privateKey,
+        keyId: "coordinator-test-1",
+        adapterUrl: "http://payer-adapter:3000",
+        nowSeconds: () => NOW + 30,
+        requestImpl: async () => {
+          const signed = reconciliationResponse(unknown.action, {
+            method: "/routerrpc.Router/TrackPaymentV2",
+            requestId,
+            result,
+            signing: mode === "wrong-key"
+              ? { privateKey: wrongResponseKeys.privateKey }
+              : mode === "wrong-key-id"
+                ? { keyId: "retired-response-key" }
+                : {},
+          });
+          if (mode !== "unsigned") return signed;
+          const envelope = await signed.json();
+          return new Response(JSON.stringify(envelope.payload.body), { status: 200 });
+        },
+      }), /proof was invalid/);
+      assert.equal(unknown.store.getAction(unknown.action.actionId).state, "UNKNOWN");
+    } finally {
+      unknown.store.close();
+    }
   }
 });
 

@@ -77,6 +77,7 @@ const packetRequesterKeys = generateKeyPairSync("ed25519");
 const packetProviderKeys = generateKeyPairSync("ed25519");
 const evidenceRequesterKeys = generateKeyPairSync("ed25519");
 const lightningActionKeys = generateKeyPairSync("ed25519");
+const lightningResponseKeys = generateKeyPairSync("ed25519");
 const ENDPOINT_ORIGIN = "https://solver.example";
 const endpointPublicKey = endpointKeys.publicKey.export({ format: "pem", type: "spki" }).toString();
 
@@ -165,6 +166,8 @@ function recoveryRuntime(policy = evidencePolicy(), { evidenceRequestImpl, packe
     privateKey: lightningActionKeys.privateKey,
     keyId: "coordinator-recovery-action-one",
     adapterUrl: "http://payer-adapter",
+    responsePublicKey: lightningResponseKeys.publicKey,
+    responseKeyId: "payer-response-recovery-one",
     authorizationLifetimeSeconds: 15,
     requestImpl: async () => { throw new Error("Lightning adapter must not run during composition"); },
     dispatchTimeoutMs: 30_000,
