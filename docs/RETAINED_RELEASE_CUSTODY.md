@@ -19,7 +19,7 @@ The package uses `treeswap.retained-release-custody.v1`. Its directory and every
 
 The top-level package contains:
 
-- a verified schema-v7 coordinator backup;
+- a verified schema-v9 coordinator backup;
 - the host and process instance commitments at sealing time;
 - a bounded two-to-five-witness policy with at least two distinct signer and organization commitments; and
 - one canonically ordered release entry for every and only release represented by a nonterminal settlement.
@@ -75,6 +75,8 @@ This removes a dynamic recovery work queue from the design. A deployed recovery 
 The packaged recovery-execution supervisor is the required lifecycle wrapper around that same-process result. It refreshes recovery verification and private aggregate health independently of action cycles, fails closed on refresh, heartbeat, lease, or publication failure, and reports EVM recovery separately from Lightning dispatch and funding. Every action report and successful cycle commitment binds the same release ID, verified release-record digest, and one-use job-set digest, so status from another retained release or startup set cannot satisfy health. A requested or failure shutdown first revokes recovery activation and the cycle fence, then waits until any in-flight read returns and the uncopyable job-set lease is released. Only after that promise resolves may an operator-specific entrypoint close the restored store or release the filesystem service lease. The default container refuses execution mode because a configuration value cannot replace the custody inspection, restored-host proof, fresh solver authorities, or concrete provider/runtime construction.
 
 The packaged recovery-execution service now owns that outer ordering. It acquires the original service lease, opens and recovers the restored store, activates fresh recovery verification, and gives a deployment-local preparation callback only those same-process objects and a mandatory cancellation signal. During custody and job-set preparation it publishes an explicitly unhealthy, authority-free bootstrap state; it cannot claim EVM recovery availability before the one-use database-derived job set is accepted by the action supervisor. Preparation is bounded by both recovery-evidence expiry and a 10–300 second configured timeout. Refresh is intentionally paused during that short window because it would revoke the activation used to derive retained readiness. Cancellation first revokes that activation and aborts preparation; the callback must cooperatively drain before the store closes and the lease releases. This closes the reusable lifecycle gap but does not supply the deployment-specific custody catalog, restored-host identity, solver key possession, provider independence, adapters, or real drill evidence.
+
+The reviewed callback is now `createCoordinatorRecoveryOperatorPolicyPreparer` in `lib/coordinator-recovery-operator-policy.mjs`. It accepts only factory-provenance capability clients and concrete recovery runtimes, uses an absolute fixed custody path, refreshes every solver authority, and binds the exact policy/runtime set before calling readiness and job-set derivation. `startCoordinatorRecoveryOperatorService` is the required operator-facing launcher; callers cannot substitute an arbitrary preparation callback. Recovery evidence controls omit Lightning authorization entirely. See [Recovery operator entrypoint](./RECOVERY_OPERATOR_ENTRYPOINT.md).
 
 ## Witnessed old/new drill
 

@@ -16,7 +16,7 @@ docker run --rm --read-only \
     tests/coordinator-release-supervisor.test.mjs tests/coordinator-recovery-supervisor.test.mjs \
     tests/coordinator-recovery-job.test.mjs tests/coordinator-recovery-action-loop.test.mjs \
     tests/coordinator-active-execution-service.test.mjs tests/coordinator-active-operator-policy.test.mjs \
-    tests/coordinator-recovery-execution-service.test.mjs \
+    tests/coordinator-recovery-execution-service.test.mjs tests/coordinator-recovery-operator-policy.test.mjs \
     tests/release-retention-custody.test.mjs \
     tests/coordinator-action-runner.test.mjs tests/evm-action-runner.test.mjs \
     tests/deployment-observer.test.mjs tests/deployment-policy.test.mjs \

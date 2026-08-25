@@ -17,6 +17,8 @@ The solver daemon already refuses reservation, Lightning dispatch, EVM-claim dis
 
 The client does not quote, select a solver, create work, open the release gate, hold inventory, or grant funding authority.
 
+`createSolverDaemonRecoveryEvidenceControls` derives a separately provenance-bound recovery object from the same protocol but exposes only reservation observation, EVM-claim authorization, and terminal asset verification. It has no `authorizeLightning` property and is not accepted as an active control set. Conversely, the four-method active object is not accepted by the reviewed recovery operator runtime. This removes Lightning payment authorization from the restart-only composition before the planner and execution fence apply their independent prohibition.
+
 Active policy preparation accepts nonempty evidence controls only when they are the original same-process object returned by this factory. A spread copy or deployment-injected callback object is rejected. An empty control object remains valid but fail-closed: it can only leave reservation and reconciliation waiting and dispatch gates closed.
 
 ## Request and response boundary

@@ -43,6 +43,7 @@ The prototype assumes a business par value of **1 BIT = 100 sats**. This value i
 - Guarded five-role payload and live contract-wallet approval verification in [`docs/PUBLIC_TESTNET_RELEASE_APPROVALS.md`](docs/PUBLIC_TESTNET_RELEASE_APPROVALS.md)
 - Same-process approval, reconciliation, live-provider, and runtime activation in [`docs/PUBLIC_TESTNET_RELEASE_ACTIVATION.md`](docs/PUBLIC_TESTNET_RELEASE_ACTIVATION.md)
 - Private old-release custody, restored-host readiness, witnessed old/new recovery drills, and fail-closed rotation decisions in [`docs/RETAINED_RELEASE_CUSTODY.md`](docs/RETAINED_RELEASE_CUSTODY.md)
+- Reviewed one-use recovery operator composition with recovery-only evidence controls in [`docs/RECOVERY_OPERATOR_ENTRYPOINT.md`](docs/RECOVERY_OPERATOR_ENTRYPOINT.md)
 - Immutable public-testnet operator campaign snapshots via `npm run manage:testnet-campaign`
 - Authenticated solver request/response boundary in [`docs/SOLVER_ENDPOINT.md`](docs/SOLVER_ENDPOINT.md)
 - Concrete two-route active-daemon evidence client and provider replay boundary in [`docs/SOLVER_DAEMON_EVIDENCE_CLIENT.md`](docs/SOLVER_DAEMON_EVIDENCE_CLIENT.md)
@@ -98,7 +99,7 @@ Start with the ordered [TreeSwap adoption handoff](docs/ADOPTION_HANDOFF.md). It
 - Repeat the passing EVM outbox/reorg campaigns on public testnet using two independently operated authenticated providers and genuine finality transitions
 - Obtain matching signed observations from two genuinely independent authenticated Ethereum providers, complete the two-role BIT review with retained reports, and derive the short-lived reviewed BIT manifest
 - Independently rebuild and review the closed Sepolia plan, deploy its exact transactions through hardware-backed operators, and capture matching finalized v2 TreeSwap manifests proving reconciled zero balances before test inventory
-- Integrate the packaged same-process recovery bootstrap with deployed retained-custody inspection and concrete runtime adapters, then qualify the bounded solver daemon and restart-only recovery loop from its exact restored-database job set with continuous safety monitoring, backup/restore drills, redundant guardian delivery, and external alert routing
+- Deploy the reviewed same-process recovery operator launcher with real retained custody, concrete runtime adapters, persistent storage, and independently operated providers; then qualify its exact restored-database job set through host-restart, backup/restore, safety-monitoring, redundant-guardian, and external-alert drills
 - Deploy the persistent activation coordinator with independently operated runtime reconciliation signers; never restore funding authority from serialized activation output
 - Deploy the implemented solver endpoint, private-packet, capacity-reader, and dual-route daemon-evidence protocols plus independent quote-delivery paths
 - Create and mature the BIT/WBTC pool in observation-only mode, then independently review its exact pool/feed/quoter policy and the other executable BIT venues before it can help bound funded quotes
