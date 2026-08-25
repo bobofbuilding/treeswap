@@ -72,6 +72,8 @@ The caller supplies one runtime/evidence-policy/fresh-capability tuple for every
 
 This removes a dynamic recovery work queue from the design. A deployed recovery process must rebuild custody/readiness and this fixed job set locally after every restart; it must never restore the proof from JSON or accept jobs over a network. If the database changes before the loop starts, operators must make a fresh backup/readiness decision rather than reuse the stale set.
 
+The packaged recovery-execution supervisor is the required lifecycle wrapper around that same-process result. It refreshes recovery verification and private aggregate health independently of action cycles, fails closed on refresh, heartbeat, lease, or publication failure, and reports EVM recovery separately from Lightning dispatch and funding. Every action report and successful cycle commitment binds the same release ID, verified release-record digest, and one-use job-set digest, so status from another retained release or startup set cannot satisfy health. A requested or failure shutdown first revokes recovery activation and the cycle fence, then waits until any in-flight read returns and the uncopyable job-set lease is released. Only after that promise resolves may an operator-specific entrypoint close the restored store or release the filesystem service lease. The default container refuses execution mode because a configuration value cannot replace the custody inspection, restored-host proof, fresh solver authorities, or concrete provider/runtime construction.
+
 ## Witnessed old/new drill
 
 `buildRetainedReleaseRecoveryDrillApproval` derives the exact EIP-712 statement for an actual recovery action. The statement binds:
