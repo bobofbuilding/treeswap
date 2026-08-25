@@ -90,6 +90,9 @@ test("atomically binds one private settlement to its nonce, payment hash, quote 
       evmTransactionStates: {},
       reconciliationRequired: 0,
     });
+    const nonterminal = store.listNonterminalSettlements();
+    assert.equal(Object.isFrozen(nonterminal), true);
+    assert.deepEqual(nonterminal.map(({ settlementId }) => settlementId), [value.settlementId]);
     assert.equal(store.secretFreeEvents().length, 1);
   } finally {
     store.close();
@@ -147,6 +150,7 @@ test("persists reservation and outbox action before exactly one dispatch, then p
       recordedAt: NOW + 40,
     });
     assert.equal(terminal.terminalState, "COMPLETED");
+    assert.deepEqual(store.listNonterminalSettlements(), []);
     assert.equal(store.recordTerminal({
       settlementId: value.settlementId,
       terminalState: "COMPLETED",

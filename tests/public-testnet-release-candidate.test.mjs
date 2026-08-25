@@ -101,6 +101,7 @@ import {
   assessRetainedReleaseRotation,
   buildRetainedReleaseRecoveryDrillApproval,
   inspectRetainedReleaseCustody,
+  prepareRetainedReleaseRecoveryJobSet,
   verifyRetainedReleaseRecoveryDrill,
   verifyRetainedReleaseRecoveryReadiness,
 } from "../lib/release-retention-custody.mjs";
@@ -1223,6 +1224,231 @@ test("activates funding only after same-process evidence, approvals, reconciliat
         newDrills: [newDrill],
         now: now + 3,
       }), /packages must be distinct/);
+
+      const loopSupervisor = Object.freeze({
+        status: () => Object.freeze({ state: "active" }),
+        useActiveActivation: (callback) => callback(Object.freeze({
+          activation: retentionRecoveryActivation,
+        })),
+      });
+      const prepareJobSet = (runtime) => prepareRetainedReleaseRecoveryJobSet({
+        readinessVerification: newReadiness,
+        restoredStore,
+        executionPolicies: [{
+          evidencePolicy,
+          solverCapabilityVerification: rotatedRecoverySolverCapability.verification,
+          runtime,
+        }],
+        now: now + 3,
+      });
+      assert.throws(() => prepareRetainedReleaseRecoveryJobSet({
+        readinessVerification: newReadiness,
+        restoredStore,
+        executionPolicies: [],
+        now: now + 3,
+      }), /every and only retained execution policy/);
+      assert.throws(() => prepareRetainedReleaseRecoveryJobSet({
+        readinessVerification: newReadiness,
+        restoredStore,
+        executionPolicies: [{
+          evidencePolicy,
+          solverCapabilityVerification: structuredClone(rotatedRecoverySolverCapability.verification),
+          runtime: { packetClient: null, controls: {}, lightning: null, evm: null },
+        }],
+        now: now + 3,
+      }), /same-process authority/);
+      assert.throws(() => prepareRetainedReleaseRecoveryJobSet({
+        readinessVerification: newReadiness,
+        restoredStore: waitingStore,
+        executionPolicies: [{
+          evidencePolicy,
+          solverCapabilityVerification: rotatedRecoverySolverCapability.verification,
+          runtime: { packetClient: null, controls: {}, lightning: null, evm: null },
+        }],
+        now: now + 3,
+      }), /exact restored coordinator store/);
+
+      const inactiveJobSet = prepareJobSet({
+        packetClient: null,
+        controls: {},
+        lightning: null,
+        evm: null,
+      });
+      assert.equal(inactiveJobSet.jobCount, 1);
+      assert.equal(inactiveJobSet.authorizations.lightningDispatch, false);
+      assert.equal(JSON.stringify(inactiveJobSet).includes(wrapperSettlementId), false);
+      assert.throws(() => createCoordinatorRecoveryActionLoop({
+        recoverySupervisor: loopSupervisor,
+        serviceLease,
+        store: restoredStore,
+        intervalSeconds: 5,
+        jobSetVerification: structuredClone(inactiveJobSet),
+      }), /job-set provenance/);
+      restoredStore.listNonterminalSettlements = () => [];
+      assert.throws(() => createCoordinatorRecoveryActionLoop({
+        recoverySupervisor: loopSupervisor,
+        serviceLease,
+        store: restoredStore,
+        intervalSeconds: 5,
+        jobSetVerification: inactiveJobSet,
+      }), /unmodified settlement inspection/);
+      delete restoredStore.listNonterminalSettlements;
+      const inactiveLoop = createCoordinatorRecoveryActionLoop({
+        recoverySupervisor: {
+          status: () => ({ state: "inactive", providerSecret: "must-not-escape" }),
+          useActiveActivation: () => { throw new Error("inactive supervisor exposed activation"); },
+        },
+        serviceLease,
+        store: restoredStore,
+        intervalSeconds: 5,
+        jobSetVerification: inactiveJobSet,
+      });
+      const inactiveCycle = await inactiveLoop.runCycle();
+      assert.equal(inactiveCycle.state, "inactive");
+      assert.equal(inactiveCycle.counts.attempted, 0);
+      assert.equal(JSON.stringify(inactiveCycle).includes("must-not-escape"), false);
+      assert.throws(() => createCoordinatorRecoveryActionLoop({
+        recoverySupervisor: loopSupervisor,
+        serviceLease,
+        store: restoredStore,
+        intervalSeconds: 5,
+        jobSetVerification: inactiveJobSet,
+      }), /already consumed/);
+      assert.equal(inactiveLoop.stop(), true);
+
+      let releaseLateObservation;
+      let markObservationStarted;
+      const observationStarted = new Promise((resolve) => { markObservationStarted = resolve; });
+      const lateObservation = new Promise((resolve) => { releaseLateObservation = resolve; });
+      const mutableControls = {
+        observeReservation: async () => {
+          markObservationStarted();
+          return lateObservation;
+        },
+      };
+      const cancellingJobSet = prepareJobSet({
+        packetClient: null,
+        controls: mutableControls,
+        lightning: null,
+        evm: null,
+      });
+      mutableControls.observeReservation = async () => {
+        throw new Error("post-verification runtime mutation must not run");
+      };
+      const cancellingLoop = createCoordinatorRecoveryActionLoop({
+        recoverySupervisor: loopSupervisor,
+        serviceLease,
+        store: restoredStore,
+        intervalSeconds: 5,
+        jobSetVerification: cancellingJobSet,
+      });
+      const whileStoppingJobSet = prepareJobSet({
+        packetClient: null,
+        controls: {},
+        lightning: null,
+        evm: null,
+      });
+      const cancelledCycle = cancellingLoop.runCycle();
+      await observationStarted;
+      assert.equal(cancellingLoop.stop(), true);
+      assert.throws(() => createCoordinatorRecoveryActionLoop({
+        recoverySupervisor: loopSupervisor,
+        serviceLease,
+        store: restoredStore,
+        intervalSeconds: 5,
+        jobSetVerification: whileStoppingJobSet,
+      }), /already has an active recovery action loop/);
+      releaseLateObservation(Object.freeze({ untrustedLateEvidence: true }));
+      assert.equal((await cancelledCycle).state, "stopped");
+      assert.equal(restoredStore.getSettlement(wrapperSettlementId).reservationId, null);
+
+      const activeJobSet = prepareJobSet({
+        packetClient: null,
+        controls: {},
+        lightning: null,
+        evm: null,
+      });
+      const staleAfterProgressJobSet = prepareJobSet({
+        packetClient: null,
+        controls: {},
+        lightning: null,
+        evm: null,
+      });
+      const concurrentJobSet = prepareJobSet({
+        packetClient: null,
+        controls: {},
+        lightning: null,
+        evm: null,
+      });
+      const recoveryActionLoop = createCoordinatorRecoveryActionLoop({
+        recoverySupervisor: loopSupervisor,
+        serviceLease,
+        store: restoredStore,
+        intervalSeconds: 5,
+        jobSetVerification: activeJobSet,
+      });
+      assert.throws(() => createCoordinatorRecoveryActionLoop({
+        recoverySupervisor: loopSupervisor,
+        serviceLease,
+        store: restoredStore,
+        intervalSeconds: 5,
+        jobSetVerification: concurrentJobSet,
+      }), /already has an active recovery action loop/);
+      const waitingCycle = await recoveryActionLoop.runCycle();
+      assert.equal(waitingCycle.state, "active");
+      assert.deepEqual(waitingCycle.counts, {
+        attempted: 1,
+        advanced: 0,
+        waiting: 1,
+        gateClosed: 0,
+        done: 0,
+        halted: 0,
+      });
+      assert.equal(JSON.stringify(waitingCycle).includes(wrapperSettlementId), false);
+      restoredStore.recordReservation({
+        settlementId: wrapperSettlementId,
+        reservationId: id("restored wrapper reservation").toLowerCase(),
+        reservationTxHash: id("restored wrapper reservation transaction").toLowerCase(),
+        reservationBlockNumber: 100,
+        reservationBlockHash: id("restored wrapper reservation block").toLowerCase(),
+        reservationIntentDigest: waitingSettlement.intentDigest,
+        observedAt: now + 3,
+      });
+      assert.throws(() => createCoordinatorRecoveryActionLoop({
+        recoverySupervisor: loopSupervisor,
+        serviceLease,
+        store: restoredStore,
+        intervalSeconds: 5,
+        jobSetVerification: staleAfterProgressJobSet,
+      }), /liabilities changed/);
+      const unplannedCycle = await recoveryActionLoop.runCycle();
+      assert.equal(unplannedCycle.state, "active");
+      assert.equal(unplannedCycle.counts.gateClosed, 1);
+      assert.equal(unplannedCycle.counts.advanced, 0);
+      restoredStore.planAction({
+        actionId: id("restored wrapper pending Lightning action").toLowerCase(),
+        settlementId: wrapperSettlementId,
+        method: "/invoicesrpc.Invoices/SettleInvoice",
+        requestId: id("restored wrapper action request").toLowerCase(),
+        payloadDigest: id("restored wrapper action payload").toLowerCase(),
+        intentDigest: waitingSettlement.intentDigest,
+        paymentHash: waitingSettlement.paymentHash,
+        invoiceDigest: waitingSettlement.invoiceDigest,
+        amountSats: waitingSettlement.amountSats,
+        capacityEpoch: waitingSettlement.capacityEpoch,
+        plannedAt: now + 3,
+      });
+      const pendingCycle = await recoveryActionLoop.runCycle();
+      assert.equal(pendingCycle.counts.gateClosed, 1);
+      assert.deepEqual(pendingCycle.authorizations, {
+        funding: false,
+        lightningDispatch: false,
+        newExposure: false,
+      });
+      assert.equal(recoveryActionLoop.stop(), true);
+      assert.equal(recoveryActionLoop.stop(), false);
+      assert.equal(recoveryActionLoop.status().state, "stopped");
+      await assert.rejects(recoveryActionLoop.runCycle(), /is stopped/);
     } finally {
       restoredStore.close();
     }
@@ -1276,65 +1502,6 @@ test("activates funding only after same-process evidence, approvals, reconciliat
       store: waitingStore,
       settlementId: wrapperSettlementId,
     }), /original same-process execution fence/);
-    const loopSupervisor = Object.freeze({
-      status: () => Object.freeze({ state: "active" }),
-      useActiveActivation: (callback) => callback(Object.freeze({ activation: recoveryActivation })),
-    });
-    let releaseLateObservation;
-    let markObservationStarted;
-    const observationStarted = new Promise((resolve) => { markObservationStarted = resolve; });
-    const lateObservation = new Promise((resolve) => { releaseLateObservation = resolve; });
-    const cancellingLoop = createCoordinatorRecoveryActionLoop({
-      recoverySupervisor: loopSupervisor,
-      serviceLease,
-      store: waitingStore,
-      intervalSeconds: 5,
-      jobs: [{
-        settlementId: wrapperSettlementId,
-        solverCapabilityVerification: rotatedRecoverySolverCapability.verification,
-        evidencePolicy,
-        runtime: {
-          packetClient: null,
-          controls: {
-            observeReservation: async () => {
-              markObservationStarted();
-              return lateObservation;
-            },
-          },
-          lightning: null,
-          evm: null,
-        },
-      }],
-    });
-    const cancelledCycle = cancellingLoop.runCycle();
-    await observationStarted;
-    assert.equal(cancellingLoop.stop(), true);
-    releaseLateObservation(Object.freeze({ untrustedLateEvidence: true }));
-    assert.equal((await cancelledCycle).state, "stopped");
-    assert.equal(waitingStore.getSettlement(wrapperSettlementId).reservationId, null);
-    const recoveryActionLoop = createCoordinatorRecoveryActionLoop({
-      recoverySupervisor: loopSupervisor,
-      serviceLease,
-      store: waitingStore,
-      intervalSeconds: 5,
-      jobs: [{
-        settlementId: wrapperSettlementId,
-        solverCapabilityVerification: rotatedRecoverySolverCapability.verification,
-        evidencePolicy,
-        runtime: { packetClient: null, controls: {}, lightning: null, evm: null },
-      }],
-    });
-    const waitingCycle = await recoveryActionLoop.runCycle();
-    assert.equal(waitingCycle.state, "active");
-    assert.deepEqual(waitingCycle.counts, {
-      attempted: 1,
-      advanced: 0,
-      waiting: 1,
-      gateClosed: 0,
-      done: 0,
-      halted: 0,
-    });
-    assert.equal(JSON.stringify(waitingCycle).includes(wrapperSettlementId), false);
     waitingStore.recordReservation({
       settlementId: wrapperSettlementId,
       reservationId: id("active wrapper reservation").toLowerCase(),
@@ -1344,10 +1511,6 @@ test("activates funding only after same-process evidence, approvals, reconciliat
       reservationIntentDigest: waitingSettlement.intentDigest,
       observedAt: now + 3,
     });
-    const unplannedCycle = await recoveryActionLoop.runCycle();
-    assert.equal(unplannedCycle.state, "active");
-    assert.equal(unplannedCycle.counts.gateClosed, 1);
-    assert.equal(unplannedCycle.counts.advanced, 0);
     waitingStore.planAction({
       actionId: id("active wrapper pending Lightning action").toLowerCase(),
       settlementId: wrapperSettlementId,
@@ -1373,17 +1536,6 @@ test("activates funding only after same-process evidence, approvals, reconciliat
       outcome: "GATE_CLOSED",
       reason: "recovery-only daemon context cannot plan or dispatch a Lightning action or open new exposure",
     });
-    const pendingCycle = await recoveryActionLoop.runCycle();
-    assert.equal(pendingCycle.counts.gateClosed, 1);
-    assert.deepEqual(pendingCycle.authorizations, {
-      funding: false,
-      lightningDispatch: false,
-      newExposure: false,
-    });
-    assert.equal(recoveryActionLoop.stop(), true);
-    assert.equal(recoveryActionLoop.stop(), false);
-    assert.equal(recoveryActionLoop.status().state, "stopped");
-    await assert.rejects(recoveryActionLoop.runCycle(), /is stopped/);
     Date.now = () => solverBinding.expiresAt * 1_000;
     const closed = await executeActiveSolverDaemonStep({
       executionContext,

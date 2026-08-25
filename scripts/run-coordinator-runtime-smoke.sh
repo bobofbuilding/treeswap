@@ -14,13 +14,21 @@ docker run --rm --read-only \
   --test --test-concurrency=1 \
     tests/admission-store.test.mjs tests/coordinator-store.test.mjs tests/coordinator-service-state.test.mjs \
     tests/coordinator-release-supervisor.test.mjs tests/coordinator-recovery-supervisor.test.mjs \
-    tests/coordinator-recovery-action-loop.test.mjs \
+    tests/coordinator-recovery-job.test.mjs tests/coordinator-recovery-action-loop.test.mjs \
     tests/release-retention-custody.test.mjs \
     tests/coordinator-action-runner.test.mjs tests/evm-action-runner.test.mjs \
     tests/deployment-observer.test.mjs tests/deployment-policy.test.mjs \
     tests/safety-monitor.test.mjs tests/solver-capability.test.mjs \
     tests/solver-daemon-planner.test.mjs tests/solver-daemon-evidence.test.mjs tests/solver-daemon-runtime.test.mjs \
     tests/solver-endpoint-transport.test.mjs tests/solver-private-packet.test.mjs
+docker run --rm --read-only \
+  --tmpfs /tmp:rw,noexec,nosuid,size=64m \
+  --mount type=bind,src="$project_root/tests",dst=/app/tests,readonly \
+  --entrypoint node \
+  "$runtime_image" \
+  --test --test-concurrency=1 \
+  --test-name-pattern='activates funding only after same-process evidence, approvals, reconciliation, and live RPC quorum checks' \
+    tests/public-testnet-release-candidate.test.mjs
 docker run --rm --read-only \
   --tmpfs /tmp:rw,noexec,nosuid,size=64m \
   --tmpfs /data:rw,noexec,nosuid,size=512k,mode=0700,uid=1000,gid=1000 \
