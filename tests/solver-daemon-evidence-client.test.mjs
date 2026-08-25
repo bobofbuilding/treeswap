@@ -494,3 +494,168 @@ test("rejects unsupported terminal requests, expired evidence, and route timeout
     /transport failed/,
   );
 });
+
+test("snapshots exact client and provider data once without invoking accessors", async () => {
+  const evidencePolicy = policy();
+  const baseControls = {
+    policy: evidencePolicy,
+    routes: {
+      lightningOperator: "https://lightning-approver.internal",
+      securityReviewer: "https://security-approver.internal",
+    },
+    requesterPrivateKey: REQUESTER_PRIVATE_KEY,
+    requesterKeyId: REQUESTER_KEY_ID,
+  };
+  let getterCalls = 0;
+  const accessorControls = { ...baseControls };
+  Object.defineProperty(accessorControls, "policy", {
+    configurable: true,
+    enumerable: true,
+    get() {
+      getterCalls += 1;
+      return evidencePolicy;
+    },
+  });
+  assert.throws(
+    () => createSolverDaemonEvidenceControls(accessorControls),
+    /enumerable data properties/,
+  );
+  assert.equal(getterCalls, 0);
+
+  const symbolControls = { ...baseControls, [Symbol("hidden controls")]: true };
+  assert.throws(
+    () => createSolverDaemonEvidenceControls(symbolControls),
+    /exact data properties/,
+  );
+
+  const accessorPolicy = policy();
+  Object.defineProperty(accessorPolicy.approvers, "securityReviewer", {
+    configurable: true,
+    enumerable: true,
+    get() {
+      getterCalls += 1;
+      return SECURITY_REVIEWER.address;
+    },
+  });
+  assert.throws(() => createSolverDaemonEvidenceControls({
+    ...baseControls,
+    policy: accessorPolicy,
+  }), /enumerable data property/);
+  assert.equal(getterCalls, 0);
+
+  const prototypePolicy = policy();
+  Object.defineProperty(prototypePolicy, "__proto__", {
+    configurable: true,
+    enumerable: true,
+    writable: true,
+    value: { solver: WRONG_SIGNER.address },
+  });
+  assert.throws(() => createSolverDaemonEvidenceControls({
+    ...baseControls,
+    policy: prototypePolicy,
+  }), /fields are not exact/);
+  assert.equal(Object.prototype.solver, undefined);
+
+  const requestInput = {
+    kind: "RESERVATION",
+    policy: evidencePolicy,
+    settlement: settlement("bit-to-lightning", { observed: false }),
+    requestId: hash("accessor request"),
+    requesterKeyId: REQUESTER_KEY_ID,
+    requestedAt: NOW,
+    expiresAt: NOW + 15,
+  };
+  Object.defineProperty(requestInput.settlement, "intentDigest", {
+    configurable: true,
+    enumerable: true,
+    get() {
+      getterCalls += 1;
+      return hash("accessor intent");
+    },
+  });
+  assert.throws(
+    () => buildSolverDaemonEvidenceRequest(requestInput),
+    /enumerable data property/,
+  );
+  assert.equal(getterCalls, 0);
+
+  const controls = controlsWithHarness(routeHarness({ evidencePolicy }), evidencePolicy);
+  const controlInput = {
+    settlement: settlement(),
+    expectedTerminal: "COMPLETED",
+  };
+  Object.defineProperty(controlInput, "settlement", {
+    configurable: true,
+    enumerable: true,
+    get() {
+      getterCalls += 1;
+      return settlement();
+    },
+  });
+  assert.throws(() => controls.verifyAssets(controlInput), /enumerable data properties/);
+  assert.equal(getterCalls, 0);
+
+  const request = buildSolverDaemonEvidenceRequest({
+    kind: "TERMINAL_COMPLETED",
+    policy: evidencePolicy,
+    settlement: settlement(),
+    terminalState: "COMPLETED",
+    requestId: hash("provider exact data request"),
+    requesterKeyId: REQUESTER_KEY_ID,
+    requestedAt: NOW,
+    expiresAt: NOW + 15,
+  });
+  const requestEnvelope = signSolverDaemonEvidenceRequest(request, REQUESTER_PRIVATE_KEY);
+  const accessorRecord = recordForRequest(request);
+  const accessorApproval = await approvalFor(accessorRecord, "lightningOperator", evidencePolicy);
+  Object.defineProperty(accessorRecord, "proofDigest", {
+    configurable: true,
+    enumerable: true,
+    get() {
+      getterCalls += 1;
+      return hash("provider accessor proof");
+    },
+  });
+  let consumeCalls = 0;
+  await assert.rejects(buildSolverDaemonEvidenceRouteResponse({
+    requestEnvelope,
+    requesterPublicKey: REQUESTER_PUBLIC_KEY,
+    expectedRequesterKeyId: REQUESTER_KEY_ID,
+    consumeRequest: async () => {
+      consumeCalls += 1;
+      return true;
+    },
+    record: accessorRecord,
+    policy: evidencePolicy,
+    approval: accessorApproval,
+    now: NOW + 1,
+  }), /enumerable data property/);
+  assert.equal(getterCalls, 0);
+  assert.equal(consumeCalls, 0);
+
+  const mutableRecord = recordForRequest(request);
+  const originalProofDigest = mutableRecord.proofDigest;
+  const mutableApproval = await approvalFor(
+    mutableRecord,
+    "lightningOperator",
+    evidencePolicy,
+  );
+  const response = await buildSolverDaemonEvidenceRouteResponse({
+    requestEnvelope,
+    requesterPublicKey: REQUESTER_PUBLIC_KEY,
+    expectedRequesterKeyId: REQUESTER_KEY_ID,
+    consumeRequest: async () => {
+      mutableRecord.proofDigest = hash("mutated after validation");
+      mutableApproval.role = "securityReviewer";
+      return true;
+    },
+    record: mutableRecord,
+    policy: evidencePolicy,
+    approval: mutableApproval,
+    now: NOW + 1,
+  });
+  assert.equal(response.record.proofDigest, originalProofDigest);
+  assert.equal(response.approval.role, "lightningOperator");
+  assert.equal(Object.isFrozen(response.record), true);
+  assert.equal(Object.isFrozen(response.approval), true);
+});

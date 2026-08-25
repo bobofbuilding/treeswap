@@ -23,6 +23,12 @@ Snapshotting preserves prototype-named properties as ordinary own data, so an
 extra `__proto__` field reaches exact-schema validation and rejects instead of
 being silently reinterpreted as an object prototype.
 
+The matching client-side route builder accepts only exact data records and
+snapshots its request, policy, record, and approval once before replay
+consumption. It validates and returns those same frozen snapshots. Property
+getters are not invoked, and mutation by the caller while the replay claim is
+being consumed cannot change the response that was already validated.
+
 The provider has no pricing, quote-selection, inventory, Lightning payment,
 EVM broadcast, release-gate, or funding authority. TreeSwap settlement remains
 Lightning/BIT only. A future BIT/WBTC market may inform the separately reviewed

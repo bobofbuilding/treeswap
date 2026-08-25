@@ -51,6 +51,19 @@ For each control call, the client:
 
 One missing, late, malformed, cacheable, redirected, disagreeing, copied, wrongly signed, or wrong-role response fails the control. There is no one-route fallback.
 
+Every authority-bearing client, control-call, request, policy, record, and
+approval input must be an exact own-enumerable data record or an undecorated
+dense array. The boundary snapshots each bounded input once without invoking
+property getters and validates, signs, replay-consumes, and returns those same
+snapshots. A provider caller therefore cannot change the returned signed record
+or approval while replay consumption is in progress. Symbols, hidden fields,
+accessors, sparse or decorated arrays, unsafe integers, unsupported values,
+excessive nesting, and unknown fields reject. An own `__proto__` field remains
+an ordinary own field so the downstream exact schema rejects it instead of a
+clone silently dropping it. This protects the in-process data handoff; it does
+not establish that a proxy's traps or a provider's underlying observation are
+honest.
+
 ## Provider requirement
 
 Each route must independently authenticate the request, derive the requested
@@ -60,6 +73,9 @@ record with only its assigned release key. The concrete
 only the repository's provenance-bound evidence reader and
 `SolverDaemonEvidenceReplayStore`. It claims `(requesterKeyId, requestId)`
 atomically before reading or signing and consumes the claim before responding.
+A route response snapshots the request, record, policy, and approval before
+replay consumption, validates the exact snapshots, and returns those same
+frozen values after successful consumption.
 A duplicate, concurrent request, storage failure, copied reader/store, policy
 mismatch, or expired response fails closed. The strict SQLite store must be
 initialized explicitly once; normal startup refuses a missing or empty ledger.
