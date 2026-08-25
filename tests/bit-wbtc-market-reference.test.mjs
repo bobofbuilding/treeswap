@@ -17,6 +17,7 @@ import {
   sqrtRatioX96AtTick,
 } from "../lib/bit-wbtc-market-reference.mjs";
 import { EIP1967_IMPLEMENTATION_SLOT } from "../lib/bit-deployment-observer.mjs";
+import { evaluateBitRisk } from "../lib/risk-policy.mjs";
 
 const NOW = 2_000_000_000n;
 const BIT = 10n ** 18n;
@@ -457,4 +458,160 @@ test("does not let WBTC/BTC feed conversion masquerade as another BIT venue", ()
   assert.equal(result.priceSignal.executableDepthSats, 99n);
   assert.equal(result.evidence.providerCount, 2);
   assert.equal("secondaryPriceSource" in result.evidence, false);
+});
+
+test("rejects missing pool evidence and never lets one future pool satisfy market quorum", () => {
+  assert.throws(() => buildBitWbtcPoolPriceSignal({
+    policy,
+    request,
+    observations: [],
+  }), /minimum provider count/);
+  assert.throws(() => buildBitWbtcPoolPriceSignal({
+    policy: { ...policy, poolAddress: "0x0000000000000000000000000000000000000000" },
+    request,
+    observations: [observation(1), observation(2)],
+  }), /poolAddress must be nonzero/);
+
+  const pool = buildBitWbtcPoolPriceSignal({
+    policy,
+    request,
+    observations: [observation(1), observation(2)],
+  });
+  const riskPolicy = {
+    allowedPriceSourcePolicyDigests: [pool.priceSignal.pricePolicyDigest],
+    baseFeeBpsBitToLightning: 72,
+    baseFeeBpsLightningToBit: 18,
+    chainId: 1,
+    decimals: 18,
+    expectedImplementation: policy.bitImplementation,
+    expectedImplementationCodeHash: policy.bitImplementationCodeHash,
+    expectedProxyCodeHash: policy.bitProxyCodeHash,
+    maxEpochBitWei: 1_000n * BIT,
+    maxFeeBps: 300,
+    maxFinalityLagBlocks: 80,
+    maxMarketDeviationBps: 1_000,
+    maxPriceAgeSeconds: 30,
+    maxSignalSpreadBps: 300,
+    maxSnapshotAgeSeconds: 30,
+    maxSwapBitWei: 10n * BIT,
+    minPriceSources: 3,
+    proxyAddress: BIT_TOKEN_ADDRESS,
+    referenceSatsPerBit: 100,
+    reserveFloorBps: 2_500,
+    scarcityStartsBps: 6_000,
+  };
+  const snapshot = {
+    availableBitWei: 100n * BIT,
+    availableLightningSats: 10_000n,
+    bitCapacityWei: 100n * BIT,
+    chainId: 1,
+    decimals: 18,
+    epochBitVolumeWei: 0,
+    finalizedBlock: 20_000_000,
+    implementation: policy.bitImplementation,
+    implementationCodeHash: policy.bitImplementationCodeHash,
+    latestBlock: 20_000_030,
+    lightningCapacitySats: 10_000n,
+    observedAt: NOW - 1n,
+    paused: false,
+    proxyAddress: BIT_TOKEN_ADDRESS,
+    proxyCodeHash: policy.bitProxyCodeHash,
+  };
+  const evaluation = evaluateBitRisk({
+    policy: riskPolicy,
+    snapshot,
+    priceSignals: [pool.priceSignal],
+    request: {
+      bitWei: request.bitWei,
+      direction: request.direction,
+      lightningSats: request.lightningSats,
+      now: request.now,
+    },
+  });
+  assert.equal(evaluation.enabled, false);
+  assert.deepEqual(evaluation.qualifiedPriceSources, [pool.priceSignal.source]);
+  assert.match(evaluation.reasons.join("; "), /insufficient fresh executable price sources/);
+});
+
+test("accepts only exact immutable market-reference data without invoking accessors or coercion hooks", () => {
+  const signed = [observation(1), observation(2)];
+  let accessorReads = 0;
+  const accessorPolicy = { ...policy };
+  Object.defineProperty(accessorPolicy, "maximumSpotTwapDeviationBps", {
+    enumerable: true,
+    get() {
+      accessorReads += 1;
+      return policy.maximumSpotTwapDeviationBps;
+    },
+  });
+  assert.throws(() => buildBitWbtcPoolPriceSignal({
+    policy: accessorPolicy,
+    request,
+    observations: signed,
+  }), /enumerable data properties/);
+  assert.equal(accessorReads, 0);
+
+  const accessorObservation = { ...signed[0] };
+  Object.defineProperty(accessorObservation, "spotTick", {
+    enumerable: true,
+    get() {
+      accessorReads += 1;
+      return 368_400;
+    },
+  });
+  assert.throws(() => buildBitWbtcPoolPriceSignal({
+    policy,
+    request,
+    observations: [accessorObservation, signed[1]],
+  }), /enumerable data properties/);
+  assert.equal(accessorReads, 0);
+
+  let coercionCalls = 0;
+  const coercibleNow = {
+    valueOf() {
+      coercionCalls += 1;
+      return NOW;
+    },
+  };
+  assert.throws(() => buildBitWbtcPoolPriceSignal({
+    policy,
+    request: { ...request, now: coercibleNow },
+    observations: signed,
+  }), /integer data value/);
+  assert.equal(coercionCalls, 0);
+
+  const sparse = new Array(2);
+  sparse[0] = signed[0];
+  assert.throws(() => buildBitWbtcPoolPriceSignal({
+    policy,
+    request,
+    observations: sparse,
+  }), /dense/);
+
+  const symbolInput = { policy, request, observations: signed };
+  symbolInput[Symbol("hidden-authority")] = true;
+  assert.throws(() => buildBitWbtcPoolPriceSignal(symbolInput), /exact data properties/);
+});
+
+test("snapshots mutable pool inputs before deriving evidence", () => {
+  const mutablePolicy = { ...policy, providers: policy.providers.map((provider) => ({ ...provider })) };
+  const mutableRequest = { ...request };
+  const mutableObservations = [observation(1), observation(2)].map((entry) => ({
+    ...entry,
+    probe: { ...entry.probe },
+  }));
+  const result = buildBitWbtcPoolPriceSignal({
+    policy: mutablePolicy,
+    request: mutableRequest,
+    observations: mutableObservations,
+  });
+  const originalDigest = result.evidence.evidenceDigest;
+  mutablePolicy.poolAddress = "0x9999999999999999999999999999999999999999";
+  mutablePolicy.providers[0].providerId = "changed-provider";
+  mutableRequest.lightningSats = 999;
+  mutableObservations[0].probe.amountWbtcAtomic = 999;
+  assert.equal(result.evidence.evidenceDigest, originalDigest);
+  assert.equal(result.evidence.priceMsatPerBit, 100_000n);
+  assert.equal(result.priceSignal.executableDepthSats, 100n);
+  assert.equal(isVerifiedBitWbtcPoolPriceSignal(result.priceSignal, request), true);
 });

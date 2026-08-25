@@ -30,6 +30,7 @@ WBTC atomic units have the same `10^-8` scale as bitcoin satoshis. The separatel
 One pool signal is eligible only when all of these hold:
 
 - the policy, provider observation, and exact request use the supported versioned schemas; unknown or unversioned formats fail closed before signature or price evaluation;
+- the complete verifier call, policy, provider roster, dense observation set, exact request, and nested executable probe are plain own-enumerable data records with no accessors, hidden or symbolic fields, inherited authority, sparse entries, extra array properties, or object-to-integer coercion; the verifier snapshots them before validation, signing, hashing, or derivation;
 - the chain, canonical BIT proxy runtime, EIP-1967 implementation slot/address/runtime, `BIT` / `18` / `false` token state, canonical WBTC runtime and `WBTC` / `8` / `false` state, canonical Uniswap v3 factory/runtime, factory-returned pool, token ordering, fee tier, pool runtime and initialization transaction/time, quoter, and quoter runtime match a signed policy;
 - two or more separately governed provider organizations are pinned by signer and organization in the policy, EIP-712-sign the exact observation, and agree on the same recent finalized block and every raw pool, probe, and feed field;
 - finality lag and finalized-block age are inside policy;
@@ -54,6 +55,8 @@ Other venues cannot enter as arbitrary coordinator JSON. Each must produce a sho
 Solvers still choose their own exact amount and fee and compete to fill the user's intent. TreeSwap uses the market signals only as a circuit breaker and quote-band input. The actual swap's implied sats-per-net-BIT price must remain within the signed market-deviation ceiling around the independent median, so the fixed reference band and live market band cannot be exploited at opposite extremes. BIT → Lightning keeps the higher base fee because it consumes scarce outbound Lightning capacity.
 
 TreeSwap never silently falls back from an unavailable or unsafe market source to the 100-sat reference. Bootstrap testing may use operator-owned inventory under the separately signed tiny testnet caps, but the missing pool or missing independent venues keeps public funded execution closed.
+
+The repository tests this rollout state directly: an empty observation set cannot produce a signal, a zero-address placeholder cannot stand in for a pool, and one otherwise valid pool signal cannot satisfy the three-independent-source market quorum. Input mutation after verification cannot change the derived evidence or its module-private provenance.
 
 Any BIT pause, proxy-runtime change, implementation-slot change, implementation-runtime change, symbol change, or decimal change invalidates the pool policy and closes this source. Any WBTC runtime, symbol, decimal, or pause-state change also closes the source. A new token boundary may contribute only after a new reviewed policy digest is signed and explicitly allowlisted by a later release.
 
