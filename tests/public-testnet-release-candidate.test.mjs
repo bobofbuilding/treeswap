@@ -845,6 +845,79 @@ test("activates funding only after same-process evidence, approvals, reconciliat
     evidencePolicy: { ...evidencePolicy, maxClockSkewSeconds: 31 },
     now,
   }), /clock skew|freshness exceeds/);
+  let outerPolicyReads = 0;
+  const accessorActiveContextInput = {
+    solverCapabilityVerification: solverCapability.verification,
+    deployment: activation.deployment,
+    capabilities: activation.capabilities,
+    evidencePolicy,
+    now,
+  };
+  Object.defineProperty(accessorActiveContextInput, "evidencePolicy", {
+    configurable: true,
+    enumerable: true,
+    get: () => {
+      outerPolicyReads += 1;
+      return evidencePolicy;
+    },
+  });
+  assert.throws(
+    () => createActiveSolverDaemonContext(accessorActiveContextInput),
+    /enumerable data properties/,
+  );
+  assert.equal(outerPolicyReads, 0);
+  assert.throws(() => createActiveSolverDaemonContext({
+    solverCapabilityVerification: solverCapability.verification,
+    deployment: activation.deployment,
+    capabilities: activation.capabilities,
+    evidencePolicy,
+    now,
+    [Symbol("hidden context authority")]: true,
+  }), /exact data properties/);
+  const hiddenPolicy = { ...evidencePolicy };
+  Object.defineProperty(hiddenPolicy, "hiddenAuthority", {
+    configurable: true,
+    enumerable: false,
+    value: candidate.recordDigest,
+  });
+  assert.throws(() => createActiveSolverDaemonContext({
+    solverCapabilityVerification: solverCapability.verification,
+    deployment: activation.deployment,
+    capabilities: activation.capabilities,
+    evidencePolicy: hiddenPolicy,
+    now,
+  }), /fields are not exact/);
+  const inheritedPolicy = Object.assign(
+    Object.create({ hiddenAuthority: candidate.recordDigest }),
+    evidencePolicy,
+  );
+  assert.throws(() => createActiveSolverDaemonContext({
+    solverCapabilityVerification: solverCapability.verification,
+    deployment: activation.deployment,
+    capabilities: activation.capabilities,
+    evidencePolicy: inheritedPolicy,
+    now,
+  }), /plain data object/);
+  let recoveryOuterPolicyReads = 0;
+  const accessorRecoveryContextInput = {
+    solverCapabilityVerification: rotatedRecoverySolverCapability.verification,
+    deployment: recoveryActivation.deployment,
+    evidencePolicy,
+    now,
+  };
+  Object.defineProperty(accessorRecoveryContextInput, "evidencePolicy", {
+    configurable: true,
+    enumerable: true,
+    get: () => {
+      recoveryOuterPolicyReads += 1;
+      return evidencePolicy;
+    },
+  });
+  assert.throws(
+    () => createRecoverySolverDaemonContext(accessorRecoveryContextInput),
+    /enumerable data properties/,
+  );
+  assert.equal(recoveryOuterPolicyReads, 0);
   let releaseDigestReads = 0;
   const changingPolicy = { ...evidencePolicy };
   Object.defineProperty(changingPolicy, "releaseRecordDigest", {
@@ -860,8 +933,61 @@ test("activates funding only after same-process evidence, approvals, reconciliat
     capabilities: activation.capabilities,
     evidencePolicy: changingPolicy,
     now,
-  }), /not bound to the active release and solver/);
-  assert.equal(releaseDigestReads, 1);
+  }), /enumerable data properties/);
+  assert.equal(releaseDigestReads, 0);
+  let approverReads = 0;
+  const accessorApproversPolicy = {
+    ...evidencePolicy,
+    approvers: { ...evidencePolicy.approvers },
+  };
+  Object.defineProperty(accessorApproversPolicy.approvers, "securityReviewer", {
+    configurable: true,
+    enumerable: true,
+    get: () => {
+      approverReads += 1;
+      return evidencePolicy.approvers.securityReviewer;
+    },
+  });
+  assert.throws(() => createActiveSolverDaemonContext({
+    solverCapabilityVerification: solverCapability.verification,
+    deployment: activation.deployment,
+    capabilities: activation.capabilities,
+    evidencePolicy: accessorApproversPolicy,
+    now,
+  }), /enumerable data properties/);
+  assert.equal(approverReads, 0);
+  const prototypePolicy = { ...evidencePolicy };
+  Object.defineProperty(prototypePolicy, "__proto__", {
+    configurable: true,
+    enumerable: true,
+    writable: true,
+    value: { solver: INCIDENT_COMMANDER.address },
+  });
+  assert.throws(() => createActiveSolverDaemonContext({
+    solverCapabilityVerification: solverCapability.verification,
+    deployment: activation.deployment,
+    capabilities: activation.capabilities,
+    evidencePolicy: prototypePolicy,
+    now,
+  }), /fields are not exact/);
+  assert.equal(Object.prototype.solver, undefined);
+  let scalarCoercions = 0;
+  assert.throws(() => createActiveSolverDaemonContext({
+    solverCapabilityVerification: solverCapability.verification,
+    deployment: activation.deployment,
+    capabilities: activation.capabilities,
+    evidencePolicy: {
+      ...evidencePolicy,
+      releaseRecordDigest: {
+        toString() {
+          scalarCoercions += 1;
+          return candidate.recordDigest;
+        },
+      },
+    },
+    now,
+  }), /must be a string/);
+  assert.equal(scalarCoercions, 0);
   assert.throws(
     () => verifiedActiveSolverDaemonContext(executionContext, {
       now: solverBinding.expiresAt,
