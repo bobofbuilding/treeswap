@@ -7,7 +7,7 @@ import {
 } from "../lib/operational-readiness-evidence.mjs";
 import { verifyServiceIsolationEvidence } from "../lib/service-isolation-evidence.mjs";
 
-const USAGE = "Usage: verify-operational-readiness-evidence --record record.json --policy policy.json --adoption-policy adoption-policy.json --attestations attestations.json --isolation-record isolation-record.json --isolation-policy isolation-policy.json --isolation-attestations isolation-attestations.json";
+const USAGE = "Usage: verify-operational-readiness-evidence --record record.json --policy policy.json --safety-monitor-policy safety-monitor-policy.json --adoption-policy adoption-policy.json --attestations attestations.json --isolation-record isolation-record.json --isolation-policy isolation-policy.json --isolation-attestations isolation-attestations.json";
 
 function argumentsFromCommandLine(values) {
   const allowed = new Set([
@@ -18,8 +18,9 @@ function argumentsFromCommandLine(values) {
     "--isolation-record",
     "--policy",
     "--record",
+    "--safety-monitor-policy",
   ]);
-  if (values.length !== 14) throw new Error(USAGE);
+  if (values.length !== 16) throw new Error(USAGE);
   const result = {};
   for (let index = 0; index < values.length; index += 2) {
     const flag = values[index];
@@ -31,9 +32,11 @@ function argumentsFromCommandLine(values) {
 }
 
 const args = argumentsFromCommandLine(process.argv.slice(2));
-const [record, policy, adoptionPolicy, attestations, isolationRecord, isolationPolicy, isolationAttestations] = await Promise.all([
+const [record, policy, safetyMonitorPolicy, adoptionPolicy, attestations, isolationRecord, isolationPolicy,
+  isolationAttestations] = await Promise.all([
   readBoundedJson(args["--record"], "operational readiness record"),
   readBoundedJson(args["--policy"], "operational readiness policy"),
+  readBoundedJson(args["--safety-monitor-policy"], "safety monitor policy"),
   readBoundedJson(args["--adoption-policy"], "adoption policy"),
   readBoundedJson(args["--attestations"], "operational readiness attestations"),
   readBoundedJson(args["--isolation-record"], "service isolation record"),
@@ -50,6 +53,7 @@ const verification = verifyOperationalReadinessEvidence({
   adoptionPolicy,
   record,
   policy,
+  safetyMonitorPolicy,
   attestations,
   serviceIsolationVerification,
 });

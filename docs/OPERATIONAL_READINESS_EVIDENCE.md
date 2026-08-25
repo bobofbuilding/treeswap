@@ -1,10 +1,10 @@
 # Operational readiness evidence
 
-Status: strict local evidence schema v3, exact public adoption policy, five-role EIP-712 attestation ceremony, verifier, operator CLIs, verified service-isolation dependency, and release-candidate binding implemented. No production operators, isolated deployment, alert channels, drill results, support service, or funding authority are supplied by the repository.
+Status: strict local evidence schema v4, exact public adoption policy, exact safety-monitor-policy binding, two isolated gate-confirmer assignments, five-role EIP-712 attestation ceremony, verifier, operator CLIs, verified service-isolation dependency, and release-candidate binding implemented. No production operators, isolated deployment, alert channels, drill results, support service, or funding authority are supplied by the repository.
 
 ## Purpose
 
-A release must not treat one opaque `incidentDrills`, `monitoring`, `backupRestore`, `lossAllocation`, or `supportPolicy` hash as proof that operations are complete. `lib/operational-readiness-evidence.mjs` requires one canonical package that exposes the required structure without disclosing operational secrets. Loss allocation, privacy retention, and support are derived from the complete exact [adoption policy](./ADOPTION_POLICY.md), rather than supplied as unexplained commitments.
+A release must not treat one opaque `incidentDrills`, `monitoring`, `backupRestore`, `lossAllocation`, or `supportPolicy` hash as proof that operations are complete. `lib/operational-readiness-evidence.mjs` requires one canonical package that exposes the required structure without disclosing operational secrets. Loss allocation, privacy retention, and support are derived from the complete exact [adoption policy](./ADOPTION_POLICY.md), rather than supplied as unexplained commitments. Schema v4 also revalidates the complete v4 [safety-monitor policy](./MONITORING.md), pins its digest into both the operations record and policy, and maps its two exact confirmer routes to the separately committed asset-verifier and EVM-finality-authorizer services. This operational policy is bound to the exact signed bootstrap/campaign record used as upstream evidence. Candidate preparation rejects any other record digest, then deterministically derives the final runtime policy by changing only that field to the newly computed release-record digest; this avoids a circular candidate hash while preserving every signed collector, route, gate, chain, and time bound.
 
 The package is bound to the exact public-testnet funding mode, chain, gate, source commit, protocol version, deployment manifest, preparation time, and validity window. It requires exactly one participant for each role:
 
@@ -33,7 +33,9 @@ The record contains distinct nonzero commitments for:
 - support and escalation policy; and
 - the exact independently reviewed test-qualification evidence digest.
 
-It also requires at least two canonically ordered alert-channel delivery digests. Every required drill has bounded start and finish times, one named primary operator, at least two distinct retained observers, passed status, and its own evidence digest. The exact drill set covers alert delivery, backup/restore, BIT implementation change, BIT pause, credential compromise, EVM finality rollback, provider disagreement, provider outage, gate halt with preserved exits, inventory mismatch, LND outage, monitoring outage, suspected preimage leakage, and price-source disagreement. For the current safety-policy version, the provider-disagreement, provider-outage, and gate-halt drills must retain evidence that broadcaster acceptance alone was rejected, both separately governed confirmation routes were attempted, only exact finalized-state agreement credited closure, confirmation failure did not suppress alerts, and existing exits remained available.
+The record additionally exposes two canonically ordered gate-confirmer bindings. Each binding carries the exact monitor route and operator commitments plus the service identity, trust domain, credential-set, network-policy, and deployment-evidence commitments from the live same-process service-isolation verification. The two service roles, routes, operators, credentials, services, and trust domains must remain distinct. A copied isolation summary, substituted route, guardian route presented as a confirmer, or invented service cannot pass.
+
+It also requires at least two canonically ordered alert-channel delivery digests. Every required drill has bounded start and finish times, one named primary operator, at least two distinct retained observers, passed status, and its own evidence digest. The exact drill set covers alert delivery, backup/restore, BIT implementation change, BIT pause, credential compromise, EVM finality rollback, provider disagreement, provider outage, gate halt with preserved exits, inventory mismatch, LND outage, monitoring outage, suspected preimage leakage, and price-source disagreement. The provider-disagreement, provider-outage, and gate-halt drills contain an exact signed control block—not merely prose—asserting that broadcaster acceptance alone was rejected, both separately governed confirmation routes were attempted, only exact finalized-state agreement credited closure, confirmation failure did not suppress alerts, and existing exits remained available. Each block binds the exact monitor-policy and confirmer-service digests. All other drills must use `null` rather than borrowing those claims. These are accountable five-role attestations to retained evidence, not proof that the external drill really occurred; independent reviewers must inspect that evidence.
 
 Evidence freshness is capped at thirty days, validity and drill age at ninety days, and one drill duration at twenty-four hours. Signed policy may tighten those limits but cannot remove a drill, reduce alert channels below two, or reduce organization commitments below two.
 
@@ -45,6 +47,7 @@ Each participant independently reproduces the record and policy, then prepares i
 npm run prepare:operational-readiness-attestation -- \
   --record operations-record.json \
   --policy operations-policy.json \
+  --safety-monitor-policy safety-monitor-policy.json \
   --adoption-policy adoption-policy.json \
   --isolation-record isolation-record.json \
   --isolation-policy isolation-policy.json \
@@ -59,6 +62,7 @@ The command does not access a key or sign. Collect one signature per exact parti
 npm run verify:operational-readiness-evidence -- \
   --record operations-record.json \
   --policy operations-policy.json \
+  --safety-monitor-policy safety-monitor-policy.json \
   --adoption-policy adoption-policy.json \
   --attestations operations-attestations.json \
   --isolation-record isolation-record.json \
@@ -66,11 +70,11 @@ npm run verify:operational-readiness-evidence -- \
   --isolation-attestations isolation-attestations.json
 ```
 
-Input files must satisfy the common bounded regular-file reader. Before any operational payload is prepared, the verifier requires live, same-process [service-isolation evidence](./SERVICE_ISOLATION_EVIDENCE.md) provenance; matches its source, chain, gate, protocol, deployment, and validity interval; and requires the exact derived isolation digest in the operational record. It also validates the adoption policy, requires its validity to cover the complete operational interval, matches its support owner and incident commander to exact participants, and derives the record's loss, privacy, and support commitments. The adoption-policy digest is an explicit EIP-712 field signed by every operational role. The verifier rejects copied provenance, unknown fields, secrets, unrestricted endpoints, invoices, payment data, duplicated roles or evidence, weak alert routing, incomplete drills, future/stale evidence, participant substitution, signature replay, or a changed record, operating policy, or adoption policy.
+Input files must satisfy the common bounded regular-file reader. Before any operational payload is prepared, the verifier requires live, same-process [service-isolation evidence](./SERVICE_ISOLATION_EVIDENCE.md) provenance; matches its source, chain, gate, protocol, deployment, and validity interval; and requires the exact derived isolation digest in the operational record. It independently normalizes one immutable snapshot of the complete v4 safety-monitor policy, requires that policy to cover the operational interval, matches both configured confirmer routes to the two isolation-backed service assignments, and derives their binding digest. It also validates the adoption policy, requires its validity to cover the complete operational interval, matches its support owner and incident commander to exact participants, and derives the record's loss, privacy, and support commitments. The adoption-policy, safety-monitor-policy, and gate-confirmer-binding digests are explicit EIP-712 fields signed by every operational role. The verifier rejects copied provenance, changing getter inputs, unknown fields, secrets, unrestricted endpoints, invoices, payment data, duplicated roles or evidence, weak alert routing, incomplete or false control claims, future/stale evidence, participant substitution, signature replay, or a changed record, operating policy, safety policy, or adoption policy.
 
 ## Release binding
 
-Both public-testnet release-candidate commands require `--operations-record`, `--operations-policy`, `--operations-attestations`, `--adoption-policy`, `--isolation-record`, `--isolation-policy`, and `--isolation-attestations`. Candidate preparation re-verifies all three packages in the same process and requires:
+Both public-testnet release-candidate commands require `--operations-record`, `--operations-policy`, `--operations-attestations`, `--operations-safety-monitor-policy`, `--adoption-policy`, `--isolation-record`, `--isolation-policy`, and `--isolation-attestations`. Candidate preparation re-verifies all four inputs in the same process and requires:
 
 - exact source, protocol, chain, gate, deployment manifest, funding mode, and release-time agreement;
 - an exact provenance-bound service-isolation digest whose validity covers the complete operational and release interval;
@@ -81,11 +85,13 @@ Both public-testnet release-candidate commands require `--operations-record`, `-
 - exact alert-channel agreement with the signed bootstrap roster or completed campaign;
 - exact backup, incident, monitoring, provider, solver, and qualification artifact agreement with upstream evidence;
 - exact campaign reconciliation and per-drill evidence agreement for the campaign-qualified path; and
+- the monitor policy's upstream record digest to equal the exact signed bootstrap/campaign record, with that digest, the exact safety-monitor-policy digest, and the gate-confirmer-binding digest entering the operational composite hashes and prepared-candidate evidence boundary;
+- one same-process runtime binding that derives a final-release monitor policy by replacing only the upstream record digest with the candidate record digest;
 - release validity wholly inside the operational evidence interval;
 - every release cap and reserve to equal the exact adoption policy; and
 - every adoption-policy admission/risk/fee digest to match signed upstream evidence, with every named fee below both deployed immutable escrow ceilings.
 
-Operational-readiness v1 and v2 are rejected. The former release-record template v2 and prepared candidate v2/v3 schemas are rejected. Template v3 accepts no operator-entered loss-allocation, support-policy, or service-isolation hashes. Candidate v5 derives those commitments and every operational release digest only from live verifier provenance, retains the exact adoption-policy digest, and independently requires the original [qualification review](./QUALIFICATION_REVIEW_EVIDENCE.md) provenance that matches this signed operational artifact.
+Operational-readiness v1, v2, and v3 are rejected. V3 had structured drills but did not bind the exact safety policy, the isolated confirmer services, or the finalized-gate control claims. The former release-record template v2 and prepared candidate v2/v3 schemas are also rejected. Template v3 accepts no operator-entered loss-allocation, support-policy, or service-isolation hashes. Candidate v6 derives those commitments and every operational release digest only from live verifier provenance, retains the exact adoption-, monitor-upstream-record-, safety-monitor-, and confirmer-binding digests, and independently requires the original [qualification review](./QUALIFICATION_REVIEW_EVIDENCE.md) provenance that matches this signed operational artifact. Candidate v5 is rejected because its exact evidence envelope omitted the latter three commitments.
 
 ## Authority boundary
 

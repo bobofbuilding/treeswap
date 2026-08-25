@@ -1,16 +1,51 @@
 import { Wallet, id } from "ethers";
 import {
   OPERATIONAL_READINESS_ROLES,
+  REQUIRED_FINALIZED_GATE_CONTROL_DRILLS,
+  REQUIRED_GATE_CONFIRMER_SERVICE_ROLES,
   REQUIRED_OPERATIONAL_DRILLS,
   buildOperationalReadinessAttestationMessage,
+  operationalGateConfirmerBindingDigest,
   verifyOperationalReadinessEvidence,
 } from "../../lib/operational-readiness-evidence.mjs";
+import {
+  REQUIRED_SAFETY_CHECKS,
+  SAFETY_MONITOR_POLICY_SCHEMA,
+  safetyMonitorPolicyDigest,
+} from "../../lib/safety-observation-attestation.mjs";
 import { buildAdoptionPolicyEvidence } from "../../lib/adoption-policy.mjs";
 import { buildServiceIsolationReleaseEvidence } from "../../lib/service-isolation-evidence.mjs";
 import { createVerifiedServiceIsolationFixture } from "./verified-service-isolation.mjs";
 
 export function canonical(values, selector) {
   return [...values].sort((left, right) => selector(left).localeCompare(selector(right)));
+}
+
+function safetyMonitorPolicy({ deployment, upstream, preparedAt }) {
+  const route = (name) => ({
+    routeId: id(`operational safety route:${name}`).toLowerCase(),
+    operatorId: id(`operational safety operator:${name}`).toLowerCase(),
+  });
+  const collectors = REQUIRED_SAFETY_CHECKS.flatMap((kind) => canonical([0, 1].map((index) => ({
+    kind,
+    collectorId: id(`operational safety collector:${kind}:${index}`).toLowerCase(),
+    operatorId: id(`operational safety collector operator:${kind}:${index}`).toLowerCase(),
+    signer: new Wallet(id(`operational safety collector signer:${kind}:${index}`)).address,
+  })), (value) => value.collectorId));
+  return {
+    schema: SAFETY_MONITOR_POLICY_SCHEMA,
+    chainId: deployment.verification.record.chainId,
+    verifyingContract: deployment.verification.record.verifyingContract,
+    releaseRecordDigest: upstream.verification.recordDigest,
+    validFrom: preparedAt - 60,
+    validUntil: preparedAt + 3_600,
+    maximumObservationAgeSeconds: 30,
+    quoteClosure: route("quote-closure"),
+    guardianBroadcasters: canonical([route("guardian-a"), route("guardian-b")], (value) => value.routeId),
+    gateConfirmers: canonical([route("gate-confirmer-a"), route("gate-confirmer-b")], (value) => value.routeId),
+    alertRoutes: canonical([route("alert-a"), route("alert-b")], (value) => value.routeId),
+    collectors,
+  };
 }
 
 function walletForRole(role, options) {
@@ -198,8 +233,25 @@ export function fixture({
   artifacts.lossAllocation = adoption.lossAllocationDigest;
   artifacts.privacyRetention = adoption.privacyRetentionDigest;
   artifacts.supportPolicy = adoption.supportPolicyDigest;
+  const monitorPolicy = safetyMonitorPolicy({ deployment, upstream, preparedAt });
+  const monitorPolicyDigest = safetyMonitorPolicyDigest(monitorPolicy);
+  const gateConfirmerBindings = REQUIRED_GATE_CONFIRMER_SERVICE_ROLES.map((serviceRole, index) => {
+    const service = serviceIsolation.verification.record.services.find((value) => value.role === serviceRole);
+    const route = monitorPolicy.gateConfirmers[index];
+    return {
+      serviceRole,
+      serviceId: service.serviceId,
+      trustDomainId: service.trustDomainId,
+      credentialSetDigest: service.credentialSetDigest,
+      networkPolicyDigest: service.networkPolicyDigest,
+      deploymentEvidenceDigest: service.deploymentEvidenceDigest,
+      routeId: route.routeId,
+      operatorId: route.operatorId,
+    };
+  });
+  const gateConfirmerBindingDigest = operationalGateConfirmerBindingDigest(gateConfirmerBindings);
   const record = {
-    schema: "treeswap.operational-readiness-evidence.v3",
+    schema: "treeswap.operational-readiness-evidence.v4",
     operationsId: id(`operational readiness:${fundingMode}:${preparedAt}`).toLowerCase(),
     environment: "public-testnet",
     fundingMode,
@@ -208,6 +260,7 @@ export function fixture({
     reviewedBuildCommit: deployment.verification.record.reviewedBuildCommit,
     protocolVersion,
     deploymentManifestDigest: deployment.verification.record.manifestDigest,
+    safetyMonitorPolicyDigest: monitorPolicyDigest,
     preparedAt,
     validUntil: preparedAt + 3_600,
     participants,
@@ -215,6 +268,7 @@ export function fixture({
       ? [...upstream.candidate.record.alertChannelEvidenceDigests]
       : [...upstream.candidate.record.alertChannelEvidenceDigests],
     artifacts,
+    gateConfirmerBindings,
     drills: REQUIRED_OPERATIONAL_DRILLS.map((name, index) => {
       const primaryOperatorId = participants[index % participants.length].operatorId;
       return {
@@ -225,11 +279,22 @@ export function fixture({
         primaryOperatorId,
         observerOperatorIds: operatorIds.filter((operatorId) => operatorId !== primaryOperatorId).slice(0, 2),
         evidenceDigest: scenarioEvidence.get(name) ?? id(`bootstrap operational drill:${name}`).toLowerCase(),
+        safetyControls: REQUIRED_FINALIZED_GATE_CONTROL_DRILLS.includes(name)
+          ? {
+              alertsPreservedOnConfirmationFailure: true,
+              broadcasterAcceptanceRejected: true,
+              bothConfirmersAttempted: true,
+              exactFinalizedStateAgreementRequired: true,
+              existingExitsPreserved: true,
+              gateConfirmerBindingDigest,
+              safetyMonitorPolicyDigest: monitorPolicyDigest,
+            }
+          : null,
       };
     }),
   };
   const policy = {
-    schema: "treeswap.operational-readiness-evidence-policy.v3",
+    schema: "treeswap.operational-readiness-evidence-policy.v4",
     environment: record.environment,
     fundingMode: record.fundingMode,
     chainId: record.chainId,
@@ -244,12 +309,16 @@ export function fixture({
     minimumAlertChannels: 2,
     minimumOrganizations: 2,
     requiredDrills: [...REQUIRED_OPERATIONAL_DRILLS],
+    requiredFinalizedGateControlDrills: [...REQUIRED_FINALIZED_GATE_CONTROL_DRILLS],
+    requiredGateConfirmerServiceRoles: [...REQUIRED_GATE_CONFIRMER_SERVICE_ROLES],
+    safetyMonitorPolicyDigest: monitorPolicyDigest,
   };
   return {
     adoptionPolicy,
     attestations: [],
     policy,
     record,
+    safetyMonitorPolicy: monitorPolicy,
     wallets,
     serviceIsolationVerification: serviceIsolation.verification,
   };
@@ -262,6 +331,7 @@ export async function sign(value) {
       adoptionPolicy: value.adoptionPolicy,
       record: value.record,
       policy: value.policy,
+      safetyMonitorPolicy: value.safetyMonitorPolicy,
       serviceIsolationVerification: value.serviceIsolationVerification,
       role: participant.role,
       operatorId: participant.operatorId,

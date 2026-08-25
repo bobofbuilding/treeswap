@@ -25,7 +25,7 @@ npm run prepare:testnet-release-approval -- \
   --role securityReviewer
 ```
 
-The command accepts only the two v3 public-testnet candidate kinds: tiny bootstrap and campaign-qualified. Candidate v1 is rejected because it accepted operator-entered review hashes; candidate v2 is rejected because it lacked a dedicated operational-readiness provenance boundary. The command rebuilds the canonical message and typed digest, requires exact false authority flags, rejects unknown fields or digest/domain/type mutation, and refuses an expired candidate. It selects the signer and signature kind from the signed policy; the operator cannot override them on the command line. All five roles should compare the same typed digest as well as the record and policy digests.
+The command accepts only the two v6 public-testnet candidate kinds: tiny bootstrap and campaign-qualified. Earlier candidates are rejected because they accepted weaker review, operations, adoption, qualification, or safety-monitor/confirmer evidence envelopes. The command rebuilds the canonical message and typed digest, requires exact false authority flags, rejects unknown fields or digest/domain/type mutation, and refuses an expired candidate. It selects the signer and signature kind from the signed policy; the operator cannot override them on the command line. All five roles should compare the same typed digest as well as the record and policy digests.
 
 Controller and guardian must remain ERC-1271 contract-wallet signers with the exact reviewed runtime hashes. Lightning operator, security reviewer, and incident commander must remain their distinct policy-pinned EIP-712 identities. The output is an unsigned payload only. It never reads a private key or requests a wallet signature.
 

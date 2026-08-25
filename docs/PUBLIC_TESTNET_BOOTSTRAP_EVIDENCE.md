@@ -51,7 +51,7 @@ npm run verify:testnet-bootstrap-evidence -- \
 
 The summary contains no raw signatures or participant list and grants no authority. Candidate preparation must re-run this verification in-process; a copied summary or deserialized verification object fails provenance checks.
 
-7. Complete the separate [five-role independent-review ceremony](./INDEPENDENT_REVIEW_EVIDENCE.md), [three-role service-isolation ceremony](./SERVICE_ISOLATION_EVIDENCE.md), exact [adoption policy](./ADOPTION_POLICY.md), and [five-role operational-readiness ceremony](./OPERATIONAL_READINESS_EVIDENCE.md), then prepare the tiny-limit candidate from the original signed deployment, bootstrap, review, isolation, adoption, and operations inputs:
+7. Complete the separate [five-role independent-review ceremony](./INDEPENDENT_REVIEW_EVIDENCE.md), [three-role service-isolation ceremony](./SERVICE_ISOLATION_EVIDENCE.md), exact [adoption policy](./ADOPTION_POLICY.md), exact v4 [safety-monitor policy](./MONITORING.md), and [five-role operational-readiness ceremony](./OPERATIONAL_READINESS_EVIDENCE.md), then prepare the tiny-limit candidate from the original signed deployment, bootstrap, review, isolation, adoption, monitor, and operations inputs:
 
 ```sh
 npm run prepare:testnet-bootstrap-release-candidate -- \
@@ -75,11 +75,12 @@ npm run prepare:testnet-bootstrap-release-candidate -- \
   --operations-record operations-record.json \
   --operations-policy operations-policy.json \
   --operations-attestations operations-attestations.json \
+  --operations-safety-monitor-policy safety-monitor-policy.json \
   --adoption-policy adoption-policy.json \
   --out bootstrap-release-candidate.json
 ```
 
-The release approval block and the entire candidate validity window must remain inside the signed bootstrap, independent-review, service-isolation, adoption-policy, and operational-readiness intervals. Candidate preparation commits the roster record, policy, participant set, and exact attestation set into release evidence; it separately commits the operational record, policy, adoption policy, participant, drill, alert-channel, isolation, and attestation sets. It derives review, service-isolation, loss-allocation, privacy, support, incident, backup, monitoring, solver, provider, and qualification commitments only from live verifier provenance; the release template cannot supply them. Bootstrap public permissionless execution is always false.
+The release approval block and the entire candidate validity window must remain inside the signed bootstrap, independent-review, service-isolation, safety-monitor-policy, adoption-policy, and operational-readiness intervals. Candidate preparation commits the roster record, policy, participant set, and exact attestation set into release evidence; it separately commits the operational record, policy, adoption policy, safety-monitor policy, its exact bootstrap-record binding, isolated confirmer assignments, participant, drill, alert-channel, isolation, and attestation sets. It derives the otherwise-identical final-release monitor policy plus review, service-isolation, loss-allocation, privacy, support, incident, backup, monitoring, solver, provider, and qualification commitments only from live verifier provenance; the release template cannot supply them. Bootstrap public permissionless execution is always false.
 
 ## Fail-closed cases
 

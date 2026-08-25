@@ -4,7 +4,7 @@ Status: the repository can reconstruct the exact sealed local qualification file
 
 ## Boundary
 
-The release path no longer accepts an opaque `testQualification` digest. Candidate v5 requires one module-private qualification-review verification created in the same process from:
+The release path no longer accepts an opaque `testQualification` digest. Candidate v6 requires one module-private qualification-review verification created in the same process from:
 
 - the exact raw qualification file bytes and both SHA-256 commitments;
 - the exact clean published source commit in the artifact;

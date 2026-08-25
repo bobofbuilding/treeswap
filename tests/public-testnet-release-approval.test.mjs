@@ -77,6 +77,7 @@ const qualifiedEvidenceFields = [
   "independentReviewAttestationSetDigest",
   "independentReviewPolicyDigest",
   "independentReviewRecordDigest",
+  "gateConfirmerBindingDigest",
   "operationalReadinessAttestationSetDigest",
   "operationalReadinessPolicyDigest",
   "operationalReadinessRecordDigest",
@@ -88,6 +89,8 @@ const qualifiedEvidenceFields = [
   "qualificationReviewEvidenceDigest",
   "qualificationReviewPolicyDigest",
   "qualificationReviewRecordDigest",
+  "safetyMonitorPolicyDigest",
+  "safetyMonitorUpstreamRecordDigest",
 ];
 
 function digests(fields, prefix) {
@@ -193,7 +196,7 @@ function preparedCandidate(now = NOW, recordOverrides = {}) {
   const message = buildReleaseApprovalMessage(record, policy);
   const domain = releaseAuthorizationDomain(record);
   return {
-    schema: "treeswap.prepared-public-testnet-release-candidate.v5",
+    schema: "treeswap.prepared-public-testnet-release-candidate.v6",
     status: "deployment-campaign-review-and-operations-evidence-verified-awaiting-five-role-release-approvals",
     scope: "release-preparation-only-no-signing-broadcast-gate-opening-or-funding-authorization",
     authorizations: { signing: false, broadcast: false, gateOpening: false, funding: false },
@@ -349,6 +352,7 @@ test("rejects candidate artifact mutation and authority smuggling", () => {
     "treeswap.prepared-public-testnet-release-candidate.v2",
     "treeswap.prepared-public-testnet-release-candidate.v3",
     "treeswap.prepared-public-testnet-release-candidate.v4",
+    "treeswap.prepared-public-testnet-release-candidate.v5",
   ]) {
     const legacy = structuredClone(candidate);
     legacy.schema = schema;

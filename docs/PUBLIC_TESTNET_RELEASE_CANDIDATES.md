@@ -22,6 +22,7 @@ Both modes remain public-testnet-only. Release v2 rejects every mainnet environm
 - derives all five review digests from a live provenance-bound [independent review verification](./INDEPENDENT_REVIEW_EVIDENCE.md), rather than accepting hashes from the release template;
 - reconstructs the exact final sealed artifact through [qualification review evidence](./QUALIFICATION_REVIEW_EVIDENCE.md), requires its independent short-lived reviewer signature, binds both SHA-256 commitments, and rejects copied provenance or reviewer overlap;
 - derives backup, monitoring, incident, provider, solver, qualification, service-isolation, loss-allocation, and support commitments from live provenance-bound [service-isolation](./SERVICE_ISOLATION_EVIDENCE.md) and [operational readiness](./OPERATIONAL_READINESS_EVIDENCE.md) verification, rather than accepting opaque infrastructure, support, or loss hashes from the release template;
+- revalidates the exact v4 safety-monitor policy, maps both confirmer routes to the two isolation-backed EVM services, requires its record digest to equal the signed bootstrap/campaign record, carries that upstream digest plus the monitor-policy and confirmer-binding digests into every operational composite and the candidate's exact evidence envelope, and deterministically derives the same policy bound to the final candidate record for runtime use;
 - validates and retains one exact public [adoption policy](./ADOPTION_POLICY.md), including directional fees, caps, reserves, solver liveness, privacy, loss allocation, support ownership, and immutable-upgrade response;
 - requires the operational Lightning operator and incident commander to match the release policy, the monitoring identity and signer to match one exact signed upstream monitor, every other operational signer to remain separate from upstream infrastructure operators, and every operational signer to remain separate from deployment and independent-review authorities;
 - requires exact alert-channel, upstream artifact, reconciliation, and campaign-drill agreement before operational evidence can enter a release;
@@ -56,8 +57,9 @@ Complete the [qualification-review ceremony](./QUALIFICATION_REVIEW_EVIDENCE.md)
 - `isolation-record.json`: the exact twelve-service inventory, trust-domain, network, credential-scope, deployment-evidence, and validity commitments;
 - `isolation-policy.json`: the exact service set and bounded evidence, credential, organization, and lifetime requirements;
 - `isolation-attestations.json`: exactly one canonical EIP-712 attestation from each of the infrastructure, Lightning, and security roles;
-- `operations-record.json`: exact operational roles, alert channels, artifacts, drills, source/deployment binding, and validity interval;
-- `operations-policy.json`: the immutable drill set and bounded age, duration, alert-channel, organization, and lifetime requirements; and
+- `operations-record.json`: exact operational roles, alert channels, artifacts, drills, finalized-gate control claims, isolated confirmer assignments, source/deployment binding, and validity interval;
+- `operations-policy.json`: the immutable drill/control/service set, exact safety-monitor-policy digest, and bounded age, duration, alert-channel, organization, and lifetime requirements;
+- `safety-monitor-policy.json`: the complete v4 collector and action-route policy reproduced by all five operational signers and bound to the exact signed bootstrap/campaign record; the final release-record binding is derived only after the candidate digest exists;
 - `operations-attestations.json`: exactly one canonical EIP-712 attestation from each of the five operational roles; and
 - `adoption-policy.json`: the exact public limits, fees, solver rules, loss allocation, privacy retention, support paths/owners, and upgrade response signed through the operational package.
 
@@ -89,6 +91,7 @@ npm run prepare:testnet-bootstrap-release-candidate -- \
   --operations-record operations-record.json \
   --operations-policy operations-policy.json \
   --operations-attestations operations-attestations.json \
+  --operations-safety-monitor-policy safety-monitor-policy.json \
   --adoption-policy adoption-policy.json \
   --out bootstrap-release-candidate.json
 ```
@@ -125,13 +128,14 @@ npm run prepare:testnet-release-candidate -- \
   --operations-record operations-record.json \
   --operations-policy operations-policy.json \
   --operations-attestations operations-attestations.json \
+  --operations-safety-monitor-policy safety-monitor-policy.json \
   --adoption-policy adoption-policy.json \
   --out qualified-release-candidate.json
 ```
 
 Use a fresh deployment observation and promotion near release approval; promotion remains valid for no more than one day. The release validity cannot begin before both campaign completion and that fresh promotion. Each of the five release approvers must independently reproduce the candidate and compare the record and policy digests through a separate channel before signing.
 
-Prepared candidate schema v5 is the only accepted candidate artifact; v4 is rejected because it did not require live qualification-review provenance. The next step is the guarded [public-testnet release approval ceremony](./PUBLIC_TESTNET_RELEASE_APPROVALS.md). It derives each role's exact signer and typed payload from the candidate, verifies one five-role bundle through the candidate-bound finalized provider quorum, and writes only a non-authorizing receipt. Loading this candidate from disk proves self-consistency, not the upstream evidence provenance that each signer must independently reproduce.
+Prepared candidate schema v6 is the only accepted candidate artifact. Its exact evidence envelope exposes the operational policy's upstream-record, safety-monitor-policy, and isolated gate-confirmer-binding digests. The same-process candidate provenance also retains a deterministic final-release monitor policy whose `releaseRecordDigest` is the candidate record digest; no caller can substitute that policy. V5 is rejected because it omitted these monitor/confirmer commitments; v4 is rejected because it did not require live qualification-review provenance. The next step is the guarded [public-testnet release approval ceremony](./PUBLIC_TESTNET_RELEASE_APPROVALS.md). It derives each role's exact signer and typed payload from the candidate, verifies one five-role bundle through the candidate-bound finalized provider quorum, and writes only a non-authorizing receipt. Loading this candidate from disk proves self-consistency, not the upstream evidence provenance that each signer must independently reproduce.
 
 ## Remaining external boundary
 
