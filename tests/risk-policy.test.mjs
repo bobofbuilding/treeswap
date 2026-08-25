@@ -9,6 +9,7 @@ import {
 import {
   BIT_RISK_ATTESTATION_SCHEMA,
   assertCurrentBitRiskAttestation,
+  bitRiskPolicyDigest,
   buildBitRiskAttestation,
   evaluateBitRisk,
 } from "../lib/risk-policy.mjs";
@@ -345,6 +346,35 @@ test("commits the exact healthy proxy, finality, market, and source set", () => 
     now: NOW,
     requiredValidUntil: NOW + 21,
   }), /does not cover the required validity window/);
+});
+
+test("cannot launder a weak evaluation through a changing reviewed-policy getter", () => {
+  const reviewedPolicyDigest = bitRiskPolicyDigest(policy);
+  const changingPolicy = { ...policy };
+  let deviationReads = 0;
+  Object.defineProperty(changingPolicy, "maxMarketDeviationBps", {
+    enumerable: true,
+    get: () => {
+      deviationReads += 1;
+      return deviationReads <= 2 ? 10_000 : policy.maxMarketDeviationBps;
+    },
+  });
+  const wideRequest = { ...request, lightningSats: 19_000n };
+  const evaluation = evaluateBitRisk({
+    policy: changingPolicy,
+    snapshot,
+    priceSignals,
+    request: wideRequest,
+  });
+  assert.equal(evaluation.enabled, true);
+  const attestation = buildBitRiskAttestation({
+    policy: changingPolicy,
+    snapshot,
+    request: wideRequest,
+    evaluation,
+  });
+  assert.notEqual(attestation.policyDigest, reviewedPolicyDigest);
+  assert.equal(bitRiskPolicyDigest(changingPolicy), reviewedPolicyDigest);
 });
 
 test("does not count duplicate venues, control domains, organizations, or wrong-direction prices as independent", () => {

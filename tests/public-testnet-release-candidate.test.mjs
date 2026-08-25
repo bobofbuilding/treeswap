@@ -782,6 +782,7 @@ test("activates funding only after same-process evidence, approvals, reconciliat
     direction: solverBinding.direction,
     evidencePolicyDigest: solverDaemonEvidencePolicyDigest(evidencePolicy),
     releaseRecordDigest: candidate.recordDigest,
+    riskPolicyDigest: candidate.record.evidenceDigests.riskPolicy,
     solverCapabilityDigest: solverBinding.capabilityDigest,
     solverId: solverBinding.solverId,
   });
@@ -876,6 +877,7 @@ test("activates funding only after same-process evidence, approvals, reconciliat
     direction: solverBinding.direction,
     evidencePolicyDigest: solverDaemonEvidencePolicyDigest(evidencePolicy),
     releaseRecordDigest: candidate.recordDigest,
+    riskPolicyDigest: candidate.record.evidenceDigests.riskPolicy,
     solverCapabilityDigest: solverBinding.capabilityDigest,
     solverId: solverBinding.solverId,
   });
@@ -939,6 +941,7 @@ test("activates funding only after same-process evidence, approvals, reconciliat
     offerId: waitingSettlement.selectedOfferId,
     offerDigest: id("active wrapper blind offer").toLowerCase(),
     marketRiskDigest: id("active wrapper market risk").toLowerCase(),
+    marketRiskPolicyDigest: candidate.record.evidenceDigests.riskPolicy,
     marketRiskValidUntil: now + 25,
     selectionAuthorizationDigest: id("active wrapper selection authorization").toLowerCase(),
     selectionAuthorizationExpiresAt: now + 25,
@@ -1054,7 +1057,7 @@ test("activates funding only after same-process evidence, approvals, reconciliat
     const rotatedRecoveryAuthority = verifiedSolverRecoveryAuthority(rotatedRecoverySolverCapability.verification);
     const custodyManifest = {
       schema: "treeswap.retained-release-custody.v1",
-      coordinatorSchema: "treeswap.coordinator.v8",
+      coordinatorSchema: "treeswap.coordinator.v9",
       createdAt: now + 3,
       sealedHostInstanceId: id("retained original host").toLowerCase(),
       sealedProcessInstanceId: id("retained original process").toLowerCase(),
@@ -1103,7 +1106,7 @@ test("activates funding only after same-process evidence, approvals, reconciliat
         }],
         runtime: {
           sourceCommit: candidate.record.reviewedBuildCommit,
-          coordinatorSchema: "treeswap.coordinator.v8",
+          coordinatorSchema: "treeswap.coordinator.v9",
           nodeVersion: process.version,
           archive: await retainedFileReference(runtimeArchivePath, serviceRoot),
         },
@@ -2049,6 +2052,7 @@ test("activates funding only after same-process evidence, approvals, reconciliat
       offerId: unmatchedOfferId,
       offerDigest: id("unmatched active lifecycle blind offer").toLowerCase(),
       marketRiskDigest: id("unmatched active lifecycle market risk").toLowerCase(),
+      marketRiskPolicyDigest: candidate.record.evidenceDigests.riskPolicy,
       marketRiskValidUntil: now + 25,
       selectionAuthorizationDigest: id("unmatched active lifecycle selection").toLowerCase(),
       selectionAuthorizationExpiresAt: now + 25,

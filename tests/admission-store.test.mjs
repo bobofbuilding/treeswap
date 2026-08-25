@@ -76,6 +76,7 @@ function reservation(value, label, overrides = {}) {
     offerId: hash(`offer:${label}`),
     offerDigest: hash(`offer-digest:${label}`),
     marketRiskDigest: hash(`market-risk:${label}`),
+    marketRiskPolicyDigest: hash("reviewed-market-risk-policy"),
     marketRiskValidUntil: NOW + 30,
     selectionAuthorizationDigest: hash(`selection-authorization:${label}`),
     selectionAuthorizationExpiresAt: NOW + 30,
@@ -277,6 +278,9 @@ test("atomically persists firm capacity, fails closed on conflicting snapshots, 
     assert.throws(() => store.reserveVerifiedFirmOffer(reservation(one, "short-market-risk", {
       marketRiskValidUntil: NOW + 29,
     })), /market risk authorization must remain active through the firm offer/);
+    assert.throws(() => store.reserveVerifiedFirmOffer(reservation(one, "zero-market-risk-policy", {
+      marketRiskPolicyDigest: `0x${"0".repeat(64)}`,
+    })), /market risk policy digest must be non-zero/);
     const first = store.reserveVerifiedFirmOffer(reservation(one, "capacity-one"));
     assert.equal(first.state, "ACTIVE");
     assert.equal(store.getSolverCapacity(SOLVER).committedBitWei, String(60n * BIT));
@@ -844,7 +848,7 @@ test("binds only one executable quote to a firm offer across coordinator connect
   }
 });
 
-test("binds a settlement once to its reviewed release, evidence policy, and selected capability before exposure", async () => {
+test("binds a settlement once to its reviewed release, risk policy, evidence policy, and selected capability", async () => {
   const store = await CoordinatorStore.open(":memory:", { allowMemory: true });
   const rfq = request("execution-policy-binding", 2);
   try {
@@ -884,6 +888,7 @@ test("binds a settlement once to its reviewed release, evidence policy, and sele
     const authority = {
       settlementId: value.settlementId,
       releaseRecordDigest: hash("execution-policy-release"),
+      riskPolicyDigest: firm.marketRiskPolicyDigest,
       evidencePolicyDigest: hash("execution-policy-evidence"),
       solverCapabilityDigest: firm.capabilityDigest,
       boundAt: NOW + 3,
@@ -895,8 +900,16 @@ test("binds a settlement once to its reviewed release, evidence policy, and sele
       }),
       /does not match its durable RFQ, offer, capability, or amount/,
     );
+    assert.throws(
+      () => store.bindSettlementExecutionPolicy({
+        ...authority,
+        riskPolicyDigest: hash("different-risk-policy"),
+      }),
+      /active fully authorized firm offer/,
+    );
     const bound = store.bindSettlementExecutionPolicy(authority);
     assert.equal(bound.releaseRecordDigest, authority.releaseRecordDigest);
+    assert.equal(bound.riskPolicyDigest, authority.riskPolicyDigest);
     assert.equal(bound.evidencePolicyDigest, authority.evidencePolicyDigest);
     assert.equal(bound.solverCapabilityDigest, authority.solverCapabilityDigest);
     assert.equal(bound.executionPolicyBoundAt, authority.boundAt);
@@ -906,12 +919,13 @@ test("binds a settlement once to its reviewed release, evidence policy, and sele
       bound.executionPolicyBindingDigest,
     );
     const boundLiabilities = store.releaseLiabilitySnapshot();
-    assert.equal(boundLiabilities.coordinatorSchema, "treeswap.coordinator.v8");
+    assert.equal(boundLiabilities.coordinatorSchema, "treeswap.coordinator.v9");
     assert.equal(boundLiabilities.totalNonterminalSettlementCount, 1);
     assert.equal(boundLiabilities.unboundNonterminalSettlementCount, 0);
     assert.equal(boundLiabilities.releases.length, 1);
     assert.deepEqual(boundLiabilities.releases[0].executionPolicies, [{
       direction: value.direction,
+      riskPolicyDigest: authority.riskPolicyDigest,
       evidencePolicyDigest: authority.evidencePolicyDigest,
       historicalSolverCapabilityDigests: [authority.solverCapabilityDigest],
       nonterminalSettlementCount: 1,

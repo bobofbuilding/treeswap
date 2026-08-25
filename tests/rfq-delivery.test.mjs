@@ -48,7 +48,11 @@ import {
   rfqDeliveryResponseDigest,
   verifiedRfqDeliveryCollection,
 } from "../lib/rfq-delivery.mjs";
-import { buildBitRiskAttestation, evaluateBitRisk } from "../lib/risk-policy.mjs";
+import {
+  bitRiskPolicyDigest,
+  buildBitRiskAttestation,
+  evaluateBitRisk,
+} from "../lib/risk-policy.mjs";
 import {
   SOLVER_CAPABILITY_TYPES,
   solverCapabilityClaimsDigest,
@@ -89,6 +93,43 @@ const marketSourcePolicies = marketSigners.map((signer, index) => Object.freeze(
   signer: signer.address,
   maximumValiditySeconds: 120,
 }));
+const marketRiskPolicy = Object.freeze({
+  chainId: 1,
+  proxyAddress: "0x57A447E4d5e18A9423408C365963A73F08B9d18C",
+  expectedImplementation: "0x1111111111111111111111111111111111111111",
+  expectedProxyCodeHash: `0x${"aa".repeat(32)}`,
+  expectedImplementationCodeHash: `0x${"bb".repeat(32)}`,
+  decimals: 18,
+  referenceSatsPerBit: 100,
+  maxSnapshotAgeSeconds: 120,
+  maxFinalityLagBlocks: 80,
+  maxPriceAgeSeconds: 120,
+  minPriceSources: 3,
+  maxSignalSpreadBps: 100,
+  maxMarketDeviationBps: 500,
+  maxSwapBitWei: 10_000n * BIT,
+  maxEpochBitWei: 100_000n * BIT,
+  baseFeeBpsLightningToBit: 18,
+  baseFeeBpsBitToLightning: 72,
+  maxFeeBps: 300,
+  reserveFloorBps: 2_500,
+  scarcityStartsBps: 6_000,
+  allowedPriceSourcePolicyDigests: marketSourcePolicies.map((sourcePolicy) => (
+    executableVenueObservationTypedData({
+      sourcePolicy,
+      observation: {
+        source: sourcePolicy.source,
+        direction: "lightning-to-bit",
+        observedAt: NOW,
+        validUntil: NOW + 90,
+        priceMsatPerBit: 100_000n,
+        executableDepthSats: 1_000_000n,
+        executableDepthBitWei: 10_000n * BIT,
+        quoteCommitment: id(`risk-policy-source:${sourcePolicy.source}`).toLowerCase(),
+      },
+    }).value.sourcePolicyDigest
+  )),
+});
 const endpointKeys = [
   generateKeyPairSync("ed25519"),
   generateKeyPairSync("ed25519"),
@@ -151,6 +192,7 @@ const blindPolicy = {
   bitToLightningContract: BIT_TO_LIGHTNING,
   lightningToBitContractCodeHash: LIGHTNING_TO_BIT_CODE_HASH,
   bitToLightningContractCodeHash: BIT_TO_LIGHTNING_CODE_HASH,
+  marketRiskPolicyDigest: bitRiskPolicyDigest(marketRiskPolicy),
   maxClockSkewSeconds: 5,
   maxOffersPerRequest: 16,
   maxQuoteTtlSeconds: 120,
@@ -362,7 +404,10 @@ function marketSignal(index, direction, offerId, validUntil = NOW + 90) {
   });
 }
 
-function marketRiskAttestationForOffer(rawOffer, { validUntil = NOW + 90 } = {}) {
+function marketRiskAttestationForOffer(rawOffer, {
+  validUntil = NOW + 90,
+  policyOverrides = {},
+} = {}) {
   const direction = rawOffer?.direction === id("lightning-to-bit")
     ? "lightning-to-bit"
     : rawOffer?.direction === id("bit-to-lightning")
@@ -376,29 +421,7 @@ function marketRiskAttestationForOffer(rawOffer, { validUntil = NOW + 90 } = {})
   const priceSignals = marketSigners.map(
     (_signer, index) => marketSignal(index, direction, rawOffer.offerId, validUntil),
   );
-  const policy = {
-    chainId: 1,
-    proxyAddress: "0x57A447E4d5e18A9423408C365963A73F08B9d18C",
-    expectedImplementation: "0x1111111111111111111111111111111111111111",
-    expectedProxyCodeHash: `0x${"aa".repeat(32)}`,
-    expectedImplementationCodeHash: `0x${"bb".repeat(32)}`,
-    decimals: 18,
-    referenceSatsPerBit: 100,
-    maxSnapshotAgeSeconds: 120,
-    maxFinalityLagBlocks: 80,
-    maxPriceAgeSeconds: 120,
-    minPriceSources: 3,
-    maxSignalSpreadBps: 100,
-    maxMarketDeviationBps: 500,
-    maxSwapBitWei: 10_000n * BIT,
-    maxEpochBitWei: 100_000n * BIT,
-    baseFeeBpsLightningToBit: 18,
-    baseFeeBpsBitToLightning: 72,
-    maxFeeBps: 300,
-    reserveFloorBps: 2_500,
-    scarcityStartsBps: 6_000,
-    allowedPriceSourcePolicyDigests: priceSignals.map((signal) => signal.pricePolicyDigest),
-  };
+  const policy = { ...marketRiskPolicy, ...policyOverrides };
   const snapshot = {
     chainId: 1,
     observedAt: NOW,
@@ -663,6 +686,7 @@ test("atomically reserves authenticated blind competition before private disclos
   });
   assert.equal(book.deliveryAuthenticated, true);
   assert.equal(book.marketRiskBound, true);
+  assert.equal(book.marketRiskPolicyDigest, blindPolicy.marketRiskPolicyDigest);
   assert.equal(book.solverCount, 2);
   assert.equal(book.relayOfferPathCount, 2);
   assert.equal(book.directSolverOfferPathCount, 2);
@@ -686,6 +710,10 @@ test("atomically reserves authenticated blind competition before private disclos
   assert.equal(
     store.getFirmOffer(reservation.selectedOfferId).marketRiskDigest,
     selection.marketRiskDigest,
+  );
+  assert.equal(
+    store.getFirmOffer(reservation.selectedOfferId).marketRiskPolicyDigest,
+    blindPolicy.marketRiskPolicyDigest,
   );
   assert.equal(
     store.getFirmOffer(reservation.selectedOfferId).marketRiskValidUntil,
@@ -815,9 +843,22 @@ test("requires original current market evidence through every retained offer exp
     marketRiskAttestations: tooShort,
   }), /not enough independent valid blind solver offers/);
 
+  const weakPolicy = offers.map(({ envelope }) => marketRiskAttestationForOffer(
+    envelope.offer,
+    { policyOverrides: { maxMarketDeviationBps: 10_000 } },
+  ));
+  assert.ok(weakPolicy.every(
+    (attestation) => attestation.policyDigest !== blindPolicy.marketRiskPolicyDigest,
+  ));
+  assert.throws(() => buildMultipathBlindQuoteBook({
+    ...input,
+    marketRiskAttestations: weakPolicy,
+  }), /not enough independent valid blind solver offers/);
+
   const book = buildMultipathBlindQuoteBook({ ...input, marketRiskAttestations: current });
   assert.equal(book.solverCount, 2);
   assert.equal(book.rejected.length, 0);
+  assert.equal(book.marketRiskPolicyDigest, bitRiskPolicyDigest(marketRiskPolicy));
   assert.ok(book.offers.every((offer) => offer.marketRiskValidUntil >= BigInt(offer.offer.expiresAt)));
 });
 
