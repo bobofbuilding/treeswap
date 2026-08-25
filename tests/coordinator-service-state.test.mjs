@@ -9,10 +9,12 @@ import {
   acquireCoordinatorServiceLease,
   assertCoordinatorServiceLeaseOwnership,
   buildCoordinatorClosedStatus,
+  buildCoordinatorRecoveryVerificationStatus,
   buildCoordinatorReleaseVerificationStatus,
   normalizeCoordinatorServiceConfig,
   readCoordinatorServiceHealth,
   validateCoordinatorClosedStatus,
+  validateCoordinatorRecoveryVerificationStatus,
   validateCoordinatorReleaseVerificationStatus,
 } from "../lib/coordinator-service-state.mjs";
 
@@ -48,7 +50,7 @@ function wholeSecond(milliseconds) {
   return new Date(Math.floor(milliseconds / 1_000) * 1_000).toISOString();
 }
 
-test("accepts only separated, bounded closed or release-verification coordinator configuration", async (t) => {
+test("accepts only separated, bounded closed, release, or recovery verification configuration", async (t) => {
   const paths = await fixture(t);
   const valid = config(paths);
   assert.equal(valid.databasePath, paths.databasePath);
@@ -68,9 +70,35 @@ test("accepts only separated, bounded closed or release-verification coordinator
   assert.equal(release.releaseActivationManifestPath, manifestPath);
   assert.equal(release.releaseRefreshSeconds, 5);
   assert.equal(release.releaseProviderTimeoutMs, 1000);
+  assert.equal(release.recoveryActivationManifestPath, null);
+  const recoveryManifestPath = join(paths.root, "recovery-inputs", "activation.json");
+  const recovery = config(paths, {
+    COORDINATOR_MODE: "recovery-verification-only",
+    COORDINATOR_RECOVERY_ACTIVATION_MANIFEST_PATH: recoveryManifestPath,
+    COORDINATOR_RECOVERY_REFRESH_SECONDS: "6",
+    COORDINATOR_RECOVERY_PROVIDER_TIMEOUT_MS: "2000",
+  });
+  assert.equal(recovery.mode, "recovery-verification-only");
+  assert.equal(recovery.recoveryActivationManifestPath, recoveryManifestPath);
+  assert.equal(recovery.recoveryRefreshSeconds, 6);
+  assert.equal(recovery.recoveryProviderTimeoutMs, 2000);
+  assert.equal(recovery.releaseActivationManifestPath, null);
   assert.throws(() => config(paths, {
     COORDINATOR_RELEASE_ACTIVATION_MANIFEST_PATH: manifestPath,
   }), /closed coordinator mode cannot accept/);
+  assert.throws(() => config(paths, {
+    COORDINATOR_RECOVERY_ACTIVATION_MANIFEST_PATH: recoveryManifestPath,
+  }), /closed coordinator mode cannot accept/);
+  assert.throws(() => config(paths, {
+    COORDINATOR_MODE: "release-verification-only",
+    COORDINATOR_RELEASE_ACTIVATION_MANIFEST_PATH: manifestPath,
+    COORDINATOR_RECOVERY_ACTIVATION_MANIFEST_PATH: recoveryManifestPath,
+  }), /cannot accept recovery verification inputs/);
+  assert.throws(() => config(paths, {
+    COORDINATOR_MODE: "recovery-verification-only",
+    COORDINATOR_RECOVERY_ACTIVATION_MANIFEST_PATH: recoveryManifestPath,
+    COORDINATOR_RELEASE_ACTIVATION_MANIFEST_PATH: manifestPath,
+  }), /cannot accept release verification inputs/);
   assert.throws(() => config(paths, {
     COORDINATOR_MODE: "release-verification-only",
     COORDINATOR_RELEASE_ACTIVATION_MANIFEST_PATH: join(paths.runtimeDirectory, "activation.json"),
@@ -79,6 +107,15 @@ test("accepts only separated, bounded closed or release-verification coordinator
     COORDINATOR_MODE: "release-verification-only",
     COORDINATOR_RELEASE_ACTIVATION_MANIFEST_PATH: manifestPath,
     COORDINATOR_RELEASE_PROVIDER_TIMEOUT_MS: "30000",
+  }), /does not cover verification work/);
+  assert.throws(() => config(paths, {
+    COORDINATOR_MODE: "recovery-verification-only",
+    COORDINATOR_RECOVERY_ACTIVATION_MANIFEST_PATH: join(paths.runtimeDirectory, "recovery.json"),
+  }), /separate read-only directory/);
+  assert.throws(() => config(paths, {
+    COORDINATOR_MODE: "recovery-verification-only",
+    COORDINATOR_RECOVERY_ACTIVATION_MANIFEST_PATH: recoveryManifestPath,
+    COORDINATOR_RECOVERY_PROVIDER_TIMEOUT_MS: "30000",
   }), /does not cover verification work/);
   assert.throws(() => normalizeCoordinatorServiceConfig({
     COORDINATOR_DATABASE_PATH: "coordinator.sqlite",
@@ -129,6 +166,38 @@ function activeReleaseVerification(attemptAt, validUntil) {
       broadcast: false,
       gateOpening: false,
       dispatch: false,
+      funding: false,
+    },
+  };
+}
+
+function activeRecoveryVerification(attemptAt, validUntil) {
+  return {
+    schema: "treeswap.coordinator-recovery-verification.v1",
+    state: "active",
+    scope: "verification-only-no-recovery-context-action-dispatch-new-exposure-or-funding-authority",
+    lastAttemptAt: attemptAt,
+    lastSuccessAt: attemptAt,
+    consecutiveFailures: 0,
+    releaseId: `0x${"1".repeat(64)}`,
+    validUntil,
+    recordDigest: `0x${"2".repeat(64)}`,
+    policyDigest: `0x${"3".repeat(64)}`,
+    inputManifestDigest: `0x${"4".repeat(64)}`,
+    approvalBundleDigest: `0x${"5".repeat(64)}`,
+    providerConsensusDigest: `0x${"6".repeat(64)}`,
+    runtimeBlockNumber: 1_200,
+    runtimeBlockHash: `0x${"7".repeat(64)}`,
+    gateOpen: false,
+    emergencyHalted: true,
+    bitPaused: false,
+    balancesReconciled: true,
+    authorizations: {
+      signing: false,
+      broadcast: false,
+      gateOpening: false,
+      lightningDispatch: false,
+      newExposure: false,
       funding: false,
     },
   };
@@ -196,6 +265,64 @@ test("release-verification status can prove fresh verification but never dispatc
       releaseVerification: {
         ...status.releaseVerification,
         authorizations: { ...status.releaseVerification.authorizations, dispatch: true },
+      },
+    }), /identity or authority/);
+  } finally {
+    store.close();
+  }
+});
+
+test("recovery-verification status exposes incident state but no reusable context or authority", async (t) => {
+  const paths = await fixture(t);
+  const store = await CoordinatorStore.open(paths.databasePath);
+  const heartbeatAt = "2033-05-18T03:33:21.000Z";
+  const validUntil = Math.floor(Date.parse(heartbeatAt) / 1_000) + 60;
+  try {
+    const status = buildCoordinatorRecoveryVerificationStatus({
+      store,
+      serviceStartedAt: "2033-05-18T03:33:20.000Z",
+      heartbeatAt,
+      leaseIdentifier: `sha256:${"1".repeat(64)}`,
+      recoveredInterruptedActions: 0,
+      recoveryVerification: activeRecoveryVerification(heartbeatAt, validUntil),
+    });
+    assert.equal(status.mode, "recovery-verification-only");
+    assert.equal(status.recoveryVerification.state, "active");
+    assert.equal(status.recoveryVerification.gateOpen, false);
+    assert.equal(status.recoveryVerification.emergencyHalted, true);
+    assert.equal(status.fundingAuthorization, false);
+    assert.equal(status.dispatchAuthorization, false);
+    assert.equal(status.networkListener, false);
+    assert.throws(
+      () => validateCoordinatorRecoveryVerificationStatus({ ...status, dispatchAuthorization: true }),
+      /claims unavailable authority/,
+    );
+    assert.throws(() => validateCoordinatorRecoveryVerificationStatus({
+      ...status,
+      recoveryVerification: {
+        ...status.recoveryVerification,
+        state: "inactive",
+      },
+    }), /retains active recovery fields/);
+    assert.throws(() => validateCoordinatorRecoveryVerificationStatus({
+      ...status,
+      recoveryVerification: {
+        ...status.recoveryVerification,
+        balancesReconciled: false,
+      },
+    }), /invalid or unreconciled/);
+    assert.throws(() => validateCoordinatorRecoveryVerificationStatus({
+      ...status,
+      recoveryVerification: {
+        ...status.recoveryVerification,
+        gateOpen: true,
+      },
+    }), /cannot be open and emergency halted/);
+    assert.throws(() => validateCoordinatorRecoveryVerificationStatus({
+      ...status,
+      recoveryVerification: {
+        ...status.recoveryVerification,
+        authorizations: { ...status.recoveryVerification.authorizations, lightningDispatch: true },
       },
     }), /identity or authority/);
   } finally {
@@ -300,6 +427,52 @@ test("release-verification health requires a fresh active release and still repo
     await assert.rejects(
       readCoordinatorServiceHealth(policy, { now: () => observedAt + 21_000 }),
       /release verification is expired/,
+    );
+  } finally {
+    store.close();
+    await lease.release();
+  }
+});
+
+test("recovery-verification health requires fresh provider-bound recovery and reports incident state", async (t) => {
+  const paths = await fixture(t);
+  const observedAt = Date.parse("2033-05-18T03:33:20.000Z");
+  const policy = config(paths, {
+    COORDINATOR_MODE: "recovery-verification-only",
+    COORDINATOR_RECOVERY_ACTIVATION_MANIFEST_PATH: join(paths.root, "inputs", "recovery.json"),
+    COORDINATOR_RECOVERY_REFRESH_SECONDS: "5",
+    COORDINATOR_RECOVERY_PROVIDER_TIMEOUT_MS: "1000",
+  });
+  const lease = await acquireCoordinatorServiceLease(policy, {
+    now: () => observedAt,
+    randomBytesImpl: deterministicRandom(),
+  });
+  const store = await CoordinatorStore.open(paths.databasePath);
+  const validUntil = Math.floor(observedAt / 1_000) + 20;
+  try {
+    await lease.publish(buildCoordinatorRecoveryVerificationStatus({
+      store,
+      serviceStartedAt: lease.startedAt,
+      heartbeatAt: wholeSecond(observedAt),
+      leaseIdentifier: lease.leaseId,
+      recoveredInterruptedActions: 0,
+      recoveryVerification: activeRecoveryVerification(wholeSecond(observedAt), validUntil),
+    }));
+    assert.deepEqual(await readCoordinatorServiceHealth(policy, { now: () => observedAt + 5_000 }), {
+      schema: "treeswap.coordinator-recovery-verification-service-status.v1",
+      mode: "recovery-verification-only",
+      heartbeatAt: wholeSecond(observedAt),
+      databaseStatus: "ok",
+      fundingAuthorization: false,
+      recoveryVerification: "active",
+      recoveryValidUntil: validUntil,
+      gateOpen: false,
+      emergencyHalted: true,
+      bitPaused: false,
+    });
+    await assert.rejects(
+      readCoordinatorServiceHealth(policy, { now: () => observedAt + 21_000 }),
+      /recovery verification is expired/,
     );
   } finally {
     store.close();
@@ -464,6 +637,53 @@ test("packaged release verifier stays alive but unhealthy and authority-free whe
     assert.equal(status.dispatchAuthorization, false);
     assert.equal(statusBytes.includes("private-token"), false);
     assert.equal(statusBytes.includes(environment.COORDINATOR_RELEASE_ACTIVATION_MANIFEST_PATH), false);
+  } finally {
+    if (child.exitCode === null) await stop(child);
+  }
+});
+
+test("packaged recovery verifier stays alive, inactive, secret-free, and unable to dispatch", async (t) => {
+  const paths = await fixture(t);
+  const environment = {
+    ...process.env,
+    COORDINATOR_MODE: "recovery-verification-only",
+    COORDINATOR_DATABASE_PATH: paths.databasePath,
+    COORDINATOR_RUNTIME_DIRECTORY: paths.runtimeDirectory,
+    COORDINATOR_HEARTBEAT_SECONDS: "5",
+    COORDINATOR_INTEGRITY_SECONDS: "10",
+    COORDINATOR_LEASE_STALE_SECONDS: "30",
+    COORDINATOR_RECOVERY_ACTIVATION_MANIFEST_PATH: join(paths.root, "inputs", "missing-recovery.json"),
+    COORDINATOR_RECOVERY_REFRESH_SECONDS: "5",
+    COORDINATOR_RECOVERY_PROVIDER_TIMEOUT_MS: "1000",
+    TREESWAP_FUNDING_ENABLED: "false",
+    TREESWAP_RECOVERY_RPC_TEST_URL: "https://provider.example/private-recovery-token",
+  };
+  const child = spawn(process.execPath, ["infra/coordinator/service.mjs"], {
+    cwd: process.cwd(),
+    env: environment,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  try {
+    await waitForOutput(
+      child,
+      "running-recovery-verification-inactive-no-action-dispatch-or-funding-authority",
+    );
+    const health = spawnSync(process.execPath, ["infra/coordinator/healthcheck.mjs"], {
+      cwd: process.cwd(),
+      env: environment,
+      encoding: "utf8",
+    });
+    assert.equal(health.status, 1);
+    assert.match(health.stderr, /recovery verification is inactive/);
+    const statusBytes = await readFile(join(paths.runtimeDirectory, "coordinator.lease", "status.json"), "utf8");
+    const status = JSON.parse(statusBytes);
+    assert.equal(status.recoveryVerification.state, "inactive");
+    assert.equal(status.recoveryVerification.consecutiveFailures, 1);
+    assert.equal(status.fundingAuthorization, false);
+    assert.equal(status.dispatchAuthorization, false);
+    assert.equal(status.networkListener, false);
+    assert.equal(statusBytes.includes("private-recovery-token"), false);
+    assert.equal(statusBytes.includes(environment.COORDINATOR_RECOVERY_ACTIVATION_MANIFEST_PATH), false);
   } finally {
     if (child.exitCode === null) await stop(child);
   }

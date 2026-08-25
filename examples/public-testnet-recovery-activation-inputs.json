@@ -1,0 +1,32 @@
+{
+  "schema": "treeswap.public-testnet-recovery-activation-inputs.v1",
+  "candidateEvidence": {
+    "adoptionPolicy": "/run/treeswap/release/adoption-policy.json",
+    "campaignAttestations": "/run/treeswap/release/campaign-attestations.json",
+    "campaignPolicy": "/run/treeswap/release/campaign-policy.json",
+    "campaignRecord": "/run/treeswap/release/campaign-record.json",
+    "deploymentPolicy": "/run/treeswap/release/deployment-policy.json",
+    "isolationAttestations": "/run/treeswap/release/isolation-attestations.json",
+    "isolationPolicy": "/run/treeswap/release/isolation-policy.json",
+    "isolationRecord": "/run/treeswap/release/isolation-record.json",
+    "operationsAttestations": "/run/treeswap/release/operations-attestations.json",
+    "operationsPolicy": "/run/treeswap/release/operations-policy.json",
+    "operationsRecord": "/run/treeswap/release/operations-record.json",
+    "policyTemplate": "/run/treeswap/release/release-policy-template.json",
+    "postflightBundle": "/run/treeswap/release/deployment-postflight-bundle.json",
+    "promotionAttestations": "/run/treeswap/release/promotion-attestations.json",
+    "promotionObservations": "/run/treeswap/release/promotion-observations.json",
+    "promotionPolicy": "/run/treeswap/release/promotion-policy.json",
+    "promotionRecord": "/run/treeswap/release/promotion-record.json",
+    "qualificationArtifact": "/run/treeswap/release/qualification-artifact.json",
+    "qualificationAttestation": "/run/treeswap/release/qualification-attestation.json",
+    "qualificationPolicy": "/run/treeswap/release/qualification-policy.json",
+    "qualificationReview": "/run/treeswap/release/qualification-review.json",
+    "recordTemplate": "/run/treeswap/release/release-record-template.json",
+    "reviewAttestations": "/run/treeswap/release/review-attestations.json",
+    "reviewPolicy": "/run/treeswap/release/review-policy.json",
+    "reviewRecord": "/run/treeswap/release/review-record.json"
+  },
+  "approvalBundle": "/run/treeswap/release/release-approvals.json",
+  "providerConfiguration": "/run/treeswap/release/release-providers.json"
+}

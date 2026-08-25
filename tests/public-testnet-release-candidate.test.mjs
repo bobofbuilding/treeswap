@@ -92,6 +92,7 @@ import {
   buildPublicTestnetRecoveryActivationSummary,
   buildPublicTestnetReleaseActivationPreflightSummary,
 } from "../lib/public-testnet-release-activation.mjs";
+import { createCoordinatorRecoveryVerificationSupervisor } from "../lib/coordinator-recovery-supervisor.mjs";
 import { createCoordinatorReleaseVerificationSupervisor } from "../lib/coordinator-release-supervisor.mjs";
 import {
   assessRetainedReleaseRotation,
@@ -1609,10 +1610,12 @@ test("activation manifest rebuilds every raw input and retains authority only in
     now,
   }).allowed, false);
 
+  const recoveryApprovalBundlePath = join(directory, "recovery-approval-bundle.json");
+  await writeFile(recoveryApprovalBundlePath, `${JSON.stringify(approvalBundle)}\n`);
   const recoveryManifest = {
     schema: "treeswap.public-testnet-recovery-activation-inputs.v1",
     candidateEvidence,
-    approvalBundle: extraPaths.approvalBundle,
+    approvalBundle: recoveryApprovalBundlePath,
     providerConfiguration: extraPaths.providerConfiguration,
   };
   const recoveryManifestPath = join(directory, "recovery-activation-inputs.json");
@@ -1647,6 +1650,32 @@ test("activation manifest rebuilds every raw input and retains authority only in
   });
   assert.equal(/private-token|capabilities|signature/i.test(JSON.stringify(recoverySummary)), false);
   assert.equal(deactivatePublicTestnetRecovery(recoveryResult.activation), true);
+
+  const recoverySupervisor = createCoordinatorRecoveryVerificationSupervisor({
+    manifestPath: recoveryManifestPath,
+    environment: {
+      TREESWAP_RELEASE_RPC_ONE_URL: "https://one.example/rpc/private-token",
+      TREESWAP_RELEASE_RPC_TWO_URL: "https://two.example/rpc/private-token",
+    },
+    fetchImpl: releaseRpcFetch({
+      candidate,
+      deployment,
+      now,
+      overrides: { gateOpen: false, emergencyHalted: true, bitPaused: true },
+    }),
+  });
+  const recoveryStatus = await recoverySupervisor.refresh({ now });
+  assert.equal(recoveryStatus.state, "active");
+  assert.equal(recoveryStatus.gateOpen, false);
+  assert.equal(recoveryStatus.emergencyHalted, true);
+  assert.equal(recoveryStatus.bitPaused, true);
+  const supervisedRecovery = recoverySupervisor.useActiveActivation((active) => active, { now });
+  assert.equal(isPublicTestnetRecoveryActive(supervisedRecovery.activation), true);
+  assert.equal(/private-token|signature/i.test(JSON.stringify(recoveryStatus)), false);
+  await writeFile(recoveryApprovalBundlePath, "[]\n");
+  assert.equal((await recoverySupervisor.refresh({ now: now + 1 })).state, "inactive");
+  assert.equal(isPublicTestnetRecoveryActive(supervisedRecovery.activation), false);
+  recoverySupervisor.stop();
 
   const supervisor = createCoordinatorReleaseVerificationSupervisor({
     manifestPath,
