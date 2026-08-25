@@ -1749,6 +1749,54 @@ test("activates funding only after same-process evidence, approvals, reconciliat
       }),
     });
     assert.equal((await lifecycleReleaseSupervisor.refresh({ now: now + 3 })).state, "active");
+    let activePolicyGetterCalls = 0;
+    const accessorPreparation = {
+      executionPolicies: [],
+      releaseSupervisor: lifecycleReleaseSupervisor,
+      serviceLease,
+      store: waitingStore,
+    };
+    Object.defineProperty(accessorPreparation, "store", {
+      configurable: true,
+      enumerable: true,
+      get() {
+        activePolicyGetterCalls += 1;
+        return waitingStore;
+      },
+    });
+    await assert.rejects(
+      prepareCoordinatorActiveExecutionPolicySet(accessorPreparation),
+      /enumerable data properties/,
+    );
+    assert.equal(activePolicyGetterCalls, 0);
+    const symbolPolicies = [{ ignored: true }];
+    symbolPolicies[Symbol("hidden active policy")] = true;
+    await assert.rejects(prepareCoordinatorActiveExecutionPolicySet({
+      executionPolicies: symbolPolicies,
+      releaseSupervisor: lifecycleReleaseSupervisor,
+      serviceLease,
+      store: waitingStore,
+    }), /fields are not exact/);
+    const accessorPolicyEntry = {
+      solverCapabilityVerification: solverCapability.verification,
+      evidencePolicy,
+      runtime: null,
+    };
+    Object.defineProperty(accessorPolicyEntry, "runtime", {
+      configurable: true,
+      enumerable: true,
+      get() {
+        activePolicyGetterCalls += 1;
+        return null;
+      },
+    });
+    await assert.rejects(prepareCoordinatorActiveExecutionPolicySet({
+      executionPolicies: [accessorPolicyEntry],
+      releaseSupervisor: lifecycleReleaseSupervisor,
+      serviceLease,
+      store: waitingStore,
+    }), /enumerable data properties/);
+    assert.equal(activePolicyGetterCalls, 0);
     await assert.rejects(prepareCoordinatorActiveExecutionPolicySet({
       executionPolicies: [{
         solverCapabilityVerification: solverCapability.verification,

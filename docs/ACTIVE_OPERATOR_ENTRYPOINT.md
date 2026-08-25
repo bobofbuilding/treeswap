@@ -36,8 +36,14 @@ solver endpoint requests; a late result cannot be handed to the active
 lifecycle. A copied client, runtime, config, controls object, or preparer has no
 factory provenance and is rejected. Private-packet clients or evidence controls
 made with an injected request callback are test-only and reject before runtime
-creation. No endpoint, key, invoice, address, or settlement identifier is added
-to coordinator health output.
+creation. Every launcher, action configuration, policy entry, policy array, and
+lower-level policy-set input is read only through exact own enumerable data
+properties. Symbols, hidden fields, accessors, sparse or decorated arrays,
+unsupported nested values, and extra prototype-named fields reject without
+invoking a getter. Nested policy snapshots preserve an own `__proto__` key so
+the downstream exact schema rejects it instead of silently changing or losing
+the field. No endpoint, key, invoice, address, or settlement identifier is
+added to coordinator health output.
 
 ## Deployment-owned code
 

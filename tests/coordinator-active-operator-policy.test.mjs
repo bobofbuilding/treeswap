@@ -193,14 +193,17 @@ async function endpointEnvelope() {
   });
 }
 
-async function capabilityClient({ requestImpl: requestOverride = null } = {}) {
+async function capabilityClient({
+  policy: policyOverride = capabilityPolicy,
+  requestImpl: requestOverride = null,
+} = {}) {
   const envelope = await endpointEnvelope();
   const readers = concreteReaders();
   return createSolverCapabilityClient({
     endpointOrigin: ENDPOINT_ORIGIN,
     solverId: SOLVER.address,
     direction: "bit-to-lightning",
-    policy: capabilityPolicy,
+    policy: policyOverride,
     verifyLightningNodeSignature: async () => ({ valid: true, pubkey: NODE_PUBKEY }),
     readVerifiedBitInventory: readers.readVerifiedBitInventory,
     readVerifiedLightningCapacity: readers.readVerifiedLightningCapacity,
@@ -444,4 +447,97 @@ test("rejects lookalike readers, packet clients, action configs, and non-indepen
     ],
     requestTimeoutMs: 5_000,
   }), /distinct labels, origins, and clients/);
+});
+
+test("rejects non-data, symbol, array-smuggled, and prototype-key active operator inputs", async () => {
+  const policy = evidencePolicy();
+  const client = await capabilityClient();
+  const activeRuntime = runtime(policy);
+
+  let getterCalls = 0;
+  const accessorPolicy = evidencePolicy();
+  Object.defineProperty(accessorPolicy.approvers, "securityReviewer", {
+    configurable: true,
+    enumerable: true,
+    get() {
+      getterCalls += 1;
+      return SECURITY_REVIEWER.address;
+    },
+  });
+  assert.throws(() => createCoordinatorActiveOperatorPolicyPreparer({
+    policies: [{ capabilityClient: client, evidencePolicy: accessorPolicy, runtime: activeRuntime }],
+  }), /enumerable data property/);
+  assert.equal(getterCalls, 0);
+
+  const prototypePolicy = evidencePolicy();
+  Object.defineProperty(prototypePolicy, "__proto__", {
+    configurable: true,
+    enumerable: true,
+    writable: true,
+    value: { solver: Wallet.createRandom().address },
+  });
+  assert.throws(() => createCoordinatorActiveOperatorPolicyPreparer({
+    policies: [{ capabilityClient: client, evidencePolicy: prototypePolicy, runtime: activeRuntime }],
+  }), /fields are not exact/);
+  assert.equal(Object.prototype.solver, undefined);
+
+  const symbolPolicies = [{ capabilityClient: client, evidencePolicy: policy, runtime: activeRuntime }];
+  symbolPolicies[Symbol("hidden policy")] = true;
+  assert.throws(() => createCoordinatorActiveOperatorPolicyPreparer({
+    policies: symbolPolicies,
+  }), /fields are not exact/);
+
+  const accessorRuntime = { ...activeRuntime };
+  Object.defineProperty(accessorRuntime, "controls", {
+    configurable: true,
+    enumerable: true,
+    get() {
+      getterCalls += 1;
+      return activeRuntime.controls;
+    },
+  });
+  assert.throws(() => createCoordinatorActiveOperatorRuntime(accessorRuntime), /enumerable data properties/);
+  assert.equal(getterCalls, 0);
+
+  const accessorCapabilityPolicy = { ...capabilityPolicy };
+  Object.defineProperty(accessorCapabilityPolicy, "chainId", {
+    configurable: true,
+    enumerable: true,
+    get() {
+      getterCalls += 1;
+      return CHAIN_ID;
+    },
+  });
+  await assert.rejects(capabilityClient({ policy: accessorCapabilityPolicy }), /enumerable data property/);
+  assert.equal(getterCalls, 0);
+
+  const prototypeCapabilityPolicy = { ...capabilityPolicy };
+  Object.defineProperty(prototypeCapabilityPolicy, "__proto__", {
+    configurable: true,
+    enumerable: true,
+    writable: true,
+    value: { chainId: "1" },
+  });
+  await assert.rejects(capabilityClient({ policy: prototypeCapabilityPolicy }), /fields are not exact/);
+  assert.equal(Object.prototype.chainId, undefined);
+
+  const accepted = createCoordinatorActiveOperatorPolicyPreparer({
+    policies: [{ capabilityClient: client, evidencePolicy: policy, runtime: activeRuntime }],
+  });
+  const serviceInput = {
+    environment: {},
+    fetchImpl: fetch,
+    policyPreparer: accepted,
+    signal: null,
+  };
+  Object.defineProperty(serviceInput, "policyPreparer", {
+    configurable: true,
+    enumerable: true,
+    get() {
+      getterCalls += 1;
+      return accepted;
+    },
+  });
+  assert.throws(() => startCoordinatorActiveOperatorService(serviceInput), /enumerable data properties/);
+  assert.equal(getterCalls, 0);
 });
