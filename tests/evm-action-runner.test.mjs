@@ -265,10 +265,48 @@ test("leadership loss after durable EVM claim prevents transaction broadcast", a
       }
     },
   }), /no longer owns its lease/);
-  assert.deepEqual(guardedBoundaries, ["evm-broadcast-claim", "evm-broadcast-send"]);
+  assert.deepEqual(guardedBoundaries, [
+    "evm-signer-address",
+    "evm-sign-transaction",
+    "evm-broadcast-claim",
+    "evm-broadcast-send",
+  ]);
   assert.equal(broadcastCalls, 0);
   assert.equal(fixture.store.getAction(fixture.planned.actionId).state, "DISPATCHING");
   assert.equal(fixture.store.getEvmTransaction(fixture.planned.actionId).broadcastCount, 1);
+});
+
+test("leadership loss after signer lookup prevents a late EVM signature", async (t) => {
+  const fixture = await preparedStore(t, "evm-signing-fence");
+  let signatureCalls = 0;
+  const guardedSigner = {
+    getAddress: () => signer.getAddress(),
+    signTransaction: (transaction) => {
+      signatureCalls += 1;
+      return signer.signTransaction(transaction);
+    },
+  };
+  await assert.rejects(dispatchEvmClaimAction({
+    store: fixture.store,
+    actionId: fixture.planned.actionId,
+    operation: fixture.op,
+    signer: guardedSigner,
+    expectedChainId: CHAIN_ID,
+    expectedContract: CONTRACT,
+    expectedContractCodeHash: CONTRACT_CODE_HASH,
+    maximumGasCostWei: MAXIMUM_GAS_COST_WEI,
+    rpcUrl: "http://127.0.0.1:8545",
+    rpcRequestImpl: async () => { throw new Error("must not read or broadcast"); },
+    nowSeconds: () => NOW + 4,
+    beforeSideEffect: async (boundary) => {
+      if (boundary === "evm-sign-transaction") {
+        throw new Error("coordinator supervisor no longer owns its lease");
+      }
+    },
+  }), /no longer owns its lease/);
+  assert.equal(signatureCalls, 0);
+  assert.equal(fixture.store.getAction(fixture.planned.actionId).state, "PENDING");
+  assert.equal(fixture.store.getEvmTransaction(fixture.planned.actionId).broadcastCount, 0);
 });
 
 test("rejects excessive gas cost or changed escrow code before durable broadcast", async (t) => {

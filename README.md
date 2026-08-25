@@ -48,7 +48,7 @@ The prototype assumes a business par value of **1 BIT = 100 sats**. This value i
 - Optional Lightning account linking in [`docs/LIGHTNING_ACCOUNTS.md`](docs/LIGHTNING_ACCOUNTS.md)
 - Immutable version transitions in [`docs/UPGRADES.md`](docs/UPGRADES.md)
 - Pinned two-node Lightning lab in [`docs/LIGHTNING_REGTEST.md`](docs/LIGHTNING_REGTEST.md)
-- Atomic coordinator, one-dispatch Lightning recovery, revoking release/recovery verification supervisors, and exact-transaction EVM claim outbox in [`docs/COORDINATOR.md`](docs/COORDINATOR.md)
+- Atomic coordinator, one-dispatch Lightning recovery, revoking release/recovery verification supervisors, bounded restart-only action loop, and exact-transaction EVM claim outbox in [`docs/COORDINATOR.md`](docs/COORDINATOR.md)
 - Controlled EVM finality, provider-disagreement, nonce-replacement, and relayer-rotation evidence in [`docs/EVM_OUTBOX_EVIDENCE.md`](docs/EVM_OUTBOX_EVIDENCE.md)
 - Reproducible BIT source, provider-comparison, and live-token fork evidence in [`docs/BIT_MAINNET_EVIDENCE.md`](docs/BIT_MAINNET_EVIDENCE.md)
 - Deterministic static preflight for the short-lived two-provider/two-reviewer ceremony in [`docs/BIT_CEREMONY_PREFLIGHT.md`](docs/BIT_CEREMONY_PREFLIGHT.md)
@@ -97,7 +97,7 @@ Start with the ordered [TreeSwap adoption handoff](docs/ADOPTION_HANDOFF.md). It
 - Repeat the passing EVM outbox/reorg campaigns on public testnet using two independently operated authenticated providers and genuine finality transitions
 - Obtain matching signed observations from two genuinely independent authenticated Ethereum providers, complete the two-role BIT review with retained reports, and derive the short-lived reviewed BIT manifest
 - Independently rebuild and review the closed Sepolia plan, deploy its exact transactions through hardware-backed operators, and capture matching finalized v2 TreeSwap manifests proving reconciled zero balances before test inventory
-- Deploy and qualify the bounded solver daemon, continuous safety monitor, backup/restore drills, redundant guardian delivery, and external alert routing
+- Deploy and qualify the bounded solver daemon and restart-only recovery loop with authenticated job transport, continuous safety monitor, backup/restore drills, redundant guardian delivery, and external alert routing
 - Deploy the persistent activation coordinator with independently operated runtime reconciliation signers; never restore funding authority from serialized activation output
 - Deploy the implemented solver endpoint, private-packet, and capacity-reader protocols plus independent quote-delivery paths
 - Create and mature the BIT/WBTC pool in observation-only mode, then independently review its exact pool/feed/quoter policy and the other executable BIT venues before it can help bound funded quotes
