@@ -229,8 +229,59 @@ test("does not count duplicate venues, control domains, organizations, or wrong-
   ];
   const result = evaluateBitRisk({ policy: duplicatePolicy, snapshot, priceSignals: duplicated, request });
   assert.equal(result.enabled, false);
-  assert.deepEqual(result.qualifiedPriceSources, ["venue-a"]);
+  assert.deepEqual(result.qualifiedPriceSources, []);
+  assert.match(result.reasons.join("; "), /conflicting price signal identity/);
   assert.match(result.reasons.join("; "), /insufficient fresh executable price sources/);
+});
+
+test("conflicting fresh observations cannot make price evaluation depend on caller order", () => {
+  const conflictingVenueA = venueSignal(1, {
+    observedAt: NOW - 1,
+    validUntil: NOW + 20,
+    priceMsatPerBit: 150_000n,
+  });
+  const safeFirst = evaluateBitRisk({
+    policy,
+    snapshot,
+    priceSignals: [priceSignals[0], priceSignals[1], priceSignals[2], conflictingVenueA],
+    request,
+  });
+  const unsafeFirst = evaluateBitRisk({
+    policy,
+    snapshot,
+    priceSignals: [conflictingVenueA, priceSignals[1], priceSignals[2], priceSignals[0]],
+    request,
+  });
+
+  assert.equal(safeFirst.enabled, false);
+  assert.equal(unsafeFirst.enabled, false);
+  assert.deepEqual(safeFirst.qualifiedPriceEvidence, unsafeFirst.qualifiedPriceEvidence);
+  assert.match(safeFirst.reasons.join("; "), /conflicting price signal identity/);
+  assert.match(unsafeFirst.reasons.join("; "), /conflicting price signal identity/);
+});
+
+test("bounds price candidate work before verified signals are normalized", () => {
+  const result = evaluateBitRisk({
+    policy,
+    snapshot,
+    priceSignals: Array.from({ length: 65 }, () => priceSignals[0]),
+    request,
+  });
+  assert.equal(result.enabled, false);
+  assert.deepEqual(result.qualifiedPriceSources, []);
+  assert.match(result.reasons.join("; "), /price signal candidate limit exceeded/);
+});
+
+test("an exact repeated price observation is harmless and remains one source", () => {
+  const result = evaluateBitRisk({
+    policy,
+    snapshot,
+    priceSignals: [...priceSignals, priceSignals[0]],
+    request,
+  });
+  assert.equal(result.enabled, true);
+  assert.deepEqual(result.qualifiedPriceSources, ["venue-a", "venue-b", "venue-c"]);
+  assert.doesNotMatch(result.reasons.join("; "), /conflicting price signal identity/);
 });
 
 test("rejects a valid source whose executable depth covers only one asset leg", () => {

@@ -47,6 +47,8 @@ Uniswap v3 stores historical price and liquidity accumulators for on-demand TWAP
 
 The pool-derived result is one `bit-wbtc-twap-probe` signal. The general risk gate now requires every eligible price signal to bind its request direction, validity, source-policy digest, evidence digest, venue ID, control-domain ID, and executable depth on both legs. The source-policy digest must be explicitly allowlisted by the signed release risk policy. Duplicate sources, venues, or control domains do not count toward the minimum source total.
 
+The complete price-candidate set is capped at 64 before verification work. Exact repeats collapse to one observation, while conflicting fresh observations that reuse any source, venue, control domain, or operator organization are quarantined symmetrically and halt authorization. The caller cannot choose a pool or venue price by placing its preferred signed observation first. Surviving independent signals are ordered canonically before the median and spread are computed.
+
 Other venues cannot enter as arbitrary coordinator JSON. Each must produce a short-lived EIP-712-signed observation through the executable-venue verifier, and only its original same-process verified signal is eligible. This prevents two invented sources from joining the real pool signal to manufacture a three-source quorum.
 
 Solvers still choose their own exact amount and fee and compete to fill the user's intent. TreeSwap uses the market signals only as a circuit breaker and quote-band input. BIT → Lightning keeps the higher base fee because it consumes scarce outbound Lightning capacity.
