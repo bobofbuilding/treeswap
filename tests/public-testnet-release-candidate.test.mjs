@@ -50,6 +50,9 @@ import {
 } from "../lib/active-solver-daemon-runtime.mjs";
 import { createCoordinatorRecoveryActionLoop } from "../lib/coordinator-recovery-action-loop.mjs";
 import {
+  createCoordinatorRecoveryExecutionBootstrap,
+} from "../lib/coordinator-recovery-execution-service.mjs";
+import {
   createCoordinatorRecoveryExecutionSupervisor,
 } from "../lib/coordinator-recovery-execution-supervisor.mjs";
 import { CoordinatorStore } from "../lib/coordinator-store.mjs";
@@ -1452,24 +1455,56 @@ test("activates funding only after same-process evidence, approvals, reconciliat
         lightning: null,
         evm: null,
       });
-      const executionSupervisor = createCoordinatorRecoveryExecutionSupervisor({
+      let resolvePreparationStarted;
+      const preparationStarted = new Promise((resolve) => {
+        resolvePreparationStarted = resolve;
+      });
+      let resolvePreparedJobSet;
+      const preparedJobSet = new Promise((resolve) => {
+        resolvePreparedJobSet = resolve;
+      });
+      const executionBootstrap = createCoordinatorRecoveryExecutionBootstrap({
         heartbeatSeconds: 5,
         intervalSeconds: 5,
-        jobSetVerification: supervisedJobSet,
+        preparationTimeoutSeconds: 10,
+        prepareJobSetVerification: ({ abortSignal, recoverySupervisor, serviceLease: receivedLease,
+          store: receivedStore }) => {
+          assert.equal(abortSignal.aborted, false);
+          assert.equal(recoverySupervisor, executionRecoverySupervisor);
+          assert.equal(receivedLease, serviceLease);
+          assert.equal(receivedStore, restoredStore);
+          resolvePreparationStarted();
+          return preparedJobSet;
+        },
         recoveredInterruptedActions: 0,
         recoveryRefreshSeconds: 5,
         recoverySupervisor: executionRecoverySupervisor,
         serviceLease,
+        signal: null,
         store: restoredStore,
       });
-      assert.equal(await executionSupervisor.start(), true);
-      assert.equal(await executionSupervisor.start(), false);
+      const executionStarting = executionBootstrap.start();
+      await preparationStarted;
+      const bootstrapStatus = executionBootstrap.status();
+      assert.equal(
+        bootstrapStatus.schema,
+        "treeswap.coordinator-recovery-execution-bootstrap-status.v1",
+      );
+      assert.equal(bootstrapStatus.phase, "preparing-custody-job-set");
+      assert.equal(bootstrapStatus.boundedExistingLiabilityEvmClaimRecovery, false);
+      assert.equal(bootstrapStatus.lightningDispatchAuthorization, false);
+      assert.equal(bootstrapStatus.newExposureAuthorization, false);
+      assert.equal(bootstrapStatus.fundingAuthorization, false);
+      assert.equal(Object.hasOwn(bootstrapStatus, "recoveryAction"), false);
+      resolvePreparedJobSet(supervisedJobSet);
+      assert.equal(await executionStarting, true);
+      assert.equal(await executionBootstrap.start(), false);
       for (let attempt = 0; attempt < 10; attempt += 1) {
         await new Promise((resolve) => setImmediate(resolve));
-        await executionSupervisor.publishStatus();
-        if (executionSupervisor.status().recoveryAction.state === "active") break;
+        await executionBootstrap.publishStatus();
+        if (executionBootstrap.status().recoveryAction.state === "active") break;
       }
-      const supervisedStatus = executionSupervisor.status();
+      const supervisedStatus = executionBootstrap.status();
       assert.equal(supervisedStatus.mode, "recovery-execution-only");
       assert.equal(supervisedStatus.recoveryAction.state, "active");
       assert.equal(supervisedStatus.recoveryAction.counts.waiting, 1);
@@ -1479,15 +1514,15 @@ test("activates funding only after same-process evidence, approvals, reconciliat
       assert.equal(supervisedStatus.fundingAuthorization, false);
       assert.equal(JSON.stringify(supervisedStatus).includes(wrapperSettlementId), false);
       serviceNow = (now + 9) * 1_000;
-      await executionSupervisor.publishStatus();
+      await executionBootstrap.publishStatus();
       assert.equal(executionVerifierRefreshes, 1);
-      const supervisedShutdown = executionSupervisor.stop();
+      const supervisedShutdown = executionBootstrap.stop();
       assert.equal(executionVerifierActive, false);
       assert.equal(executionVerifierStops, 1);
       assert.deepEqual(await supervisedShutdown, { reason: "requested" });
-      assert.deepEqual(await executionSupervisor.waitUntilStopped(), { reason: "requested" });
-      await assert.rejects(executionSupervisor.publishStatus(), /is stopped/);
-      await assert.rejects(executionSupervisor.start(), /cannot be restarted/);
+      assert.deepEqual(await executionBootstrap.waitUntilStopped(), { reason: "requested" });
+      await assert.rejects(executionBootstrap.publishStatus(), /is stopped/);
+      await assert.rejects(executionBootstrap.start(), /cannot be restarted/);
 
       executionVerifierActive = true;
       let failingVerifierStopCalls = 0;

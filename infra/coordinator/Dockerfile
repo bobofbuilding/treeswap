@@ -10,7 +10,7 @@ COPY infra/coordinator ./infra/coordinator
 COPY infra/lightning-adapter/capacity-smoke.mjs ./infra/lightning-adapter/capacity-smoke.mjs
 RUN mkdir -p /data /run/treeswap/credentials /run/treeswap/state \
   && chown node:node /data /run/treeswap/credentials /run/treeswap/state \
-  && node -e "Promise.all([import('./lib/evm-action-runner.mjs'), import('./lib/coordinator-recovery-execution-supervisor.mjs')])"
+  && node -e "Promise.all([import('./lib/evm-action-runner.mjs'), import('./lib/coordinator-recovery-execution-supervisor.mjs'), import('./lib/coordinator-recovery-execution-service.mjs')])"
 
 ENV COORDINATOR_MODE=closed \
   COORDINATOR_DATABASE_PATH=/data/coordinator.sqlite \
