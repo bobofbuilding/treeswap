@@ -63,6 +63,22 @@ test("keeps the trusted audit event immutable and does not execute accessors", (
   assert.equal(Object.prototype.hostile, undefined);
 });
 
+test("does not coerce object-shaped audit events or field values", () => {
+  let coercions = 0;
+  const hostile = {
+    [Symbol.toPrimitive]() {
+      coercions += 1;
+      return "forged";
+    },
+  };
+  const parsed = JSON.parse(safeAuditLine(hostile, {
+    valid: 7,
+    hostile,
+  }));
+  assert.deepEqual(parsed, { event: "unknown", valid: "7" });
+  assert.equal(coercions, 0);
+});
+
 test("rejects rather than silently canonicalizing signed relay identifiers", () => {
   assert.equal(canonicalRelaySource("relay-a"), "relay-a");
   for (const source of ["Relay-A", " relay-a", "relay/a", "relay\nadmin", "\u202erelay-a", "a".repeat(65)]) {

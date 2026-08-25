@@ -157,3 +157,18 @@ test("redacts normalized sensitive-key variants in privacy-safe audit records", 
     ｂｅｎｅｆｉｃｉａｒｙ: "[redacted]",
   });
 });
+
+test("does not coerce an object-shaped privacy audit event", () => {
+  let coercions = 0;
+  const hostile = {
+    [Symbol.toPrimitive]() {
+      coercions += 1;
+      return "forged";
+    },
+  };
+  assert.deepEqual(privacySafeAudit(hostile, { amountSats: 25_000n }), {
+    event: "unknown",
+    amountSats: "25000",
+  });
+  assert.equal(coercions, 0);
+});
