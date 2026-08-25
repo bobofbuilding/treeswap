@@ -22,7 +22,8 @@ docker run --rm --read-only \
     tests/deployment-observer.test.mjs tests/deployment-policy.test.mjs \
     tests/safety-monitor.test.mjs tests/solver-capability.test.mjs \
     tests/solver-daemon-planner.test.mjs tests/solver-daemon-evidence.test.mjs \
-    tests/solver-daemon-evidence-client.test.mjs tests/solver-daemon-runtime.test.mjs \
+    tests/solver-daemon-evidence-client.test.mjs tests/solver-daemon-evidence-provider.test.mjs \
+    tests/solver-daemon-runtime.test.mjs \
     tests/solver-endpoint-transport.test.mjs tests/solver-private-packet.test.mjs
 docker run --rm --read-only \
   --tmpfs /tmp:rw,noexec,nosuid,size=64m \

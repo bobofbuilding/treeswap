@@ -1,6 +1,9 @@
 # Dual-route solver daemon evidence
 
-Status: a concrete local client and provider-side request boundary are implemented. No route, operator, requester key, certificate, replay store, evidence producer, or funded deployment is supplied by the repository.
+Status: a concrete local client, provider handler, and durable provider replay
+store are implemented. No HTTPS listener, operator, production requester key,
+certificate, persistent volume, evidence producer, independent data path, or
+funded deployment is supplied by the repository.
 
 ## Purpose
 
@@ -39,7 +42,19 @@ One missing, late, malformed, cacheable, redirected, disagreeing, copied, wrongl
 
 ## Provider requirement
 
-Each route must independently authenticate the request with `verifySolverDaemonEvidenceRequest`, derive the requested observation from its own approved data path, and sign the resulting evidence record with only its assigned release key. `buildSolverDaemonEvidenceRouteResponse` refuses to produce a response unless the operator supplies a durable atomic replay consumer. That consumer must mark `(requesterKeyId, requestId)` used before returning `true`; a duplicate or storage failure must return false or throw. An in-memory set is suitable only for tests.
+Each route must independently authenticate the request, derive the requested
+observation from its own approved data path, and sign the resulting evidence
+record with only its assigned release key. The concrete
+`createSolverDaemonEvidenceProviderRoute` performs that derivation and accepts
+only the repository's provenance-bound evidence reader and
+`SolverDaemonEvidenceReplayStore`. It claims `(requesterKeyId, requestId)`
+atomically before reading or signing and consumes the claim before responding.
+A duplicate, concurrent request, storage failure, copied reader/store, policy
+mismatch, or expired response fails closed. The strict SQLite store must be
+initialized explicitly once; normal startup refuses a missing or empty ledger.
+In-memory storage is test-only. See [Durable solver-evidence
+provider](./DURABLE_EVIDENCE_PROVIDER.md) for the deployment and loss-recovery
+rules.
 
 The lower-level request verifier checks signature, key ID, time, and exact schema but deliberately does not claim replay protection on its own. A provider must not call it and then respond without the durable consume step.
 
@@ -53,4 +68,13 @@ The route response is authenticated by the policy-pinned EIP-712 signer, not by 
 
 ## Remaining deployment gate
 
-An operator-owned active entrypoint must still construct the original solver capability, private-packet client, this dual-route evidence client, Lightning adapter configuration, EVM signer/provider quorum, and release-bound policy in the same process. It must run one externally enforced replica, use a durable volume, deliver independent alerts, and pass shutdown, timeout, provider, route, adapter, replay-store, and abrupt-process crash drills on public testnet. Until that evidence and independent review exist, the default coordinator continues to refuse active execution and funded operation remains closed.
+An operator-owned active entrypoint must still construct the original solver
+capability, private-packet client, this dual-route evidence client, both durable
+provider routes, Lightning adapter configuration, EVM signer/provider quorum,
+and release-bound policy in the proper isolated processes. It must run one
+externally enforced funded coordinator replica, use separate durable volumes,
+deliver independent alerts, and pass shutdown, timeout, provider, route,
+adapter, replay-store loss/rollback, and abrupt-process crash drills on public
+testnet. Until that evidence and independent review exist, the default
+coordinator continues to refuse active execution and funded operation remains
+closed.

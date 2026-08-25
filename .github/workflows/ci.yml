@@ -111,6 +111,8 @@ jobs:
       - run: node --check lib/lightning-capacity-protocol.mjs
       - run: node --check lib/solver-daemon-planner.mjs
       - run: node --check lib/solver-daemon-evidence.mjs
+      - run: node --check lib/solver-daemon-evidence-client.mjs
+      - run: node --check lib/solver-daemon-evidence-provider.mjs
       - run: node --check lib/solver-daemon-runtime.mjs
       - run: node --check lib/active-solver-daemon-runtime.mjs
       - run: node --check lib/coordinator-active-execution-policy.mjs

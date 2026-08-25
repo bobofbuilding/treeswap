@@ -11,7 +11,7 @@ COPY infra/lightning-adapter/capacity-smoke.mjs ./infra/lightning-adapter/capaci
 RUN mkdir -p /data /run/treeswap/credentials /run/treeswap/state \
   && chown node:node /data /run/treeswap/credentials /run/treeswap/state \
   && node --check infra/coordinator/supervision-status.mjs \
-  && node -e "Promise.all([import('./lib/evm-action-runner.mjs'), import('./lib/coordinator-active-operator-policy.mjs'), import('./lib/coordinator-active-execution-policy.mjs'), import('./lib/coordinator-active-execution-lifecycle.mjs'), import('./lib/coordinator-active-execution-supervisor.mjs'), import('./lib/coordinator-active-execution-service.mjs'), import('./lib/coordinator-recovery-execution-supervisor.mjs'), import('./lib/coordinator-recovery-execution-service.mjs'), import('./lib/coordinator-recovery-operator-policy.mjs')])"
+  && node -e "Promise.all([import('./lib/evm-action-runner.mjs'), import('./lib/solver-daemon-evidence-provider.mjs'), import('./lib/coordinator-active-operator-policy.mjs'), import('./lib/coordinator-active-execution-policy.mjs'), import('./lib/coordinator-active-execution-lifecycle.mjs'), import('./lib/coordinator-active-execution-supervisor.mjs'), import('./lib/coordinator-active-execution-service.mjs'), import('./lib/coordinator-recovery-execution-supervisor.mjs'), import('./lib/coordinator-recovery-execution-service.mjs'), import('./lib/coordinator-recovery-operator-policy.mjs')])"
 
 ENV COORDINATOR_MODE=closed \
   COORDINATOR_DATABASE_PATH=/data/coordinator.sqlite \

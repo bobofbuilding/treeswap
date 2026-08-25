@@ -52,8 +52,9 @@ The operator must still prove all external facts separately:
 - the BIT providers, Lightning capacity observer, Lightning node-signature
   verifier, evidence producers, and EVM reconciliation providers are live and
   independently controlled as required by the release;
-- both evidence routes have durable atomic replay stores and reviewed TLS
-  identity;
+- both evidence routes use the repository's [durable provider
+  boundary](./DURABLE_EVIDENCE_PROVIDER.md), separate initialized replay-ledger
+  volumes, independent readers, and reviewed TLS identity;
 - the Lightning adapter and EVM claim signer have least-privilege credentials;
 - the coordinator database and crash journal are on a persistent private
   volume;
@@ -62,6 +63,12 @@ The operator must still prove all external facts separately:
 - shutdown, provider loss, evidence-route loss, replay-store loss, adapter
   ambiguity, process crash, host restart, and retained-liability recovery drills
   pass against the deployed services.
+
+A provider restart must open its existing ledger with `initialize: false`.
+Missing, empty, corrupted, or rolled-back state is an outage, not permission to
+create a fresh ledger. Loss recovery requires the old route to remain offline,
+requester-key and key-ID rotation, expiry of every old request, explicit new
+ledger initialization, and a witnessed replay drill.
 
 Different labels, URLs, callback objects, keys, or processes are configuration
 separation, not proof of organizational independence or honest observations.
