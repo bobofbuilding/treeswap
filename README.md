@@ -48,7 +48,7 @@ The prototype assumes a business par value of **1 BIT = 100 sats**. This value i
 - Optional Lightning account linking in [`docs/LIGHTNING_ACCOUNTS.md`](docs/LIGHTNING_ACCOUNTS.md)
 - Immutable version transitions in [`docs/UPGRADES.md`](docs/UPGRADES.md)
 - Pinned two-node Lightning lab in [`docs/LIGHTNING_REGTEST.md`](docs/LIGHTNING_REGTEST.md)
-- Atomic coordinator, one-dispatch Lightning recovery, and exact-transaction EVM claim outbox in [`docs/COORDINATOR.md`](docs/COORDINATOR.md)
+- Atomic coordinator, one-dispatch Lightning recovery, revoking release/recovery verification supervisors, and exact-transaction EVM claim outbox in [`docs/COORDINATOR.md`](docs/COORDINATOR.md)
 - Controlled EVM finality, provider-disagreement, nonce-replacement, and relayer-rotation evidence in [`docs/EVM_OUTBOX_EVIDENCE.md`](docs/EVM_OUTBOX_EVIDENCE.md)
 - Reproducible BIT source, provider-comparison, and live-token fork evidence in [`docs/BIT_MAINNET_EVIDENCE.md`](docs/BIT_MAINNET_EVIDENCE.md)
 - Deterministic static preflight for the short-lived two-provider/two-reviewer ceremony in [`docs/BIT_CEREMONY_PREFLIGHT.md`](docs/BIT_CEREMONY_PREFLIGHT.md)

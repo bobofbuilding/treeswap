@@ -13,7 +13,7 @@ docker run --rm --read-only \
   "$runtime_image" \
   --test --test-concurrency=1 \
     tests/admission-store.test.mjs tests/coordinator-store.test.mjs tests/coordinator-service-state.test.mjs \
-    tests/coordinator-release-supervisor.test.mjs \
+    tests/coordinator-release-supervisor.test.mjs tests/coordinator-recovery-supervisor.test.mjs \
     tests/release-retention-custody.test.mjs \
     tests/coordinator-action-runner.test.mjs tests/evm-action-runner.test.mjs \
     tests/deployment-observer.test.mjs tests/deployment-policy.test.mjs \
