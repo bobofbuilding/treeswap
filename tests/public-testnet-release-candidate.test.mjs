@@ -682,6 +682,205 @@ test("derives one exact release candidate from verified deployment, campaign, an
   assert.equal(summary.recordDigest, candidate.recordDigest);
 });
 
+test("snapshots exact release-candidate templates without accessors, coercion, or mutation races", async () => {
+  const { campaign, deployment, operations, qualification, review } = await fixture();
+  const base = {
+    recordTemplate: recordTemplate(),
+    policyTemplate: policyTemplate(deployment.verification.manifest),
+    deploymentPromotionVerification: deployment.verification,
+    independentReviewVerification: review.verification,
+    operationalReadinessVerification: operations.verification,
+    publicTestnetVerification: campaign.verification,
+    qualificationReviewVerification: qualification.verification,
+  };
+
+  let calls = 0;
+  const callAccessor = { ...base };
+  Object.defineProperty(callAccessor, "recordTemplate", {
+    configurable: true,
+    enumerable: true,
+    get() {
+      calls += 1;
+      return recordTemplate();
+    },
+  });
+  assert.throws(
+    () => preparePublicTestnetReleaseCandidate(callAccessor),
+    /enumerable data properties/,
+  );
+  assert.equal(calls, 0);
+
+  const bootstrapCallAccessor = {
+    bootstrapEvidenceVerification: null,
+    deploymentPromotionVerification: null,
+    independentReviewVerification: null,
+    operationalReadinessVerification: null,
+    policyTemplate: null,
+    qualificationReviewVerification: null,
+  };
+  Object.defineProperty(bootstrapCallAccessor, "recordTemplate", {
+    configurable: true,
+    enumerable: true,
+    get() {
+      calls += 1;
+      return bootstrapRecordTemplate();
+    },
+  });
+  assert.throws(
+    () => preparePublicTestnetBootstrapReleaseCandidate(bootstrapCallAccessor),
+    /enumerable data properties/,
+  );
+  assert.equal(calls, 0);
+
+  for (const malformedInput of [
+    (() => {
+      const value = { ...base };
+      Object.defineProperty(value, "hidden", { value: true });
+      return value;
+    })(),
+    { ...base, [Symbol("hidden")]: true },
+    Object.assign(Object.create({ inherited: true }), base),
+  ]) {
+    assert.throws(
+      () => preparePublicTestnetReleaseCandidate(malformedInput),
+      /fields are not exact|plain data object|exact data properties/,
+    );
+  }
+
+  const recordAccessor = recordTemplate();
+  Object.defineProperty(recordAccessor, "limits", {
+    configurable: true,
+    enumerable: true,
+    get() {
+      calls += 1;
+      return {};
+    },
+  });
+  assert.throws(
+    () => preparePublicTestnetReleaseCandidate({ ...base, recordTemplate: recordAccessor }),
+    /enumerable data properties/,
+  );
+  assert.equal(calls, 0);
+
+  const multisigAccessor = recordTemplate();
+  Object.defineProperty(multisigAccessor.multisig, "ownerCount", {
+    configurable: true,
+    enumerable: true,
+    get() {
+      calls += 1;
+      return 3;
+    },
+  });
+  assert.throws(
+    () => preparePublicTestnetReleaseCandidate({ ...base, recordTemplate: multisigAccessor }),
+    /enumerable data properties/,
+  );
+  assert.equal(calls, 0);
+
+  const limitAccessor = recordTemplate();
+  Object.defineProperty(limitAccessor.limits, "maxSwapSats", {
+    configurable: true,
+    enumerable: true,
+    get() {
+      calls += 1;
+      return "5000";
+    },
+  });
+  assert.throws(
+    () => preparePublicTestnetReleaseCandidate({ ...base, recordTemplate: limitAccessor }),
+    /enumerable data property/,
+  );
+  assert.equal(calls, 0);
+
+  const approverAccessor = policyTemplate(deployment.verification.manifest);
+  Object.defineProperty(approverAccessor.approvers.controller, "address", {
+    configurable: true,
+    enumerable: true,
+    get() {
+      calls += 1;
+      return deployment.verification.manifest.controller.address;
+    },
+  });
+  assert.throws(
+    () => preparePublicTestnetReleaseCandidate({ ...base, policyTemplate: approverAccessor }),
+    /enumerable data property/,
+  );
+  assert.equal(calls, 0);
+
+  let coercions = 0;
+  const coercible = recordTemplate();
+  coercible.approvalBlockNumber = {
+    toString() {
+      coercions += 1;
+      return "1100";
+    },
+  };
+  assert.throws(
+    () => preparePublicTestnetReleaseCandidate({ ...base, recordTemplate: coercible }),
+    /canonical uint256 decimal string/,
+  );
+  assert.equal(coercions, 0);
+
+  const uppercaseDigest = recordTemplate();
+  uppercaseDigest.releaseId = uppercaseDigest.releaseId.toUpperCase();
+  assert.throws(
+    () => preparePublicTestnetReleaseCandidate({ ...base, recordTemplate: uppercaseDigest }),
+    /lowercase bytes32 digest/,
+  );
+
+  const maliciousValues = [
+    (() => {
+      const value = [];
+      value.length = 1;
+      return value;
+    })(),
+    Object.assign([true], { extra: false }),
+    Number.NaN,
+    () => true,
+    Object.fromEntries([...Array(129).keys()].map((index) => [`field${index}`, index])),
+  ];
+  for (const maliciousValue of maliciousValues) {
+    const template = recordTemplate();
+    template.features.publicPermissionlessExecution = maliciousValue;
+    assert.throws(
+      () => preparePublicTestnetReleaseCandidate({ ...base, recordTemplate: template }),
+      /unsupported|outside policy|array fields are not exact/,
+    );
+  }
+
+  const cyclic = recordTemplate();
+  cyclic.features.cycle = cyclic.features;
+  assert.throws(
+    () => preparePublicTestnetReleaseCandidate({ ...base, recordTemplate: cyclic }),
+    /contains a cycle/,
+  );
+  const prototypeNamed = policyTemplate(deployment.verification.manifest);
+  Object.defineProperty(prototypeNamed.approvers, "__proto__", {
+    configurable: true,
+    enumerable: true,
+    value: { captured: true },
+    writable: true,
+  });
+  assert.throws(
+    () => preparePublicTestnetReleaseCandidate({ ...base, policyTemplate: prototypeNamed }),
+    /prototype-named field/,
+  );
+
+  const mutableRecord = recordTemplate();
+  const mutablePolicy = policyTemplate(deployment.verification.manifest);
+  const candidate = preparePublicTestnetReleaseCandidate({
+    ...base,
+    recordTemplate: mutableRecord,
+    policyTemplate: mutablePolicy,
+  });
+  mutableRecord.limits.maxSwapSats = "999999";
+  mutablePolicy.approvers.lightningOperator.address = Wallet.createRandom().address;
+  assert.equal(candidate.record.limits.maxSwapSats, "5000");
+  assert.equal(candidate.policy.approvers.lightningOperator.address, LIGHTNING_OPERATOR.address);
+  assert.equal(Object.isFrozen(candidate.record.limits), true);
+  assert.equal(Object.isFrozen(candidate.policy.approvers.lightningOperator), true);
+});
+
 test("activates funding only after same-process evidence, approvals, reconciliation, and live RPC quorum checks", async (t) => {
   const { campaign, candidate, deployment, operations, qualification, review } = await fixture();
   const now = candidate.record.approvalBlockTimestamp + 120;
