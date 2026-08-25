@@ -70,7 +70,7 @@ Use [closed testnet deployment](./CLOSED_TESTNET_DEPLOYMENT.md), [postflight](./
 
 ### 4. Deploy isolated services
 
-Deploy the persistent coordinator, solver endpoints, private-packet provider, capacity readers, finality authorizers, both-assets verifier, two relays, two solver daemons, continuous monitors, redundant guardian broadcasters, backups, and alert delivery in the trust domains required by [service-isolation evidence](./SERVICE_ISOLATION_EVIDENCE.md).
+Deploy the persistent coordinator, solver endpoints, private-packet provider, capacity readers, the distinct Lightning-operator and security-reviewer [daemon-evidence routes](./SOLVER_DAEMON_EVIDENCE_CLIENT.md) with durable replay stores, finality authorizers, both-assets verifier, two relays, two solver daemons, continuous monitors, redundant guardian broadcasters, backups, and alert delivery in the trust domains required by [service-isolation evidence](./SERVICE_ISOLATION_EVIDENCE.md).
 
 Required properties include:
 

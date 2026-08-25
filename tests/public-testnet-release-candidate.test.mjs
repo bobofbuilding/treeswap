@@ -1744,6 +1744,21 @@ test("activates funding only after same-process evidence, approvals, reconciliat
       }),
     });
     assert.equal((await lifecycleReleaseSupervisor.refresh({ now: now + 3 })).state, "active");
+    await assert.rejects(prepareCoordinatorActiveExecutionPolicySet({
+      executionPolicies: [{
+        solverCapabilityVerification: solverCapability.verification,
+        evidencePolicy,
+        runtime: {
+          packetClient: null,
+          controls: { authorizeLightning: async () => true },
+          lightning: null,
+          evm: null,
+        },
+      }],
+      releaseSupervisor: lifecycleReleaseSupervisor,
+      serviceLease,
+      store: waitingStore,
+    }), /concrete dual-route client/);
     const mutableActiveControls = {};
     const activePolicyPreparation = await prepareCoordinatorActiveExecutionPolicySet({
       executionPolicies: [{
