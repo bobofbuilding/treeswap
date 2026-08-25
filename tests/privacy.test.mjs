@@ -66,3 +66,30 @@ test("redacts cross-network identifiers and supplies deletion deadlines", () => 
     NOW + 100 + PRIVACY_RETENTION_SECONDS.privateSettlementAfterTerminal,
   );
 });
+
+test("keeps the trusted privacy event immutable without invoking record accessors", () => {
+  let getterReads = 0;
+  const record = { event: "forged", amountSats: 25_000n };
+  Object.defineProperty(record, "__proto__", {
+    configurable: true,
+    enumerable: true,
+    writable: true,
+    value: "retained as data",
+  });
+  Object.defineProperty(record, "hostile", {
+    configurable: true,
+    enumerable: true,
+    get() {
+      getterReads += 1;
+      return request.invoice;
+    },
+  });
+
+  const audit = privacySafeAudit("settled", record);
+  assert.equal(audit.event, "settled");
+  assert.equal(audit.amountSats, "25000");
+  assert.equal(Object.hasOwn(audit, "__proto__"), true);
+  assert.equal(audit.__proto__, "retained as data");
+  assert.equal(getterReads, 0);
+  assert.equal(Object.getPrototypeOf(audit), Object.prototype);
+});
