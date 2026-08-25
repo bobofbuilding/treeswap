@@ -15,6 +15,18 @@ Every signer must therefore:
 
 A copied candidate, somebody else's terminal output, or the later verification receipt is not evidence that those upstream checks occurred.
 
+The ceremony snapshots each bounded candidate, approval bundle, and provider
+configuration exactly once before validation. Only plain objects, exact dense
+arrays, safe integers, strings, booleans, and null cross that data boundary.
+Every property must be an own enumerable data property. Symbols, hidden fields,
+accessors, sparse or decorated arrays, custom prototypes, unsupported values,
+excessive depth or size, and unknown prototype-named fields reject without
+invoking property getters or caller coercion methods. Candidate consistency
+checks and every returned role-signing payload therefore use the same frozen
+snapshot; later caller mutation cannot change the reviewed signing artifact.
+The public function argument records are exact as well, while live provider
+functions and the secret environment remain outside the data snapshot.
+
 ## Prepare one role's payload
 
 Run the command separately for `controller`, `guardian`, `lightningOperator`, `securityReviewer`, and `incidentCommander`:
@@ -101,7 +113,7 @@ The receipt records `upstreamEvidenceReverifiedFromReceipt: false`, `activationP
 
 ## Fail-closed cases
 
-Verification fails on any candidate mutation, unknown field, authority flag, wrong schema or funding mode, signer-kind downgrade, missing or duplicate role, wrong identity, malformed or oversized signature, changed record or policy digest, replayed bundle, expired record, provider-set substitution, provider disagreement, wrong chain, non-canonical or unfinalized block, timestamp change, wallet-code change, invalid ERC-1271 response, symlink, oversized file, or output overwrite.
+Verification fails on any candidate mutation, accessor, symbol, hidden or inherited field, custom prototype, object coercion, sparse or decorated array, unknown field, authority flag, wrong schema or funding mode, signer-kind downgrade, missing or duplicate role, wrong identity, malformed or oversized signature, changed record or policy digest, replayed bundle, expired record, provider-set substitution, provider disagreement, wrong chain, non-canonical or unfinalized block, timestamp change, wallet-code change, invalid ERC-1271 response, symlink, oversized file, or output overwrite.
 
 It still cannot prove organizational independence, hardware custody, Safe threshold policy, signer intent, upstream evidence truth, provider ownership, review quality, or incident readiness. Those are retained external launch gates.
 
