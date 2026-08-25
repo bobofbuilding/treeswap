@@ -169,6 +169,108 @@ test("rejects an operation mutation before claiming or contacting the adapter", 
   }
 });
 
+test("snapshots exact operation data without accessors, coercion, or post-review mutation", async () => {
+  const value = settlement("operation-exact-data");
+  const action = pendingAction(value);
+  let calls = 0;
+  const accessor = operation();
+  Object.defineProperty(accessor, "feeLimitSats", {
+    configurable: true,
+    enumerable: true,
+    get() {
+      calls += 1;
+      return "5";
+    },
+  });
+  assert.throws(
+    () => lightningActionCommitment(action, accessor),
+    /enumerable data properties/,
+  );
+  assert.equal(calls, 0);
+
+  for (const malformed of [
+    (() => {
+      const candidate = operation();
+      Object.defineProperty(candidate, "hidden", { value: true });
+      return candidate;
+    })(),
+    { ...operation(), [Symbol("hidden")]: true },
+    Object.assign(Object.create({ inherited: true }), operation()),
+    (() => {
+      const candidate = operation();
+      Object.defineProperty(candidate, "__proto__", {
+        configurable: true,
+        enumerable: true,
+        value: { captured: true },
+        writable: true,
+      });
+      return candidate;
+    })(),
+  ]) {
+    assert.throws(
+      () => lightningActionCommitment(action, malformed),
+      /fields are not exact|exact data properties|plain data object/,
+    );
+  }
+
+  let coercions = 0;
+  assert.throws(() => lightningActionCommitment(action, {
+    ...operation(),
+    feeLimitSats: {
+      toString() {
+        coercions += 1;
+        return "5";
+      },
+    },
+  }), /canonical unsigned decimal string/);
+  assert.equal(coercions, 0);
+  assert.throws(() => lightningActionCommitment(action, {
+    ...operation(),
+    feeLimitSats: "18446744073709551616",
+  }), /must fit uint64/);
+
+  const holdAction = {
+    ...action,
+    method: "/invoicesrpc.Invoices/AddHoldInvoice",
+  };
+  assert.throws(() => lightningActionCommitment(holdAction, {
+    cltvExpiry: 80,
+    expirySeconds: 300,
+    isPrivate: "true",
+    memo: "TreeSwap hold invoice",
+  }), /isPrivate must be a boolean/);
+
+  const prepared = await setup("dispatch-operation-snapshot");
+  const mutable = operation();
+  try {
+    const dispatched = await dispatchLightningAction({
+      store: prepared.store,
+      actionId: prepared.action.actionId,
+      operation: mutable,
+      privateKey,
+      keyId: "coordinator-test-1",
+      adapterUrl: "http://payer-adapter:3000",
+      nowSeconds: () => NOW + 21,
+      beforeSideEffect: async (boundary) => {
+        if (boundary === "lightning-dispatch-claim") {
+          mutable.feeLimitSats = "999999";
+          mutable.paymentRequest = "lnbc1substituted";
+          mutable.timeoutSeconds = 999;
+        }
+      },
+      requestImpl: async (_url, options) => {
+        const envelope = JSON.parse(options.body);
+        assert.deepEqual(envelope.payload.operation, operation());
+        return successResponse();
+      },
+    });
+    assert.equal(dispatched.action.state, "CONFIRMED");
+    assert.equal(mutable.feeLimitSats, "999999");
+  } finally {
+    prepared.store.close();
+  }
+});
+
 test("records transport loss and malformed success as UNKNOWN without retrying", async () => {
   const first = await setup("dispatch-transport-loss");
   try {

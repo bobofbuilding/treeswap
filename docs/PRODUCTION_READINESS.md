@@ -139,6 +139,7 @@ The current adapter boundary, live lab, and remaining fault matrix are documente
 
 ## Gate 3 — build the durable automatic coordinator
 
+- [x] Private-packet Lightning operations now enter action planning and dispatch through one exact method-specific plain own-enumerable data snapshot with canonical, bounded scalar types. Accessors are not invoked; object coercion, hidden/symbol/inherited/prototype fields, custom prototypes, and later caller mutation reject or become inert before the durable commitment, side-effect claim, authorization signature, or adapter contact. This does not authenticate deployed packet, coordinator, signer, or adapter infrastructure.
 - [x] Active and retained-recovery job preparation now freeze one bounded exact-data daemon-evidence-policy snapshot before digesting or authority comparison. Getters are not invoked; mutation after snapshot is inert; hidden, symbol, inherited, prototype-key, custom-prototype, unsafe, executable, cyclic or oversized, sparse, and decorated inputs reject. This does not prove deployed policy truth or independence.
 - [x] Persist intent nonce, payment hash, quote receipt, selected set, capacity epoch, reservation, Lightning action, and mutually exclusive terminal state through atomic transitions.
 - [ ] Make every value-moving action idempotent and recoverable after a process crash or ambiguous response.
