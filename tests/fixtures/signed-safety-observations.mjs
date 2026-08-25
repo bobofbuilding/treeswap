@@ -33,6 +33,10 @@ export function createSignedSafetyObservationFixture({
     routeId: id(`treeswap-test-guardian-broadcaster:${index}`).toLowerCase(),
     operatorId: id(`treeswap-test-guardian-operator:${index}`).toLowerCase(),
   })).sort((left, right) => left.routeId < right.routeId ? -1 : 1));
+  const gateConfirmers = Object.freeze([0, 1].map((index) => Object.freeze({
+    routeId: id(`treeswap-test-gate-confirmer:${index}`).toLowerCase(),
+    operatorId: id(`treeswap-test-gate-confirmer-operator:${index}`).toLowerCase(),
+  })).sort((left, right) => left.routeId < right.routeId ? -1 : 1));
   const alertRoutes = Object.freeze([0, 1].map((index) => Object.freeze({
     routeId: id(`treeswap-test-alert-route:${index}`).toLowerCase(),
     operatorId: id(`treeswap-test-alert-operator:${index}`).toLowerCase(),
@@ -47,6 +51,7 @@ export function createSignedSafetyObservationFixture({
     maximumObservationAgeSeconds,
     quoteClosure,
     guardianBroadcasters,
+    gateConfirmers,
     alertRoutes,
     collectors: Object.freeze(collectors.map(({ kind, collectorId, operatorId, wallet }) => Object.freeze({
       kind,
@@ -65,6 +70,22 @@ export function createSignedSafetyObservationFixture({
       reasonDigest: alert.alertDigest,
       transactionHash: route.routeId,
     })),
+    gateConfirmationActions = gateConfirmers.map(() => async (alert, { acceptedTransactionHashes }) => ({
+      confirmed: true,
+      finalized: true,
+      alertDigest: alert.alertDigest,
+      transactionHash: acceptedTransactionHashes[0],
+      gateAddress: VERIFYING_CONTRACT,
+      blockNumber: "10",
+      blockHash: id("treeswap-test-gate-confirmation-block").toLowerCase(),
+      gateOpen: false,
+      emergencyHalted: true,
+      openUntil: "0",
+      activeRiskDigest: `0x${"00".repeat(32)}`,
+      pendingRiskDigest: `0x${"00".repeat(32)}`,
+      pendingExecuteAfter: "0",
+      pendingValidUntil: "0",
+    })),
     alertActions = alertRoutes.map(() => async () => ({ delivered: true })),
   } = {}) {
     return bindSafetyMonitorActions({
@@ -75,6 +96,10 @@ export function createSignedSafetyObservationFixture({
       guardianBroadcasters: guardianBroadcasters.map((route, index) => ({
         ...route,
         execute: guardianActions[index],
+      })),
+      gateConfirmers: gateConfirmers.map((route, index) => ({
+        ...route,
+        execute: gateConfirmationActions[index],
       })),
       alertRoutes: alertRoutes.map((route, index) => ({
         ...route,
@@ -115,6 +140,7 @@ export function createSignedSafetyObservationFixture({
     collectors,
     quoteClosure,
     guardianBroadcasters,
+    gateConfirmers,
     alertRoutes,
     bindActions,
     observations,

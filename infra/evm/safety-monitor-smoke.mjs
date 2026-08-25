@@ -27,8 +27,8 @@ const ANVIL_VERSION = String(process.env.SAFETY_MONITOR_ANVIL_VERSION ?? "");
 const CHAIN_ID = 31_337n;
 const MAXIMUM_AGE = 15;
 const MONITOR_NOW = 2_100_100_000;
-const EXPECTED_MONITOR_POLICY_DIGEST = "0xf0bc1d21383118d59270adf4612684d35e0594afe4d15d63ec4848f8e43cf3d2";
-const EXPECTED_CAMPAIGN_DIGEST = "0x562faa1cb1fb8b80cd02ee3d74cea7b845126a1ba8a07fc092ccb522881cdb81";
+const EXPECTED_MONITOR_POLICY_DIGEST = "0xbdf2e365f5c4aaf1385a50f0637c0380e0d9a25ce15554658be57ada73b2c207";
+const EXPECTED_CAMPAIGN_DIGEST = "0x6aa1e5046fb587f732d5387a0d218539f60d8b27eb61d28ef9b58e668e4bacf2";
 
 if (!RPC_URL || !MNEMONIC) throw new Error("safety monitor smoke requires an ephemeral RPC URL and mnemonic");
 if (!/^anvil Version: [0-9.]+/.test(ANVIL_VERSION)) throw new Error("Anvil version is not pinned in evidence");
@@ -105,9 +105,10 @@ try {
 
   let quoteIssuanceClosed = false;
   let gateHalted = false;
-  let alertDeliveredAfterClosure = false;
+  let alertDeliveredAfterConfirmedClosure = false;
   let deliveredAlert;
   let totalActionCalls = 0;
+  let gateConfirmationCalls = 0;
   let failFirstGuardianRoute = true;
   let failFirstAlertRoute = true;
   const now = MONITOR_NOW;
@@ -140,6 +141,10 @@ try {
     guardianBroadcasters: Object.freeze([0, 1].map((index) => Object.freeze({
       routeId: id(`treeswap-monitor-smoke-guardian-route:${index}`).toLowerCase(),
       operatorId: id(`treeswap-monitor-smoke-guardian-operator:${index}`).toLowerCase(),
+    })).sort((left, right) => left.routeId < right.routeId ? -1 : 1)),
+    gateConfirmers: Object.freeze([0, 1].map((index) => Object.freeze({
+      routeId: id(`treeswap-monitor-smoke-gate-confirmer:${index}`).toLowerCase(),
+      operatorId: id(`treeswap-monitor-smoke-gate-confirmer-operator:${index}`).toLowerCase(),
     })).sort((left, right) => left.routeId < right.routeId ? -1 : 1)),
     alertRoutes: Object.freeze([0, 1].map((index) => Object.freeze({
       routeId: id(`treeswap-monitor-smoke-alert-route:${index}`).toLowerCase(),
@@ -181,6 +186,7 @@ try {
           gate.interface.encodeFunctionData("halt", [alert.alertDigest]),
         );
         await transaction.wait();
+        for (let block = 0; block < 4; block += 1) await provider.send("evm_mine", []);
         gateHalted = !(await gate.isOpen());
         return {
           halted: gateHalted,
@@ -189,15 +195,65 @@ try {
         };
       },
     })),
+    gateConfirmers: safety.policy.gateConfirmers.map((route) => ({
+      ...route,
+      execute: async (alert, { acceptedTransactionHashes }) => {
+        totalActionCalls += 1;
+        gateConfirmationCalls += 1;
+        assert.ok(acceptedTransactionHashes.length >= 1);
+        const transactionHash = acceptedTransactionHashes[0];
+        const receipt = await provider.getTransactionReceipt(transactionHash);
+        assert.ok(receipt);
+        assert.equal(receipt.status, 1);
+        const block = await provider.getBlock(receipt.blockNumber);
+        const finalizedBlock = await provider.getBlock("finalized");
+        assert.ok(block?.hash);
+        assert.ok(finalizedBlock);
+        assert.ok(
+          finalizedBlock.number >= receipt.blockNumber,
+          `finalized block ${finalizedBlock.number} is behind receipt block ${receipt.blockNumber}`,
+        );
+        const haltEvent = receipt.logs.map((log) => {
+          try { return gate.interface.parseLog(log); } catch { return null; }
+        }).find((event) => event?.name === "Halted");
+        assert.ok(haltEvent);
+        assert.equal(haltEvent.args.reason.toLowerCase(), alert.alertDigest);
+        const blockTag = receipt.blockNumber;
+        const [gateOpen, emergencyHalted, openUntil, activeRiskDigest, pendingOpen] = await Promise.all([
+          gate.isOpen({ blockTag }),
+          gate.emergencyHalted({ blockTag }),
+          gate.openUntil({ blockTag }),
+          gate.activeRiskDigest({ blockTag }),
+          gate.pendingOpen({ blockTag }),
+        ]);
+        gateHalted = !gateOpen && emergencyHalted;
+        return {
+          confirmed: gateHalted,
+          finalized: true,
+          alertDigest: alert.alertDigest,
+          transactionHash,
+          gateAddress,
+          blockNumber: String(receipt.blockNumber),
+          blockHash: block.hash.toLowerCase(),
+          gateOpen,
+          emergencyHalted,
+          openUntil: String(openUntil),
+          activeRiskDigest: activeRiskDigest.toLowerCase(),
+          pendingRiskDigest: pendingOpen.riskDigest.toLowerCase(),
+          pendingExecuteAfter: String(pendingOpen.executeAfter),
+          pendingValidUntil: String(pendingOpen.validUntil),
+        };
+      },
+    })),
     alertRoutes: safety.policy.alertRoutes.map((route, index) => ({
       ...route,
       execute: async (alert) => {
         totalActionCalls += 1;
-        assert.equal(quoteIssuanceClosed && gateHalted, true);
+        assert.equal(quoteIssuanceClosed && gateHalted && gateConfirmationCalls >= 2, true);
         assert.equal(JSON.stringify(alert).includes("lnbc"), false);
         if (failFirstAlertRoute && index === 0) throw new Error("simulated alert route outage");
         deliveredAlert = alert;
-        alertDeliveredAfterClosure = true;
+        alertDeliveredAfterConfirmedClosure = true;
         return { delivered: true };
       },
     })),
@@ -214,14 +270,54 @@ try {
   assert.equal(unhealthy.newExposureClosed, true);
   assert.ok(unhealthy.reasonCodes.includes("BIT_CONTRACT_COLLECTOR_OUTAGE"));
   assert.equal(unhealthy.guardianBroadcastsAttempted, 2);
-  assert.equal(unhealthy.guardianBroadcastsSucceeded, 1);
+  assert.equal(unhealthy.guardianBroadcastsAccepted, 1);
   assert.equal(unhealthy.guardianBroadcastDegraded, true);
+  assert.equal(unhealthy.gateConfirmationsAttempted, 2);
+  assert.equal(unhealthy.gateConfirmationsSucceeded, 2);
+  assert.equal(unhealthy.gateConfirmationAgreement, true);
+  assert.equal(unhealthy.gateConfirmationDegraded, false);
   assert.equal(unhealthy.alertRoutesAttempted, 2);
   assert.equal(unhealthy.alertRoutesDelivered, 1);
   assert.equal(unhealthy.alertDeliveryDegraded, true);
   assert.equal(await gate.isOpen(), false);
   assert.equal(await gate.emergencyHalted(), true);
   assert.equal(await gate.activeRiskDigest(), `0x${"00".repeat(32)}`);
+
+  const claimOnlyPlan = bindSafetyMonitorActions({
+    policy: safety.policy,
+    expectedPolicyDigest: safety.policyDigest,
+    now,
+    quoteClosure: { ...safety.policy.quoteClosure, execute: async () => ({ closed: true }) },
+    guardianBroadcasters: safety.policy.guardianBroadcasters.map((route) => ({
+      ...route,
+      execute: async (alert) => ({
+        halted: true,
+        reasonDigest: alert.alertDigest,
+        transactionHash: route.routeId,
+      }),
+    })),
+    gateConfirmers: safety.policy.gateConfirmers.map((route) => ({
+      ...route,
+      execute: async (_alert, { acceptedTransactionHashes }) => {
+        const receipt = await provider.getTransactionReceipt(acceptedTransactionHashes[0]);
+        assert.equal(receipt, null);
+        throw new Error("claimed guardian transaction was not observed");
+      },
+    })),
+    alertRoutes: safety.policy.alertRoutes.map((route) => ({
+      ...route,
+      execute: async () => ({ delivered: true }),
+    })),
+  });
+  const claimOnly = await runSafetyMonitorCycle({
+    observations: await observations(now, safety, { "ethereum-finality": { status: "unsafe" } }),
+    actionPlan: claimOnlyPlan,
+    nowSeconds: () => now,
+  });
+  assert.equal(claimOnly.guardianBroadcastsAccepted, 2);
+  assert.equal(claimOnly.gateConfirmationsSucceeded, 0);
+  assert.equal(claimOnly.onchainGateHalted, false);
+  assert.equal(claimOnly.outcome, "HALT_INCOMPLETE");
 
   failFirstGuardianRoute = false;
   failFirstAlertRoute = false;
@@ -259,7 +355,7 @@ try {
   assert.equal(totalActionCalls, actionCallsBeforeCopy);
 
   const evidence = Object.freeze({
-    schema: "treeswap.safety-monitor-smoke.v4",
+    schema: "treeswap.safety-monitor-smoke.v5",
     chainId: String(CHAIN_ID),
     executionClient: ANVIL_VERSION,
     actualOpenGate: true,
@@ -268,9 +364,12 @@ try {
     distinctOperatorCommitmentsPerDomain: true,
     collectorOutageClosedQuotes: quoteIssuanceClosed,
     collectorOutageHaltedOnchainGate: gateHalted,
-    alertDeliveredAfterClosure,
+    alertDeliveredAfterConfirmedClosure,
     redundantGuardianBroadcasters: 2,
-    oneGuardianBroadcasterOutageTolerated: unhealthy.guardianBroadcastsSucceeded === 1,
+    oneGuardianBroadcasterOutageTolerated: unhealthy.guardianBroadcastsAccepted === 1,
+    redundantGateConfirmers: 2,
+    finalizedGateConfirmationAgreement: unhealthy.gateConfirmationAgreement,
+    broadcasterClaimsAloneRejected: claimOnly.outcome === "HALT_INCOMPLETE",
     redundantAlertRoutes: 2,
     oneAlertRouteOutageTolerated: unhealthy.alertRoutesDelivered === 1,
     degradationReported: unhealthy.guardianBroadcastDegraded && unhealthy.alertDeliveryDegraded,
