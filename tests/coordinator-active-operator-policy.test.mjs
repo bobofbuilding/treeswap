@@ -22,7 +22,10 @@ import {
   SOLVER_DAEMON_EVIDENCE_POLICY_SCHEMA,
 } from "../lib/solver-daemon-evidence.mjs";
 import { createSolverDaemonEvidenceControls } from "../lib/solver-daemon-evidence-client.mjs";
-import { createAuthenticatedPrivatePacketClient } from "../lib/solver-daemon-runtime.mjs";
+import {
+  authenticatedPrivatePacketClientTransportMode,
+  createAuthenticatedPrivatePacketClient,
+} from "../lib/solver-daemon-runtime.mjs";
 import {
   SOLVER_CAPABILITY_TYPES,
   solverCapabilityClaimsDigest,
@@ -222,8 +225,8 @@ async function capabilityClient({ requestImpl: requestOverride = null } = {}) {
   });
 }
 
-function runtime(policy = evidencePolicy(), { evidenceRequestImpl } = {}) {
-  const packetClient = createAuthenticatedPrivatePacketClient({
+function runtime(policy = evidencePolicy(), { evidenceRequestImpl, packetRequestImpl } = {}) {
+  const packetClientInput = {
     providerOrigin: "https://packet-provider.internal",
     requesterPrivateKey: packetRequesterKeys.privateKey,
     requesterKeyId: "coordinator-packet-one",
@@ -232,10 +235,11 @@ function runtime(policy = evidencePolicy(), { evidenceRequestImpl } = {}) {
     minimumEvmSafetySeconds: 600,
     requestTtlSeconds: 15,
     timeoutMs: 1_000,
-    requestImpl: async () => { throw new Error("packet route must not run during composition"); },
     nowSeconds: () => NOW,
     randomBytesImpl: () => Buffer.alloc(32, 0x93),
-  });
+  };
+  if (packetRequestImpl !== undefined) packetClientInput.requestImpl = packetRequestImpl;
+  const packetClient = createAuthenticatedPrivatePacketClient(packetClientInput);
   const controlsInput = {
     policy,
     routes: {
@@ -313,6 +317,14 @@ test("accepts only the complete original operator runtime and matching evidence 
   const policy = evidencePolicy();
   const client = await capabilityClient();
   const activeRuntime = runtime(policy);
+  assert.equal(
+    authenticatedPrivatePacketClientTransportMode(activeRuntime.packetClient),
+    "fixed-node-https",
+  );
+  assert.throws(
+    () => authenticatedPrivatePacketClientTransportMode({ ...activeRuntime.packetClient }),
+    /factory provenance/,
+  );
   const preparer = createCoordinatorActiveOperatorPolicyPreparer({
     policies: [{ capabilityClient: client, evidencePolicy: policy, runtime: activeRuntime }],
   });
@@ -413,6 +425,9 @@ test("rejects lookalike readers, packet clients, action configs, and non-indepen
   assert.throws(() => runtime(evidencePolicy(), {
     evidenceRequestImpl: async () => { throw new Error("injected evidence transport"); },
   }), /fixed Node HTTPS evidence transport/);
+  assert.throws(() => runtime(evidencePolicy(), {
+    packetRequestImpl: async () => { throw new Error("injected private-packet transport"); },
+  }), /fixed Node HTTPS private-packet transport/);
 
   const sameRpc = async () => {};
   assert.throws(() => createCoordinatorEvmActionConfig({

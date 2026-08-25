@@ -16,7 +16,11 @@ import {
   solverDaemonEvidencePolicyDigest,
   verifySolverDaemonEvidence,
 } from "../lib/solver-daemon-evidence.mjs";
-import { createAuthenticatedPrivatePacketClient, executeSolverDaemonStep } from "../lib/solver-daemon-runtime.mjs";
+import {
+  authenticatedPrivatePacketClientTransportMode,
+  createAuthenticatedPrivatePacketClient,
+  executeSolverDaemonStep,
+} from "../lib/solver-daemon-runtime.mjs";
 import { nextSolverDaemonStep } from "../lib/solver-daemon-planner.mjs";
 import { buildSignedPrivatePacketResponse } from "../lib/solver-private-packet.mjs";
 
@@ -308,6 +312,33 @@ function runtimeArgs(fixture, extras = {}) {
     ...extras,
   };
 }
+
+test("brands fixed and injected private-packet transports without transferable provenance", () => {
+  const input = {
+    providerOrigin: "https://packet-provider.internal",
+    requesterPrivateKey: packetRequesterKeys.privateKey,
+    requesterKeyId: "daemon-transport-test",
+    providerPublicKey: packetProviderKeys.publicKey,
+    providerKeyId: "packet-provider-transport-test",
+    minimumEvmSafetySeconds: 600,
+    requestTtlSeconds: 15,
+    timeoutMs: 1_000,
+    nowSeconds: () => NOW,
+    randomBytesImpl: randomSource(),
+  };
+  const fixed = createAuthenticatedPrivatePacketClient(input);
+  assert.equal(authenticatedPrivatePacketClientTransportMode(fixed), "fixed-node-https");
+  assert.throws(
+    () => authenticatedPrivatePacketClientTransportMode({ ...fixed }),
+    /factory provenance/,
+  );
+
+  const injected = createAuthenticatedPrivatePacketClient({
+    ...input,
+    requestImpl: async () => { throw new Error("test-only transport"); },
+  });
+  assert.equal(authenticatedPrivatePacketClientTransportMode(injected), "injected-test");
+});
 
 function hexQuantity(value) {
   return `0x${BigInt(value).toString(16)}`;

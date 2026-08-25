@@ -12,7 +12,8 @@ must contain all of the following original same-process objects:
 - a `createSolverCapabilityClient` result that performs a fresh public HTTPS
   capability challenge using the finalized two-provider BIT vault reader and
   the separately signed Lightning-capacity reader;
-- a `createAuthenticatedPrivatePacketClient` result;
+- a `createAuthenticatedPrivatePacketClient` result using the module-owned fixed
+  Node HTTPS transport;
 - a `createSolverDaemonEvidenceControls` result using two distinct private
   HTTPS routes, the module-owned fixed Node HTTPS transport, and a policy
   digest that exactly matches the policy being prepared;
@@ -33,10 +34,10 @@ active policy set prepared.
 Preparation is one-use and cancellation-aware. Shutdown aborts outstanding
 solver endpoint requests; a late result cannot be handed to the active
 lifecycle. A copied client, runtime, config, controls object, or preparer has no
-factory provenance and is rejected. Evidence controls made with an injected
-request callback are test-only and reject before runtime creation. No endpoint,
-key, invoice, address, or settlement identifier is added to coordinator health
-output.
+factory provenance and is rejected. Private-packet clients or evidence controls
+made with an injected request callback are test-only and reject before runtime
+creation. No endpoint, key, invoice, address, or settlement identifier is added
+to coordinator health output.
 
 ## Deployment-owned code
 
@@ -59,6 +60,8 @@ The operator must still prove all external facts separately:
   boundary](./DURABLE_EVIDENCE_PROVIDER.md), separate initialized replay-ledger
   volumes, independent readers, reviewed TLS identities/trust roots, and the
   fixed Node HTTPS client path;
+- the private-packet provider uses an independently reviewed TLS identity and
+  trust root through its fixed Node HTTPS client path;
 - the Lightning adapter and EVM claim signer have least-privilege credentials;
 - the coordinator database and crash journal are on a persistent private
   volume;

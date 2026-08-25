@@ -19,7 +19,8 @@ For every retained policy the operator must construct:
 - a `createSolverCapabilityClient` result that performs a fresh authenticated
   solver challenge through the finalized BIT and signed Lightning-capacity
   readers;
-- a `createAuthenticatedPrivatePacketClient` result;
+- a `createAuthenticatedPrivatePacketClient` result using the module-owned fixed
+  Node HTTPS transport;
 - `createSolverDaemonRecoveryEvidenceControls`, using two distinct private
   evidence routes through the module-owned fixed Node HTTPS transport and
   exposing only reservation observation, EVM-claim authorization, and terminal
@@ -31,11 +32,12 @@ For every retained policy the operator must construct:
 
 The recovery-only evidence object has no `authorizeLightning` method. Passing
 the active evidence object, a copied recovery object, or a caller-built
-lookalike rejects before service startup. Controls constructed with an injected
-request callback are test-only and reject before runtime creation. The runtime
-still contains the Lightning reconciliation adapter because an interrupted
-historical action may need a read-only status lookup; the recovery planner and
-execution fence independently reject Lightning planning and dispatch.
+lookalike rejects before service startup. Private-packet clients or evidence
+controls constructed with an injected request callback are test-only and reject
+before runtime creation. The runtime still contains the Lightning reconciliation
+adapter because an interrupted historical action may need a read-only status
+lookup; the recovery planner and execution fence independently reject Lightning
+planning and dispatch.
 
 ## One uninterrupted preparation
 

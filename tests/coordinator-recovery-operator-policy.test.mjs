@@ -40,7 +40,10 @@ import {
   SOLVER_DAEMON_EVIDENCE_POLICY_SCHEMA,
   solverDaemonEvidencePolicyDigest,
 } from "../lib/solver-daemon-evidence.mjs";
-import { createAuthenticatedPrivatePacketClient } from "../lib/solver-daemon-runtime.mjs";
+import {
+  authenticatedPrivatePacketClientTransportMode,
+  createAuthenticatedPrivatePacketClient,
+} from "../lib/solver-daemon-runtime.mjs";
 import {
   SOLVER_CAPABILITY_TYPES,
   solverCapabilityClaimsDigest,
@@ -143,8 +146,8 @@ function activeControls(policy) {
   });
 }
 
-function recoveryRuntime(policy = evidencePolicy(), { evidenceRequestImpl } = {}) {
-  const packetClient = createAuthenticatedPrivatePacketClient({
+function recoveryRuntime(policy = evidencePolicy(), { evidenceRequestImpl, packetRequestImpl } = {}) {
+  const packetClientInput = {
     providerOrigin: "https://packet-provider.internal",
     requesterPrivateKey: packetRequesterKeys.privateKey,
     requesterKeyId: "coordinator-recovery-packet-one",
@@ -153,10 +156,11 @@ function recoveryRuntime(policy = evidencePolicy(), { evidenceRequestImpl } = {}
     minimumEvmSafetySeconds: 600,
     requestTtlSeconds: 15,
     timeoutMs: 1_000,
-    requestImpl: async () => { throw new Error("packet route must not run during composition"); },
     nowSeconds: () => NOW,
     randomBytesImpl: () => Buffer.alloc(32, 0x83),
-  });
+  };
+  if (packetRequestImpl !== undefined) packetClientInput.requestImpl = packetRequestImpl;
+  const packetClient = createAuthenticatedPrivatePacketClient(packetClientInput);
   const lightning = createCoordinatorLightningActionConfig({
     privateKey: lightningActionKeys.privateKey,
     keyId: "coordinator-recovery-action-one",
@@ -347,6 +351,10 @@ test("accepts only a complete recovery-only runtime and an exact reviewed policy
   const runtime = recoveryRuntime(policy);
   assert.equal(isCoordinatorRecoveryOperatorRuntime(runtime), true);
   assert.equal(isCoordinatorRecoveryOperatorRuntime({ ...runtime }), false);
+  assert.equal(
+    authenticatedPrivatePacketClientTransportMode(runtime.packetClient),
+    "fixed-node-https",
+  );
   assert.throws(() => createCoordinatorRecoveryOperatorRuntime({
     ...runtime,
     controls: activeControls(policy),
@@ -358,6 +366,9 @@ test("accepts only a complete recovery-only runtime and an exact reviewed policy
   assert.throws(() => recoveryRuntime(policy, {
     evidenceRequestImpl: async () => { throw new Error("injected evidence transport"); },
   }), /fixed Node HTTPS evidence transport/);
+  assert.throws(() => recoveryRuntime(policy, {
+    packetRequestImpl: async () => { throw new Error("injected private-packet transport"); },
+  }), /fixed Node HTTPS private-packet transport/);
 
   const client = await capabilityClient();
   const preparer = createCoordinatorRecoveryOperatorPolicyPreparer({
