@@ -9,12 +9,14 @@ import {
   acquireCoordinatorServiceLease,
   assertCoordinatorServiceLeaseOwnership,
   buildCoordinatorClosedStatus,
+  buildCoordinatorRecoveryExecutionBootstrapStatus,
   buildCoordinatorRecoveryExecutionStatus,
   buildCoordinatorRecoveryVerificationStatus,
   buildCoordinatorReleaseVerificationStatus,
   normalizeCoordinatorServiceConfig,
   readCoordinatorServiceHealth,
   validateCoordinatorClosedStatus,
+  validateCoordinatorRecoveryExecutionBootstrapStatus,
   validateCoordinatorRecoveryExecutionStatus,
   validateCoordinatorRecoveryVerificationStatus,
   validateCoordinatorReleaseVerificationStatus,
@@ -85,6 +87,7 @@ test("accepts only separated, bounded closed, release, recovery-verification, or
   assert.equal(recovery.recoveryRefreshSeconds, 6);
   assert.equal(recovery.recoveryProviderTimeoutMs, 2000);
   assert.equal(recovery.recoveryActionIntervalSeconds, null);
+  assert.equal(recovery.recoveryPreparationTimeoutSeconds, null);
   assert.equal(recovery.releaseActivationManifestPath, null);
   const recoveryExecution = config(paths, {
     COORDINATOR_MODE: "recovery-execution-only",
@@ -92,9 +95,11 @@ test("accepts only separated, bounded closed, release, recovery-verification, or
     COORDINATOR_RECOVERY_REFRESH_SECONDS: "6",
     COORDINATOR_RECOVERY_PROVIDER_TIMEOUT_MS: "2000",
     COORDINATOR_RECOVERY_ACTION_INTERVAL_SECONDS: "7",
+    COORDINATOR_RECOVERY_PREPARATION_TIMEOUT_SECONDS: "45",
   });
   assert.equal(recoveryExecution.mode, "recovery-execution-only");
   assert.equal(recoveryExecution.recoveryActionIntervalSeconds, 7);
+  assert.equal(recoveryExecution.recoveryPreparationTimeoutSeconds, 45);
   assert.throws(() => config(paths, {
     COORDINATOR_RELEASE_ACTIVATION_MANIFEST_PATH: manifestPath,
   }), /closed coordinator mode cannot accept/);
@@ -130,6 +135,11 @@ test("accepts only separated, bounded closed, release, recovery-verification, or
     COORDINATOR_RECOVERY_ACTION_INTERVAL_SECONDS: "5",
   }), /cannot accept recovery action inputs/);
   assert.throws(() => config(paths, {
+    COORDINATOR_MODE: "recovery-verification-only",
+    COORDINATOR_RECOVERY_ACTIVATION_MANIFEST_PATH: recoveryManifestPath,
+    COORDINATOR_RECOVERY_PREPARATION_TIMEOUT_SECONDS: "60",
+  }), /cannot accept recovery action inputs/);
+  assert.throws(() => config(paths, {
     COORDINATOR_MODE: "recovery-execution-only",
     COORDINATOR_RECOVERY_ACTIVATION_MANIFEST_PATH: recoveryManifestPath,
     COORDINATOR_RELEASE_ACTIVATION_MANIFEST_PATH: manifestPath,
@@ -139,6 +149,12 @@ test("accepts only separated, bounded closed, release, recovery-verification, or
     COORDINATOR_RECOVERY_ACTIVATION_MANIFEST_PATH: recoveryManifestPath,
     COORDINATOR_RECOVERY_PROVIDER_TIMEOUT_MS: "1000",
     COORDINATOR_RECOVERY_ACTION_INTERVAL_SECONDS: "4",
+  }), /outside policy/);
+  assert.throws(() => config(paths, {
+    COORDINATOR_MODE: "recovery-execution-only",
+    COORDINATOR_RECOVERY_ACTIVATION_MANIFEST_PATH: recoveryManifestPath,
+    COORDINATOR_RECOVERY_PROVIDER_TIMEOUT_MS: "1000",
+    COORDINATOR_RECOVERY_PREPARATION_TIMEOUT_SECONDS: "9",
   }), /outside policy/);
   assert.throws(() => config(paths, {
     COORDINATOR_MODE: "recovery-verification-only",
@@ -384,6 +400,51 @@ test("recovery-verification status exposes incident state but no reusable contex
         authorizations: { ...status.recoveryVerification.authorizations, lightningDispatch: true },
       },
     }), /identity or authority/);
+  } finally {
+    store.close();
+  }
+});
+
+test("recovery-execution bootstrap status proves preparation without claiming executable work", async (t) => {
+  const paths = await fixture(t);
+  const store = await CoordinatorStore.open(paths.databasePath);
+  const heartbeatAt = "2033-05-18T03:33:21.000Z";
+  const validUntil = Math.floor(Date.parse(heartbeatAt) / 1_000) + 60;
+  try {
+    const status = buildCoordinatorRecoveryExecutionBootstrapStatus({
+      store,
+      serviceStartedAt: "2033-05-18T03:33:19.000Z",
+      heartbeatAt,
+      leaseIdentifier: `sha256:${"1".repeat(64)}`,
+      recoveredInterruptedActions: 0,
+      recoveryVerification: activeRecoveryVerification(heartbeatAt, validUntil),
+    });
+    assert.equal(status.schema, "treeswap.coordinator-recovery-execution-bootstrap-status.v1");
+    assert.equal(status.phase, "preparing-custody-job-set");
+    assert.equal(status.boundedExistingLiabilityEvmClaimRecovery, false);
+    assert.equal(status.fundingAuthorization, false);
+    assert.equal(status.lightningDispatchAuthorization, false);
+    assert.equal(status.newExposureAuthorization, false);
+    assert.equal(status.networkListener, false);
+    assert.throws(() => validateCoordinatorRecoveryExecutionBootstrapStatus({
+      ...status,
+      boundedExistingLiabilityEvmClaimRecovery: true,
+    }), /claims unavailable authority/);
+    assert.throws(() => validateCoordinatorRecoveryExecutionBootstrapStatus({
+      ...status,
+      recoveryVerification: {
+        ...status.recoveryVerification,
+        state: "inactive",
+      },
+    }), /inactive coordinator recovery verification retains active recovery fields/);
+    assert.throws(() => validateCoordinatorRecoveryExecutionBootstrapStatus({
+      ...status,
+      jobSetDigest: `0x${"1".repeat(64)}`,
+    }), /fields are not exact/);
+    assert.throws(() => validateCoordinatorRecoveryExecutionBootstrapStatus({
+      ...status,
+      invoice: "lnbc-secret",
+    }), /fields are not exact/);
   } finally {
     store.close();
   }
@@ -656,6 +717,18 @@ test("recovery-execution health requires both live verification and a successful
   const heartbeatAt = wholeSecond(observedAt);
   const validUntil = Math.floor(observedAt / 1_000) + 20;
   try {
+    await lease.publish(buildCoordinatorRecoveryExecutionBootstrapStatus({
+      store,
+      serviceStartedAt: lease.startedAt,
+      heartbeatAt,
+      leaseIdentifier: lease.leaseId,
+      recoveredInterruptedActions: 0,
+      recoveryVerification: activeRecoveryVerification(heartbeatAt, validUntil),
+    }));
+    await assert.rejects(
+      readCoordinatorServiceHealth(policy, { now: () => observedAt + 5_000 }),
+      /bootstrap is incomplete/,
+    );
     await lease.publish(buildCoordinatorRecoveryExecutionStatus({
       store,
       serviceStartedAt: lease.startedAt,
