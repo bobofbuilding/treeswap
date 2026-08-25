@@ -15,13 +15,14 @@ docker run --rm --read-only \
     tests/admission-store.test.mjs tests/coordinator-store.test.mjs tests/coordinator-service-state.test.mjs \
     tests/coordinator-release-supervisor.test.mjs tests/coordinator-recovery-supervisor.test.mjs \
     tests/coordinator-recovery-job.test.mjs tests/coordinator-recovery-action-loop.test.mjs \
-    tests/coordinator-active-execution-service.test.mjs \
+    tests/coordinator-active-execution-service.test.mjs tests/coordinator-active-operator-policy.test.mjs \
     tests/coordinator-recovery-execution-service.test.mjs \
     tests/release-retention-custody.test.mjs \
     tests/coordinator-action-runner.test.mjs tests/evm-action-runner.test.mjs \
     tests/deployment-observer.test.mjs tests/deployment-policy.test.mjs \
     tests/safety-monitor.test.mjs tests/solver-capability.test.mjs \
-    tests/solver-daemon-planner.test.mjs tests/solver-daemon-evidence.test.mjs tests/solver-daemon-runtime.test.mjs \
+    tests/solver-daemon-planner.test.mjs tests/solver-daemon-evidence.test.mjs \
+    tests/solver-daemon-evidence-client.test.mjs tests/solver-daemon-runtime.test.mjs \
     tests/solver-endpoint-transport.test.mjs tests/solver-private-packet.test.mjs
 docker run --rm --read-only \
   --tmpfs /tmp:rw,noexec,nosuid,size=64m \
