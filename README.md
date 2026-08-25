@@ -20,7 +20,7 @@ The prototype assumes a business par value of **1 BIT = 100 sats**. This value i
 - Product and protocol specification in [`docs/PROTOCOL.md`](docs/PROTOCOL.md)
 - Liquidity operations plan in [`docs/LIQUIDITY_FUNDING.md`](docs/LIQUIDITY_FUNDING.md)
 - Fail-closed market, proxy, finality, and inventory policy in [`docs/RISK_POLICY.md`](docs/RISK_POLICY.md)
-- Future BIT/WBTC request-sized TWAP/probe signal used only to help price the Lightning ↔ BIT bridge, with a separate pool rollout gate in [`docs/BIT_WBTC_MARKET_REFERENCE.md`](docs/BIT_WBTC_MARKET_REFERENCE.md)
+- Future BIT/WBTC request-sized TWAP/probe signal used only to help price the primary Lightning ↔ BIT bridge, with a separate pool rollout gate in [`docs/BIT_WBTC_MARKET_REFERENCE.md`](docs/BIT_WBTC_MARKET_REFERENCE.md). The pool is not required for bridge development or closed testnet work and can count as only one independently checked market venue after it exists and matures.
 - Secret-free fail-closed monitoring with two-provider finalized gate-state agreement and actual-gate halt evidence in [`docs/MONITORING.md`](docs/MONITORING.md)
 - Finalized read-only deployment observation and closed governance rehearsal in [`docs/GOVERNANCE.md`](docs/GOVERNANCE.md)
 - Deterministic unsigned Sepolia deployment preparation, a short-lived signed two-provider preflight, and signed finalized receipt reconstruction in [`docs/CLOSED_TESTNET_DEPLOYMENT.md`](docs/CLOSED_TESTNET_DEPLOYMENT.md) and [`docs/CLOSED_TESTNET_DEPLOYMENT_POSTFLIGHT.md`](docs/CLOSED_TESTNET_DEPLOYMENT_POSTFLIGHT.md)

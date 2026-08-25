@@ -275,7 +275,7 @@ export default function Home() {
                   <div className="invoice-flow-arrow" aria-hidden="true">↓</div>
 
                   <div className="amount-panel receive-panel">
-                    <div className="panel-label"><span>You lock</span><span>Exact solver quote</span></div>
+                    <div className="panel-label"><span>You lock</span><span>Reference quote preview</span></div>
                     <div className="amount-row">
                       <strong>{numberFormat(displayInput, inputDigits)}</strong>
                       <span className="asset-chip bit"><i>B</i>BIT</span>
@@ -339,7 +339,7 @@ export default function Home() {
                   <span className={`solver-dot ${activeOffer.color}`} />
                   <span className="summary-copy">
                     <strong>{activeOffer.name}</strong>
-                    <small>{selectedOffer === 0 ? `Best received of ${offers.length}` : `Selected from ${offers.length}`} signed quotes</small>
+                    <small>{selectedOffer === 0 ? `Best of ${offers.length}` : `Selected from ${offers.length}`} example quotes</small>
                   </span>
                   <span className="summary-price"><strong>{feeLabel}</strong><small>expires 00:24</small></span>
                   <span className="chevron">⌄</span>
@@ -366,11 +366,13 @@ export default function Home() {
               </details>
 
               <details className="swap-details">
-                <summary><span>Invoice details</span><strong>1 BIT = 100 sats <i>⌄</i></strong></summary>
+                <summary><span>Quote details</span><strong>Reference only · 100 sats/BIT <i>⌄</i></strong></summary>
                 <div className="detail-rows">
                   <div><span>{isPayInvoice ? "Invoice receives" : "Invoice amount"}</span><strong>{numberFormat(isPayInvoice ? desiredOutput : displayInput, 0)} sats</strong></div>
                   <div><span>{isPayInvoice ? "BIT locked" : "BIT recipient"}</span><strong>{isPayInvoice ? `${numberFormat(displayInput, 6)} BIT` : receiveAddressHasShape ? shortAddress(receiveAddress) : "Required"}</strong></div>
                   <div><span>BIT fee</span><strong>{feeLabel}</strong></div>
+                  <div><span>Live pricing</span><strong>Verified markets required</strong></div>
+                  <div><span>Future BIT/WBTC pool</span><strong>One price check only</strong></div>
                   {isPayInvoice && <div><span>Estimated Lightning routing</span><strong>{activeOffer.routeFee} sats</strong></div>}
                   <div>
                     <span>Settlement protection</span>
@@ -423,9 +425,9 @@ export default function Home() {
               </div>
 
               <div className="capacity-card">
-                <span>Balanced swap capacity</span>
+                <span>Reference-balanced capacity</span>
                 <strong>{numberFormat(balancedCapacity)} sats</strong>
-                <small>After keeping 25% of each side unquoted</small>
+                <small>At 100 sats/BIT, after keeping 25% of each side unquoted</small>
               </div>
 
               <details className="swap-details">
@@ -434,6 +436,7 @@ export default function Home() {
                   <div><span>Usable Lightning</span><strong>{numberFormat(usableLightning)} sats</strong></div>
                   <div><span>Usable BIT</span><strong>{numberFormat(usableBit, 2)} BIT</strong></div>
                   <div><span>Suggested first-fill cap</span><strong>{numberFormat(fillCap)} sats</strong></div>
+                  <div><span>Live pricing</span><strong>Verified markets required</strong></div>
                   <div><span>Ownership</span><strong>One solver only</strong></div>
                   <div><span>LP shares / APY</span><strong>None</strong></div>
                 </div>
@@ -461,7 +464,7 @@ export default function Home() {
 
         <div className="trade-trust" aria-label="Swap guarantees">
           <span><i>✓</i> Invoice-first</span>
-          <span><i>✓</i> Best received quote</span>
+          <span><i>✓</i> Competing solver quotes</span>
           <span><i>✓</i> Swaps simulated</span>
           <span><i>✓</i> Sends use your wallet</span>
         </div>
