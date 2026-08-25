@@ -5,6 +5,9 @@ import {
   deactivateRecoverySolverDaemonExecutionFence,
 } from "../lib/active-solver-daemon-runtime.mjs";
 import { createCoordinatorRecoveryActionLoop } from "../lib/coordinator-recovery-action-loop.mjs";
+import {
+  createCoordinatorRecoveryExecutionSupervisor,
+} from "../lib/coordinator-recovery-execution-supervisor.mjs";
 
 const SETTLEMENT_ID = `0x${"11".repeat(32)}`;
 
@@ -42,4 +45,44 @@ test("execution fences are same-process, cancellable, and non-transferable", () 
     () => deactivateRecoverySolverDaemonExecutionFence(structuredClone(fence)),
     /original same-process execution fence/,
   );
+});
+
+test("recovery execution supervisor rejects raw authority, extra fields, and inactive verification", () => {
+  assert.throws(() => createCoordinatorRecoveryExecutionSupervisor({}), /fields are not exact/);
+  const input = {
+    heartbeatSeconds: 5,
+    intervalSeconds: 5,
+    jobSetVerification: Object.freeze({ copied: true }),
+    recoveredInterruptedActions: 0,
+    recoveryRefreshSeconds: 5,
+    recoverySupervisor: {
+      refresh: async () => ({ state: "inactive" }),
+      status: () => ({ state: "inactive" }),
+      stop: () => true,
+      useActiveActivation: () => { throw new Error("inactive"); },
+    },
+    serviceLease: {
+      leaseId: `sha256:${"1".repeat(64)}`,
+      publish: async () => {},
+      startedAt: "2033-05-18T03:33:20.000Z",
+    },
+    store: {
+      admissionMetrics: () => ({}),
+      integrityCheck: () => ({}),
+      metrics: () => ({}),
+    },
+  };
+  assert.throws(() => createCoordinatorRecoveryExecutionSupervisor(input), /active same-process/);
+  assert.throws(() => createCoordinatorRecoveryExecutionSupervisor({
+    ...input,
+    jobs: [],
+  }), /fields are not exact/);
+  assert.throws(() => createCoordinatorRecoveryExecutionSupervisor({
+    ...input,
+    heartbeatSeconds: 4,
+  }), /outside policy/);
+  assert.throws(() => createCoordinatorRecoveryExecutionSupervisor({
+    ...input,
+    recoveredInterruptedActions: -1,
+  }), /count is invalid/);
 });

@@ -9,11 +9,13 @@ import {
   acquireCoordinatorServiceLease,
   assertCoordinatorServiceLeaseOwnership,
   buildCoordinatorClosedStatus,
+  buildCoordinatorRecoveryExecutionStatus,
   buildCoordinatorRecoveryVerificationStatus,
   buildCoordinatorReleaseVerificationStatus,
   normalizeCoordinatorServiceConfig,
   readCoordinatorServiceHealth,
   validateCoordinatorClosedStatus,
+  validateCoordinatorRecoveryExecutionStatus,
   validateCoordinatorRecoveryVerificationStatus,
   validateCoordinatorReleaseVerificationStatus,
 } from "../lib/coordinator-service-state.mjs";
@@ -50,7 +52,7 @@ function wholeSecond(milliseconds) {
   return new Date(Math.floor(milliseconds / 1_000) * 1_000).toISOString();
 }
 
-test("accepts only separated, bounded closed, release, or recovery verification configuration", async (t) => {
+test("accepts only separated, bounded closed, release, recovery-verification, or recovery-execution configuration", async (t) => {
   const paths = await fixture(t);
   const valid = config(paths);
   assert.equal(valid.databasePath, paths.databasePath);
@@ -82,7 +84,17 @@ test("accepts only separated, bounded closed, release, or recovery verification 
   assert.equal(recovery.recoveryActivationManifestPath, recoveryManifestPath);
   assert.equal(recovery.recoveryRefreshSeconds, 6);
   assert.equal(recovery.recoveryProviderTimeoutMs, 2000);
+  assert.equal(recovery.recoveryActionIntervalSeconds, null);
   assert.equal(recovery.releaseActivationManifestPath, null);
+  const recoveryExecution = config(paths, {
+    COORDINATOR_MODE: "recovery-execution-only",
+    COORDINATOR_RECOVERY_ACTIVATION_MANIFEST_PATH: recoveryManifestPath,
+    COORDINATOR_RECOVERY_REFRESH_SECONDS: "6",
+    COORDINATOR_RECOVERY_PROVIDER_TIMEOUT_MS: "2000",
+    COORDINATOR_RECOVERY_ACTION_INTERVAL_SECONDS: "7",
+  });
+  assert.equal(recoveryExecution.mode, "recovery-execution-only");
+  assert.equal(recoveryExecution.recoveryActionIntervalSeconds, 7);
   assert.throws(() => config(paths, {
     COORDINATOR_RELEASE_ACTIVATION_MANIFEST_PATH: manifestPath,
   }), /closed coordinator mode cannot accept/);
@@ -112,6 +124,22 @@ test("accepts only separated, bounded closed, release, or recovery verification 
     COORDINATOR_MODE: "recovery-verification-only",
     COORDINATOR_RECOVERY_ACTIVATION_MANIFEST_PATH: join(paths.runtimeDirectory, "recovery.json"),
   }), /separate read-only directory/);
+  assert.throws(() => config(paths, {
+    COORDINATOR_MODE: "recovery-verification-only",
+    COORDINATOR_RECOVERY_ACTIVATION_MANIFEST_PATH: recoveryManifestPath,
+    COORDINATOR_RECOVERY_ACTION_INTERVAL_SECONDS: "5",
+  }), /cannot accept recovery action inputs/);
+  assert.throws(() => config(paths, {
+    COORDINATOR_MODE: "recovery-execution-only",
+    COORDINATOR_RECOVERY_ACTIVATION_MANIFEST_PATH: recoveryManifestPath,
+    COORDINATOR_RELEASE_ACTIVATION_MANIFEST_PATH: manifestPath,
+  }), /cannot accept release verification inputs/);
+  assert.throws(() => config(paths, {
+    COORDINATOR_MODE: "recovery-execution-only",
+    COORDINATOR_RECOVERY_ACTIVATION_MANIFEST_PATH: recoveryManifestPath,
+    COORDINATOR_RECOVERY_PROVIDER_TIMEOUT_MS: "1000",
+    COORDINATOR_RECOVERY_ACTION_INTERVAL_SECONDS: "4",
+  }), /outside policy/);
   assert.throws(() => config(paths, {
     COORDINATOR_MODE: "recovery-verification-only",
     COORDINATOR_RECOVERY_ACTIVATION_MANIFEST_PATH: recoveryManifestPath,
@@ -199,6 +227,37 @@ function activeRecoveryVerification(attemptAt, validUntil) {
       lightningDispatch: false,
       newExposure: false,
       funding: false,
+    },
+  };
+}
+
+function activeRecoveryAction(attemptAt) {
+  const startedAt = attemptAt;
+  return {
+    schema: "treeswap.coordinator-recovery-action-loop.v2",
+    state: "active",
+    scope: "already-bound-settlement-recovery-only-no-lightning-planning-dispatch-new-exposure-or-funding-authority",
+    startedAt,
+    lastAttemptAt: attemptAt,
+    lastSuccessAt: attemptAt,
+    consecutiveFailures: 0,
+    releaseId: `0x${"1".repeat(64)}`,
+    releaseRecordDigest: `0x${"2".repeat(64)}`,
+    jobSetDigest: `0x${"a".repeat(64)}`,
+    jobCount: 1,
+    counts: {
+      attempted: 1,
+      advanced: 0,
+      waiting: 1,
+      gateClosed: 0,
+      done: 0,
+      halted: 0,
+    },
+    cycleDigest: `0x${"9".repeat(64)}`,
+    authorizations: {
+      funding: false,
+      lightningDispatch: false,
+      newExposure: false,
     },
   };
 }
@@ -325,6 +384,105 @@ test("recovery-verification status exposes incident state but no reusable contex
         authorizations: { ...status.recoveryVerification.authorizations, lightningDispatch: true },
       },
     }), /identity or authority/);
+  } finally {
+    store.close();
+  }
+});
+
+test("recovery-execution status reports bounded existing-liability work without claiming funding authority", async (t) => {
+  const paths = await fixture(t);
+  const store = await CoordinatorStore.open(paths.databasePath);
+  const heartbeatAt = "2033-05-18T03:33:21.000Z";
+  const validUntil = Math.floor(Date.parse(heartbeatAt) / 1_000) + 60;
+  try {
+    const status = buildCoordinatorRecoveryExecutionStatus({
+      store,
+      serviceStartedAt: "2033-05-18T03:33:19.000Z",
+      heartbeatAt,
+      leaseIdentifier: `sha256:${"1".repeat(64)}`,
+      recoveredInterruptedActions: 0,
+      recoveryVerification: activeRecoveryVerification(heartbeatAt, validUntil),
+      recoveryAction: activeRecoveryAction(heartbeatAt),
+    });
+    assert.equal(status.mode, "recovery-execution-only");
+    assert.equal(status.boundedExistingLiabilityEvmClaimRecovery, true);
+    assert.equal(status.fundingAuthorization, false);
+    assert.equal(status.lightningDispatchAuthorization, false);
+    assert.equal(status.newExposureAuthorization, false);
+    assert.equal(status.networkListener, false);
+    assert.equal(Object.hasOwn(status, "dispatchAuthorization"), false);
+    assert.throws(() => validateCoordinatorRecoveryExecutionStatus({
+      ...status,
+      boundedExistingLiabilityEvmClaimRecovery: false,
+    }), /not derived from live state/);
+    assert.throws(() => validateCoordinatorRecoveryExecutionStatus({
+      ...status,
+      recoveryAction: {
+        ...status.recoveryAction,
+        counts: { ...status.recoveryAction.counts, done: 1 },
+      },
+    }), /counts do not reconcile/);
+    assert.throws(() => validateCoordinatorRecoveryExecutionStatus({
+      ...status,
+      recoveryAction: {
+        ...status.recoveryAction,
+        authorizations: { ...status.recoveryAction.authorizations, lightningDispatch: true },
+      },
+    }), /identity or authority/);
+    assert.throws(() => validateCoordinatorRecoveryExecutionStatus({
+      ...status,
+      recoveryAction: {
+        ...status.recoveryAction,
+        releaseId: `0x${"3".repeat(64)}`,
+      },
+    }), /another verified release/);
+    assert.throws(() => validateCoordinatorRecoveryExecutionStatus({
+      ...status,
+      recoveryAction: {
+        ...status.recoveryAction,
+        jobSetDigest: `0x${"0".repeat(64)}`,
+      },
+    }), /release or job-set digest/);
+    assert.throws(() => validateCoordinatorRecoveryExecutionStatus({
+      ...status,
+      recoveryAction: { ...status.recoveryAction, settlementId: `0x${"1".repeat(64)}` },
+    }), /fields are not exact/);
+    const paused = buildCoordinatorRecoveryExecutionStatus({
+      store,
+      serviceStartedAt: "2033-05-18T03:33:19.000Z",
+      heartbeatAt,
+      leaseIdentifier: `sha256:${"1".repeat(64)}`,
+      recoveredInterruptedActions: 0,
+      recoveryVerification: {
+        ...activeRecoveryVerification(heartbeatAt, validUntil),
+        bitPaused: true,
+      },
+      recoveryAction: activeRecoveryAction(heartbeatAt),
+    });
+    assert.equal(paused.boundedExistingLiabilityEvmClaimRecovery, false);
+    const running = buildCoordinatorRecoveryExecutionStatus({
+      store,
+      serviceStartedAt: "2033-05-18T03:33:19.000Z",
+      heartbeatAt,
+      leaseIdentifier: `sha256:${"1".repeat(64)}`,
+      recoveredInterruptedActions: 0,
+      recoveryVerification: activeRecoveryVerification(heartbeatAt, validUntil),
+      recoveryAction: {
+        ...activeRecoveryAction(heartbeatAt),
+        state: "running",
+        lastSuccessAt: null,
+        counts: {
+          attempted: 0,
+          advanced: 0,
+          waiting: 0,
+          gateClosed: 0,
+          done: 0,
+          halted: 0,
+        },
+        cycleDigest: null,
+      },
+    });
+    assert.equal(running.boundedExistingLiabilityEvmClaimRecovery, false);
   } finally {
     store.close();
   }
@@ -473,6 +631,84 @@ test("recovery-verification health requires fresh provider-bound recovery and re
     await assert.rejects(
       readCoordinatorServiceHealth(policy, { now: () => observedAt + 21_000 }),
       /recovery verification is expired/,
+    );
+  } finally {
+    store.close();
+    await lease.release();
+  }
+});
+
+test("recovery-execution health requires both live verification and a successful bounded action cycle", async (t) => {
+  const paths = await fixture(t);
+  const observedAt = Date.parse("2033-05-18T03:33:20.000Z");
+  const policy = config(paths, {
+    COORDINATOR_MODE: "recovery-execution-only",
+    COORDINATOR_RECOVERY_ACTIVATION_MANIFEST_PATH: join(paths.root, "inputs", "recovery.json"),
+    COORDINATOR_RECOVERY_REFRESH_SECONDS: "5",
+    COORDINATOR_RECOVERY_PROVIDER_TIMEOUT_MS: "1000",
+    COORDINATOR_RECOVERY_ACTION_INTERVAL_SECONDS: "5",
+  });
+  const lease = await acquireCoordinatorServiceLease(policy, {
+    now: () => observedAt,
+    randomBytesImpl: deterministicRandom(),
+  });
+  const store = await CoordinatorStore.open(paths.databasePath);
+  const heartbeatAt = wholeSecond(observedAt);
+  const validUntil = Math.floor(observedAt / 1_000) + 20;
+  try {
+    await lease.publish(buildCoordinatorRecoveryExecutionStatus({
+      store,
+      serviceStartedAt: lease.startedAt,
+      heartbeatAt,
+      leaseIdentifier: lease.leaseId,
+      recoveredInterruptedActions: 0,
+      recoveryVerification: activeRecoveryVerification(heartbeatAt, validUntil),
+      recoveryAction: activeRecoveryAction(heartbeatAt),
+    }));
+    assert.deepEqual(await readCoordinatorServiceHealth(policy, { now: () => observedAt + 5_000 }), {
+      schema: "treeswap.coordinator-recovery-execution-service-status.v1",
+      mode: "recovery-execution-only",
+      heartbeatAt,
+      databaseStatus: "ok",
+      fundingAuthorization: false,
+      recoveryVerification: "active",
+      recoveryValidUntil: validUntil,
+      recoveryAction: "active",
+      recoveryJobCount: 1,
+      boundedExistingLiabilityEvmClaimRecovery: true,
+      lightningDispatchAuthorization: false,
+      newExposureAuthorization: false,
+      gateOpen: false,
+      emergencyHalted: true,
+      bitPaused: false,
+    });
+    const idleAction = {
+      ...activeRecoveryAction(heartbeatAt),
+      state: "idle",
+      lastAttemptAt: null,
+      lastSuccessAt: null,
+      counts: {
+        attempted: 0,
+        advanced: 0,
+        waiting: 0,
+        gateClosed: 0,
+        done: 0,
+        halted: 0,
+      },
+      cycleDigest: null,
+    };
+    await lease.publish(buildCoordinatorRecoveryExecutionStatus({
+      store,
+      serviceStartedAt: lease.startedAt,
+      heartbeatAt,
+      leaseIdentifier: lease.leaseId,
+      recoveredInterruptedActions: 0,
+      recoveryVerification: activeRecoveryVerification(heartbeatAt, validUntil),
+      recoveryAction: idleAction,
+    }));
+    await assert.rejects(
+      readCoordinatorServiceHealth(policy, { now: () => observedAt + 5_000 }),
+      /action loop is not active/,
     );
   } finally {
     store.close();
@@ -687,4 +923,32 @@ test("packaged recovery verifier stays alive, inactive, secret-free, and unable 
   } finally {
     if (child.exitCode === null) await stop(child);
   }
+});
+
+test("default packaged service refuses recovery execution without a same-process custody bootstrap", async (t) => {
+  const paths = await fixture(t);
+  const environment = {
+    ...process.env,
+    COORDINATOR_MODE: "recovery-execution-only",
+    COORDINATOR_DATABASE_PATH: paths.databasePath,
+    COORDINATOR_RUNTIME_DIRECTORY: paths.runtimeDirectory,
+    COORDINATOR_HEARTBEAT_SECONDS: "5",
+    COORDINATOR_INTEGRITY_SECONDS: "10",
+    COORDINATOR_LEASE_STALE_SECONDS: "60",
+    COORDINATOR_RECOVERY_ACTIVATION_MANIFEST_PATH: join(paths.root, "inputs", "recovery.json"),
+    COORDINATOR_RECOVERY_REFRESH_SECONDS: "5",
+    COORDINATOR_RECOVERY_PROVIDER_TIMEOUT_MS: "1000",
+    COORDINATOR_RECOVERY_ACTION_INTERVAL_SECONDS: "5",
+    TREESWAP_FUNDING_ENABLED: "false",
+  };
+  const child = spawnSync(process.execPath, ["infra/coordinator/service.mjs"], {
+    cwd: process.cwd(),
+    env: environment,
+    encoding: "utf8",
+    timeout: 60_000,
+  });
+  assert.equal(child.status, 1);
+  assert.match(child.stderr, /deployment-specific same-process retained-custody bootstrap/);
+  await assert.rejects(lstat(paths.databasePath), { code: "ENOENT" });
+  await assert.rejects(lstat(join(paths.runtimeDirectory, "coordinator.lease")), { code: "ENOENT" });
 });

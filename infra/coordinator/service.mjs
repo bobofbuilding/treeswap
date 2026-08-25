@@ -15,6 +15,11 @@ function wholeSecondIso(milliseconds = Date.now()) {
 
 async function run() {
   const config = normalizeCoordinatorServiceConfig();
+  if (config.mode === "recovery-execution-only") {
+    throw new Error(
+      "recovery execution requires a deployment-specific same-process retained-custody bootstrap",
+    );
+  }
   const lease = await acquireCoordinatorServiceLease(config);
   let store;
   let timer = null;
