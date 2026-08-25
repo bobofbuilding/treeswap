@@ -102,6 +102,7 @@ function claimTemplate(value) {
 
 function packetClient(value) {
   let reads = 0;
+  const consumedRequests = new Set();
   const authenticated = createAuthenticatedPrivatePacketClient({
     providerOrigin: "https://packet-provider.internal",
     requesterPrivateKey: packetRequesterKeys.privateKey,
@@ -139,13 +140,18 @@ function packetClient(value) {
         evmRefundAt: NOW + 2_000,
         operation,
       };
-      const signed = buildSignedPrivatePacketResponse({
+      const signed = await buildSignedPrivatePacketResponse({
         requestEnvelope: request,
         requesterPublicKey: packetRequesterKeys.publicKey,
         expectedRequesterKeyId: "daemon-requester-test",
         packet: privatePacket,
         providerKeyId: "packet-provider-test",
         providerPrivateKey: packetProviderKeys.privateKey,
+        consumeRequest: async ({ requestId }) => {
+          if (consumedRequests.has(requestId)) return false;
+          consumedRequests.add(requestId);
+          return true;
+        },
         servedAt: NOW + 10,
         expiresAt: NOW + 20,
         minimumEvmSafetySeconds: 600,

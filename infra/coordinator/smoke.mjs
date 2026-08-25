@@ -118,6 +118,7 @@ const evidencePolicy = {
   maxEvidenceLifetimeSeconds: 30,
   maxClockSkewSeconds: 2,
 };
+const consumedPacketRequests = new Set();
 const packetClient = createAuthenticatedPrivatePacketClient({
   providerOrigin: "https://private-packet-provider.internal",
   requesterPrivateKey: packetRequesterKeys.privateKey,
@@ -154,13 +155,18 @@ const packetClient = createAuthenticatedPrivatePacketClient({
         feeLimitSats: "10",
       },
     };
-    const signed = buildSignedPrivatePacketResponse({
+    const signed = await buildSignedPrivatePacketResponse({
       requestEnvelope: request,
       requesterPublicKey: packetRequesterKeys.publicKey,
       expectedRequesterKeyId: "coordinator-regtest",
       packet,
       providerKeyId: "packet-provider-regtest",
       providerPrivateKey: packetProviderKeys.privateKey,
+      consumeRequest: async ({ requestId }) => {
+        if (consumedPacketRequests.has(requestId)) return false;
+        consumedPacketRequests.add(requestId);
+        return true;
+      },
       servedAt,
       expiresAt: servedAt + 10,
       minimumEvmSafetySeconds: 600,
