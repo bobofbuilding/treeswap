@@ -112,6 +112,10 @@ jobs:
       - run: node --check lib/solver-daemon-evidence.mjs
       - run: node --check lib/solver-daemon-runtime.mjs
       - run: node --check lib/active-solver-daemon-runtime.mjs
+      - run: node --check lib/coordinator-active-execution-policy.mjs
+      - run: node --check lib/coordinator-active-execution-lifecycle.mjs
+      - run: node --check lib/coordinator-active-execution-supervisor.mjs
+      - run: node --check lib/coordinator-active-execution-service.mjs
       - run: node --check lib/solver-private-packet.mjs
       - run: node --check lib/safety-monitor.mjs
       - run: node --check lib/lightning-close-monitor.mjs

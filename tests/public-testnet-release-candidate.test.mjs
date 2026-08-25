@@ -58,6 +58,9 @@ import {
   prepareCoordinatorActiveExecutionPolicySet,
 } from "../lib/coordinator-active-execution-policy.mjs";
 import {
+  createCoordinatorActiveExecutionBootstrap,
+} from "../lib/coordinator-active-execution-service.mjs";
+import {
   createCoordinatorRecoveryExecutionBootstrap,
 } from "../lib/coordinator-recovery-execution-service.mjs";
 import {
@@ -67,6 +70,7 @@ import { CoordinatorStore } from "../lib/coordinator-store.mjs";
 import {
   acquireCoordinatorServiceLease,
   normalizeCoordinatorServiceConfig,
+  readCoordinatorServiceHealth,
 } from "../lib/coordinator-service-state.mjs";
 import { verifyPublicTestnetBootstrapEvidence } from "../lib/public-testnet-bootstrap-evidence.mjs";
 import { verifyIndependentReviewEvidence } from "../lib/independent-review-evidence.mjs";
@@ -1834,6 +1838,102 @@ test("activates funding only after same-process evidence, approvals, reconciliat
     assert.equal(isPublicTestnetReleaseActive(lifecycleActivation), false);
     assert.equal(isPublicTestnetReleaseActive(activation), true);
     await assert.rejects(activeExecutionLifecycle.runCycle(), /is stopped/);
+    const serviceActivation = await activatePublicTestnetRelease({
+      candidate,
+      approvalBundle,
+      providerSet,
+      reconciliation: reconciliation.reconciliation,
+      reconciliationApprovals: reconciliation.approvals,
+      now,
+    });
+    const serviceReleaseSupervisor = createCoordinatorReleaseVerificationSupervisor({
+      manifestPath: "/injected-active-execution-service-manifest.json",
+      activate: async () => ({
+        manifestDigest: id("active execution service manifest").toLowerCase(),
+        candidate,
+        activation: serviceActivation,
+      }),
+    });
+    assert.equal((await serviceReleaseSupervisor.refresh({ now: now + 3 })).state, "active");
+    const activeServiceConfig = normalizeCoordinatorServiceConfig({
+      COORDINATOR_MODE: "active-execution-only",
+      COORDINATOR_DATABASE_PATH: join(serviceRoot, "settlements", "coordinator.sqlite"),
+      COORDINATOR_RUNTIME_DIRECTORY: join(serviceRoot, "active-run"),
+      COORDINATOR_HEARTBEAT_SECONDS: "5",
+      COORDINATOR_INTEGRITY_SECONDS: "10",
+      COORDINATOR_LEASE_STALE_SECONDS: "30",
+      COORDINATOR_RELEASE_ACTIVATION_MANIFEST_PATH: join(
+        serviceRoot,
+        "active-inputs",
+        "activation.json",
+      ),
+      COORDINATOR_RELEASE_REFRESH_SECONDS: "10",
+      COORDINATOR_RELEASE_PROVIDER_TIMEOUT_MS: "1000",
+      COORDINATOR_ACTIVE_EXECUTION_INTERVAL_SECONDS: "5",
+      COORDINATOR_ACTIVE_MAX_SETTLEMENTS_PER_CYCLE: "16",
+      COORDINATOR_ACTIVE_PREPARATION_TIMEOUT_SECONDS: "10",
+      COORDINATOR_ACTIVE_REPLICA_MODE: "single-host",
+      COORDINATOR_ACTIVE_EXPECTED_REPLICAS: "1",
+      TREESWAP_FUNDING_ENABLED: "false",
+    });
+    const activeServiceLease = await acquireCoordinatorServiceLease(
+      activeServiceConfig,
+      { now: () => serviceNow },
+    );
+    const activeServiceBootstrap = createCoordinatorActiveExecutionBootstrap({
+      heartbeatSeconds: 5,
+      integritySeconds: 10,
+      intervalSeconds: 5,
+      maxSettlementsPerCycle: 16,
+      preparationTimeoutSeconds: 10,
+      prepareExecutionPolicySet: ({ abortSignal, releaseSupervisor, serviceLease: receivedLease,
+        store: receivedStore }) => {
+        assert.equal(abortSignal.aborted, false);
+        assert.equal(releaseSupervisor, serviceReleaseSupervisor);
+        assert.equal(receivedLease, activeServiceLease);
+        assert.equal(receivedStore, waitingStore);
+        return prepareCoordinatorActiveExecutionPolicySet({
+          executionPolicies: [{
+            solverCapabilityVerification: solverCapability.verification,
+            evidencePolicy,
+            runtime: { packetClient: null, controls: {}, lightning: null, evm: null },
+          }],
+          releaseSupervisor,
+          serviceLease: receivedLease,
+          store: receivedStore,
+        });
+      },
+      recoveredInterruptedActions: 0,
+      releaseRefreshSeconds: 10,
+      releaseSupervisor: serviceReleaseSupervisor,
+      serviceLease: activeServiceLease,
+      signal: null,
+      store: waitingStore,
+    });
+    assert.equal(await activeServiceBootstrap.start(), true);
+    const activeServiceStatus = activeServiceBootstrap.status();
+    assert.equal(activeServiceStatus.schema, "treeswap.coordinator-active-execution-service-status.v1");
+    assert.equal(activeServiceStatus.activeExecution.state, "active");
+    assert.equal(activeServiceStatus.fundingAuthorization, true);
+    assert.equal(activeServiceStatus.lightningDispatchAuthorization, true);
+    assert.equal(activeServiceStatus.newExposureAuthorization, true);
+    assert.equal(activeServiceStatus.expectedReplicas, 1);
+    assert.equal(JSON.stringify(activeServiceStatus).includes(wrapperSettlementId), false);
+    assert.equal(
+      (await readCoordinatorServiceHealth(activeServiceConfig, { now: () => serviceNow })).activeExecution,
+      "active",
+    );
+    await assert.rejects(
+      acquireCoordinatorServiceLease(activeServiceConfig, { now: () => serviceNow }),
+      /fresh lease/,
+    );
+    assert.deepEqual(await activeServiceBootstrap.stop(), { reason: "requested" });
+    assert.deepEqual(await activeServiceBootstrap.waitUntilStopped(), { reason: "requested" });
+    assert.equal(isPublicTestnetReleaseActive(serviceActivation), false);
+    await assert.rejects(
+      readCoordinatorServiceHealth(activeServiceConfig, { now: () => serviceNow }),
+      /bounded private regular file|ENOENT|real directory/,
+    );
     const refreshFailureActivation = await activatePublicTestnetRelease({
       candidate,
       approvalBundle,
