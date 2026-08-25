@@ -2370,8 +2370,8 @@ observe_lightning_close_collector_quorum() {
   local collector_a collector_b now input
   collector_a=$(compose --profile tools run --rm -T --no-deps lightning-close-collector-a)
   collector_b=$(compose --profile tools run --rm -T --no-deps lightning-close-collector-b)
-  jq -e '.schema == "treeswap.lightning-close-collector-attestation.v1"' <<<"$collector_a" >/dev/null
-  jq -e '.schema == "treeswap.lightning-close-collector-attestation.v1"' <<<"$collector_b" >/dev/null
+  jq -e '.schema == "treeswap.lightning-close-collector-attestation.v2"' <<<"$collector_a" >/dev/null
+  jq -e '.schema == "treeswap.lightning-close-collector-attestation.v2"' <<<"$collector_b" >/dev/null
   now=$(date +%s)
   input=$(jq -cn \
     --argjson collectorA "$collector_a" \
