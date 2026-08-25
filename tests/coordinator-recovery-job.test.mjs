@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   normalizeCoordinatorRecoveryJobs,
+  snapshotCoordinatorActiveEvidencePolicy,
   snapshotCoordinatorActiveRuntime,
   snapshotCoordinatorRecoveryEvidencePolicy,
   snapshotCoordinatorRecoveryRuntime,
@@ -125,6 +126,96 @@ test("enforces exact job, runtime, control, identifier, duplicate, and count bou
     evm: null,
   }), /forbidden prototype key/);
   assert.equal(Object.prototype.timeoutMs, undefined);
+});
+
+test("snapshots active and recovery evidence policies as bounded exact data", () => {
+  for (const [label, snapshot] of [
+    ["active", snapshotCoordinatorActiveEvidencePolicy],
+    ["recovery", snapshotCoordinatorRecoveryEvidencePolicy],
+  ]) {
+    const source = {
+      schema: "test-policy",
+      approvers: { lightningOperator: "one", securityReviewer: "two" },
+      limits: [1, 2, 3],
+    };
+    const result = snapshot(source);
+    source.approvers.lightningOperator = "changed";
+    source.limits[0] = 9;
+    assert.deepEqual(result, {
+      schema: "test-policy",
+      approvers: { lightningOperator: "one", securityReviewer: "two" },
+      limits: [1, 2, 3],
+    }, `${label} snapshot changed after caller mutation`);
+    assert.equal(Object.isFrozen(result), true);
+    assert.equal(Object.isFrozen(result.approvers), true);
+    assert.equal(Object.isFrozen(result.limits), true);
+
+    let outerGetterCalls = 0;
+    const outerAccessor = { schema: "test-policy" };
+    Object.defineProperty(outerAccessor, "approvers", {
+      enumerable: true,
+      get() {
+        outerGetterCalls += 1;
+        return {};
+      },
+    });
+    assert.throws(() => snapshot(outerAccessor), /enumerable data property/);
+    assert.equal(outerGetterCalls, 0, `${label} outer getter ran`);
+
+    let nestedGetterCalls = 0;
+    const nestedAccessor = { schema: "test-policy", approvers: {} };
+    Object.defineProperty(nestedAccessor.approvers, "lightningOperator", {
+      enumerable: true,
+      get() {
+        nestedGetterCalls += 1;
+        return "one";
+      },
+    });
+    assert.throws(() => snapshot(nestedAccessor), /enumerable data property/);
+    assert.equal(nestedGetterCalls, 0, `${label} nested getter ran`);
+
+    const symbolField = { schema: "test-policy", [Symbol("hidden")]: true };
+    assert.throws(() => snapshot(symbolField), /outside policy/);
+    const hiddenField = { schema: "test-policy" };
+    Object.defineProperty(hiddenField, "hidden", { enumerable: false, value: true });
+    assert.throws(() => snapshot(hiddenField), /enumerable data property/);
+    assert.throws(
+      () => snapshot(Object.assign(Object.create({ inherited: true }), { schema: "test-policy" })),
+      /unsupported object/,
+    );
+    const prototypeField = { schema: "test-policy" };
+    Object.defineProperty(prototypeField, "__proto__", {
+      configurable: true,
+      enumerable: true,
+      writable: true,
+      value: { schema: "attacker-policy" },
+    });
+    assert.throws(() => snapshot(prototypeField), /forbidden prototype key/);
+    const sparse = [1, , 3];
+    assert.throws(() => snapshot({ schema: "test-policy", limits: sparse }), /array fields are not exact/);
+    const decorated = [1];
+    decorated.extra = 2;
+    assert.throws(() => snapshot({ schema: "test-policy", limits: decorated }), /array fields are not exact/);
+    assert.throws(() => snapshot({ schema: "test-policy", unsafe: 1.5 }), /unsupported value/);
+    assert.throws(() => snapshot({ schema: "test-policy", executable: () => true }), /unsupported value/);
+    let coercionCalls = 0;
+    const coercible = {
+      valueOf() {
+        coercionCalls += 1;
+        return 1;
+      },
+      toString() {
+        coercionCalls += 1;
+        return "1";
+      },
+    };
+    assert.throws(() => snapshot({ schema: "test-policy", unsafe: coercible }), /unsupported value/);
+    assert.equal(coercionCalls, 0, `${label} object coercion ran`);
+    const cycle = { schema: "test-policy" };
+    cycle.self = cycle;
+    assert.throws(() => snapshot(cycle), /bounded data policy/);
+  }
+  assert.equal(Object.prototype.schema, undefined);
 });
 
 test("active runtime snapshots the Lightning authorizer without widening recovery authority", async () => {

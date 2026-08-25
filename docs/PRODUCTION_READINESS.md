@@ -138,6 +138,7 @@ The current adapter boundary, live lab, and remaining fault matrix are documente
 
 ## Gate 3 — build the durable automatic coordinator
 
+- [x] Active and retained-recovery job preparation now freeze one bounded exact-data daemon-evidence-policy snapshot before digesting or authority comparison. Getters are not invoked; mutation after snapshot is inert; hidden, symbol, inherited, prototype-key, custom-prototype, unsafe, executable, cyclic or oversized, sparse, and decorated inputs reject. This does not prove deployed policy truth or independence.
 - [x] Persist intent nonce, payment hash, quote receipt, selected set, capacity epoch, reservation, Lightning action, and mutually exclusive terminal state through atomic transitions.
 - [ ] Make every value-moving action idempotent and recoverable after a process crash or ambiguous response.
   - [x] Lightning actions use a durable one-dispatch outbox; process restart, transport loss, replay conflict, and malformed success enter `UNKNOWN` and block retries.
