@@ -12,6 +12,7 @@ const USER = "0x1111111111111111111111111111111111111111";
 const SOLVER = "0x2222222222222222222222222222222222222222";
 const SOLVER_TWO = "0x3333333333333333333333333333333333333333";
 const BIT = 10n ** 18n;
+const SEND_PAYMENT = "/routerrpc.Router/SendPaymentV2";
 const SETTLE_INVOICE = "/invoicesrpc.Invoices/SettleInvoice";
 
 function hash(label) {
@@ -98,13 +99,13 @@ function completeSelectedSettlement(store, firmOffer, label, proofDigest) {
   const settlement = {
     settlementId: hash(`settlement:${label}`),
     pricingId: hash(`pricing:${label}`),
-    direction: "lightning-to-bit",
+    direction: firmOffer.direction,
     nonceAuthorityDigest: hash(`nonce-authority:${label}`),
     intentNonce: String(100 + firmOffer.capacityEpoch),
     intentDigest: hash(`intent:${label}`),
     paymentHash: hash(`payment:${label}`),
     invoiceDigest: hash(`invoice:${label}`),
-    amountSats: "10000",
+    amountSats: firmOffer.lightningAmountSats,
     quoteReceiptDigest: hash(`quote-receipt:${label}`),
     selectedSetDigest: hash(`selected-set:${label}`),
     selectedOfferId: firmOffer.offerId,
@@ -124,7 +125,7 @@ function completeSelectedSettlement(store, firmOffer, label, proofDigest) {
   const action = store.planAction({
     actionId: hash(`action:${label}`),
     settlementId: settlement.settlementId,
-    method: SETTLE_INVOICE,
+    method: firmOffer.direction === "bit-to-lightning" ? SEND_PAYMENT : SETTLE_INVOICE,
     requestId: hash(`action-request:${label}`),
     payloadDigest: hash(`action-payload:${label}`),
     intentDigest: settlement.intentDigest,
@@ -139,7 +140,7 @@ function completeSelectedSettlement(store, firmOffer, label, proofDigest) {
     actionId: action.actionId,
     outcome: "confirmed",
     resultDigest: hash(`action-result:${label}`),
-    resultCode: "SETTLED",
+    resultCode: firmOffer.direction === "bit-to-lightning" ? "SUCCEEDED" : "SETTLED",
     recordedAt: NOW + 6,
   });
   store.recordTerminal({
@@ -485,6 +486,175 @@ test("opens admission without an allowlist while enforcing the unknown BIT-to-Li
     }));
     assert.equal(accepted.state, "ACTIVE");
     assert.equal(store.getSolverCapacity(SOLVER).successfulFills, "0");
+  } finally {
+    store.close();
+  }
+});
+
+test("does not promote BIT-to-Lightning exposure from Lightning-to-BIT fill history", async () => {
+  const store = await CoordinatorStore.open(":memory:", { allowMemory: true });
+  const admissionPolicy = policy({ maxRequestsPerWindow: 10 });
+  try {
+    store.recordSolverCapacity(snapshot());
+    for (const [index, nonce] of [[1, 2], [2, 3], [3, 4]]) {
+      const rfq = request(`safe-direction-fill-${index}`, nonce);
+      store.admitRfq({ identity: identity(), request: rfq, policy: admissionPolicy, now: NOW });
+      const firm = store.reserveVerifiedFirmOffer(reservation(rfq, `safe-direction-fill-${index}`, {
+        offer: {
+          ...reservation(rfq, `safe-direction-fill-${index}`).offer,
+          bitAmountWei: String(10n * BIT),
+        },
+        policy: admissionPolicy,
+      }));
+      const proof = hash(`safe-direction-fill-proof-${index}`);
+      completeSelectedSettlement(store, firm, `safe-direction-fill-${index}`, proof);
+      store.recordFirmOfferOutcome({
+        offerId: firm.offerId,
+        outcome: "filled",
+        evidenceDigest: proof,
+        recordedAt: NOW + 8,
+        policy: admissionPolicy,
+      });
+    }
+    assert.equal(store.getSolverCapacity(SOLVER).successfulFills, "3");
+
+    const riskyDirection = request("cross-direction-promotion", 5, {
+      direction: "bit-to-lightning",
+      notionalSats: "5001",
+    });
+    store.admitRfq({ identity: identity(), request: riskyDirection, policy: admissionPolicy, now: NOW + 9 });
+    assert.throws(() => store.reserveVerifiedFirmOffer(reservation(riskyDirection, "cross-direction-promotion", {
+      offer: {
+        ...reservation(riskyDirection, "cross-direction-promotion").offer,
+        direction: "bit-to-lightning",
+        bitAmountWei: "0",
+        lightningAmountSats: "5001",
+      },
+      policy: admissionPolicy,
+      now: NOW + 9,
+    })), /unknown solver BIT-to-Lightning cap exceeded/);
+  } finally {
+    store.close();
+  }
+});
+
+test("promotes BIT-to-Lightning exposure only from reconciled fills in that direction", async () => {
+  const store = await CoordinatorStore.open(":memory:", { allowMemory: true });
+  const admissionPolicy = policy({ maxRequestsPerWindow: 10 });
+  try {
+    store.recordSolverCapacity(snapshot(7, { availableBitWei: "0" }));
+    for (const [index, nonce] of [[1, 2], [2, 3], [3, 4]]) {
+      const rfq = request(`risky-direction-fill-${index}`, nonce, {
+        direction: "bit-to-lightning",
+        notionalSats: "5000",
+      });
+      store.admitRfq({ identity: identity(), request: rfq, policy: admissionPolicy, now: NOW });
+      const firm = store.reserveVerifiedFirmOffer(reservation(rfq, `risky-direction-fill-${index}`, {
+        offer: {
+          ...reservation(rfq, `risky-direction-fill-${index}`).offer,
+          direction: "bit-to-lightning",
+          bitAmountWei: "0",
+          lightningAmountSats: "5000",
+        },
+        policy: admissionPolicy,
+      }));
+      const proof = hash(`risky-direction-fill-proof-${index}`);
+      completeSelectedSettlement(store, firm, `risky-direction-fill-${index}`, proof);
+      store.recordFirmOfferOutcome({
+        offerId: firm.offerId,
+        outcome: "filled",
+        evidenceDigest: proof,
+        recordedAt: NOW + 8,
+        policy: admissionPolicy,
+      });
+    }
+
+    const established = request("same-direction-promotion", 5, {
+      direction: "bit-to-lightning",
+      notionalSats: "5001",
+    });
+    store.admitRfq({ identity: identity(), request: established, policy: admissionPolicy, now: NOW + 9 });
+    const accepted = store.reserveVerifiedFirmOffer(reservation(established, "same-direction-promotion", {
+      offer: {
+        ...reservation(established, "same-direction-promotion").offer,
+        direction: "bit-to-lightning",
+        bitAmountWei: "0",
+        lightningAmountSats: "5001",
+      },
+      policy: admissionPolicy,
+      now: NOW + 9,
+    }));
+    assert.equal(accepted.state, "ACTIVE");
+  } finally {
+    store.close();
+  }
+});
+
+test("does not let opposite-direction fills reset BIT-to-Lightning failure history", async () => {
+  const store = await CoordinatorStore.open(":memory:", { allowMemory: true });
+  const admissionPolicy = policy({ maxRequestsPerWindow: 10 });
+  try {
+    store.recordSolverCapacity(snapshot());
+    for (const [index, nonce, observedAt] of [[1, 2, NOW], [2, 4, NOW + 9]]) {
+      const risky = request(`directional-failure-${index}`, nonce, {
+        direction: "bit-to-lightning",
+        notionalSats: "5000",
+      });
+      store.admitRfq({ identity: identity(), request: risky, policy: admissionPolicy, now: observedAt });
+      const failed = store.reserveVerifiedFirmOffer(reservation(risky, `directional-failure-${index}`, {
+        offer: {
+          ...reservation(risky, `directional-failure-${index}`).offer,
+          direction: "bit-to-lightning",
+          bitAmountWei: "0",
+          lightningAmountSats: "5000",
+        },
+        policy: admissionPolicy,
+        now: observedAt + 1,
+      }));
+      store.recordFirmOfferOutcome({
+        offerId: failed.offerId,
+        outcome: "solver-failed",
+        evidenceDigest: hash(`directional-failure-proof-${index}`),
+        recordedAt: observedAt + 2,
+        policy: admissionPolicy,
+      });
+
+      if (index === 1) {
+        const safe = request("interleaved-safe-fill", 3);
+        store.admitRfq({ identity: identity(), request: safe, policy: admissionPolicy, now: NOW + 3 });
+        const firm = store.reserveVerifiedFirmOffer(reservation(safe, "interleaved-safe-fill", {
+          offer: { ...reservation(safe, "interleaved-safe-fill").offer, bitAmountWei: String(10n * BIT) },
+          policy: admissionPolicy,
+          now: NOW + 3,
+        }));
+        const proof = hash("interleaved-safe-fill-proof");
+        completeSelectedSettlement(store, firm, "interleaved-safe-fill", proof);
+        store.recordFirmOfferOutcome({
+          offerId: firm.offerId,
+          outcome: "filled",
+          evidenceDigest: proof,
+          recordedAt: NOW + 8,
+          policy: admissionPolicy,
+        });
+      }
+    }
+    assert.equal(store.getSolverCapacity(SOLVER).suspended, false);
+
+    const blocked = request("directional-failure-block", 5, {
+      direction: "bit-to-lightning",
+      notionalSats: "5000",
+    });
+    store.admitRfq({ identity: identity(), request: blocked, policy: admissionPolicy, now: NOW + 12 });
+    assert.throws(() => store.reserveVerifiedFirmOffer(reservation(blocked, "directional-failure-block", {
+      offer: {
+        ...reservation(blocked, "directional-failure-block").offer,
+        direction: "bit-to-lightning",
+        bitAmountWei: "0",
+        lightningAmountSats: "5000",
+      },
+      policy: admissionPolicy,
+      now: NOW + 12,
+    })), /solver failed consecutive firm quotes/);
   } finally {
     store.close();
   }
