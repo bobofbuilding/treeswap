@@ -18,6 +18,8 @@ Never deploy an admin, default broad invoice, router, or read-only macaroon. LND
 
 ## Independent authorization
 
+The versioned authorization-envelope boundary accepts only an exact plain own-enumerable payload, exact verification-call and envelope records, and one flat method-specific operation schema. It snapshots those scalar data properties once before canonicalization, signing, or signature verification. Accessors, symbols, hidden or inherited fields, prototype-named fields, custom prototypes, object coercion, unsupported methods, nested or executable values, and later caller mutation reject without getter or coercion execution. The signed operation is deeply frozen before it can reach adapter policy or LND.
+
 LND permissions are only the outer boundary. The coordinator signs an exact canonical authorization with an Ed25519 key kept outside the adapter. The adapter has only the corresponding public key and rejects a changed method, amount, payment hash, invoice digest, capacity epoch, operation, key ID, issuance time, expiry, or signature. An application therefore cannot make a mutation pass by supplying both sides of an intent comparison.
 
 Before every RPC, `authorizeLightningRpc` independently requires:

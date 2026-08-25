@@ -83,6 +83,7 @@ The command refuses to overwrite an existing file and never records the RPC URL.
 - [x] Complete a real 10,000-sat hold-invoice create, decode, pay, accept, settle, and success smoke across the nodes.
 - [x] Connect the repository policy to separate real invoice and payer adapter processes on the internal regtest network.
 - [x] Require an exact, short-lived Ed25519 coordinator authorization before every action; the adapters hold only the public key.
+- [x] Authorization payload, verification call, envelope, and method-specific operation fields are exact plain own-enumerable data snapshotted once before signing or verification. Getters, symbols, hidden or inherited fields, prototype keys, custom prototypes, object coercion, unsupported methods or values, and post-sign mutation fail closed before adapter policy or LND contact.
 - [x] Pin and verify LND TLS, mount one exact role credential per process, recheck node sync/active directional liquidity, and expose no host port.
 - [x] Persist request IDs before dispatch and prove a completed payment remains replay-blocked after the payer process restarts.
 - [x] Prove a payer authorization is rejected by the invoice process and representative forbidden macaroon RPCs fail.
