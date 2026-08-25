@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 import { DatabaseSync } from "node:sqlite";
 import { id } from "ethers";
+import { buildCoordinatorActiveExecutionBootstrapStatus } from "../lib/coordinator-service-state.mjs";
 import { CoordinatorStore, coordinatorCommitmentDigest } from "../lib/coordinator-store.mjs";
 
 const NOW = 2_000_000_000;
@@ -67,6 +68,244 @@ function action(value, label = "send", overrides = {}) {
     ...overrides,
   };
 }
+
+function activeBootstrapStatus(store, startedAt, observedAt, secret = null) {
+  const observed = new Date(observedAt * 1_000).toISOString();
+  const status = buildCoordinatorActiveExecutionBootstrapStatus({
+    store,
+    serviceStartedAt: new Date(startedAt * 1_000).toISOString(),
+    heartbeatAt: observed,
+    leaseIdentifier: `sha256:${"1".repeat(64)}`,
+    recoveredInterruptedActions: 0,
+    releaseVerification: {
+      schema: "treeswap.coordinator-release-verification.v1",
+      state: "active",
+      scope: "verification-only-no-listener-solver-context-dispatch-or-funding-authority",
+      lastAttemptAt: observed,
+      lastSuccessAt: observed,
+      consecutiveFailures: 0,
+      releaseId: hash("service run release"),
+      fundingMode: "operator-testnet-bootstrap",
+      validUntil: observedAt + 60,
+      recordDigest: hash("service run release record"),
+      policyDigest: hash("service run release policy"),
+      inputManifestDigest: hash("service run manifest"),
+      approvalBundleDigest: hash("service run approvals"),
+      reconciliationDigest: hash("service run reconciliation"),
+      providerConsensusDigest: hash("service run providers"),
+      runtimeBlockNumber: 1,
+      runtimeBlockHash: hash("service run runtime block"),
+      authorizations: {
+        signing: false,
+        broadcast: false,
+        gateOpening: false,
+        dispatch: false,
+        funding: false,
+      },
+    },
+  });
+  return secret === null ? status : { ...status, transientTestSecret: secret };
+}
+
+test("persists only aggregate active-service status and records a clean same-process shutdown", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "treeswap-coordinator-service-run-"));
+  const path = join(directory, "coordinator.sqlite");
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const secret = "private-operator-token-that-must-not-persist";
+  const store = await CoordinatorStore.open(path);
+  const run = store.beginServiceRun({
+    mode: "active-execution-only",
+    startedAt: NOW,
+    failureWindowSeconds: 300,
+    maximumFailures: 3,
+  });
+  assert.equal(run.status.state, "RUNNING");
+  assert.equal(run.status.failureCount, 0);
+  assert.equal(run.status.fundingAuthorization, false);
+  assert.throws(() => store.recordServiceRunStatus({
+    handle: structuredClone(run.handle),
+    observedAt: NOW + 1,
+    status: activeBootstrapStatus(store, NOW, NOW + 1),
+  }), /same-process provenance/);
+  assert.throws(() => store.recordServiceRunStatus({
+    handle: run.handle,
+    observedAt: NOW + 1,
+    status: activeBootstrapStatus(store, NOW, NOW + 1, secret),
+  }), /fields are not exact/);
+  const recorded = store.recordServiceRunStatus({
+    handle: run.handle,
+    observedAt: NOW + 1,
+    status: activeBootstrapStatus(store, NOW, NOW + 1),
+  });
+  assert.equal(recorded.lastStatusPhase, "preparing-active-execution-policy-set");
+  assert.equal(recorded.lastStatusHealthy, false);
+  assert.match(recorded.lastStatusDigest, /^0x[0-9a-f]{64}$/);
+  const stopped = store.finishServiceRun({
+    handle: run.handle,
+    finishedAt: NOW + 2,
+    reason: "requested",
+  });
+  assert.equal(stopped.state, "STOPPED");
+  assert.equal(stopped.outcome, "requested");
+  assert.equal(stopped.failureCount, 0);
+  assert.throws(() => store.finishServiceRun({
+    handle: run.handle,
+    finishedAt: NOW + 3,
+    reason: "requested",
+  }), /same-process provenance/);
+  store.close();
+
+  const reopened = await CoordinatorStore.open(path);
+  assert.deepEqual(reopened.serviceRunStatus(), stopped);
+  reopened.close();
+  const bytes = [];
+  for (const name of await readdir(directory)) bytes.push(await readFile(join(directory, name)));
+  assert.equal(Buffer.concat(bytes).includes(Buffer.from(secret)), false);
+});
+
+test("opens a durable crash-loop breaker after abrupt and explicit failures, then recovers only after the window", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "treeswap-coordinator-crash-loop-"));
+  const path = join(directory, "coordinator.sqlite");
+  t.after(() => rm(directory, { recursive: true, force: true }));
+
+  const first = await CoordinatorStore.open(path);
+  first.beginServiceRun({
+    mode: "active-execution-only",
+    startedAt: NOW,
+    failureWindowSeconds: 300,
+    maximumFailures: 3,
+  });
+  first.close();
+
+  const policyDrift = await CoordinatorStore.open(path);
+  assert.throws(() => policyDrift.beginServiceRun({
+    mode: "active-execution-only",
+    startedAt: NOW + 5,
+    failureWindowSeconds: 600,
+    maximumFailures: 3,
+  }), /crash policy changed/);
+  policyDrift.close();
+
+  const second = await CoordinatorStore.open(path);
+  const secondRun = second.beginServiceRun({
+    mode: "active-execution-only",
+    startedAt: NOW + 10,
+    failureWindowSeconds: 300,
+    maximumFailures: 3,
+  });
+  assert.equal(secondRun.status.failureCount, 1);
+  assert.equal(secondRun.status.lastFailureReason, "abrupt-exit");
+  second.finishServiceRun({
+    handle: secondRun.handle,
+    finishedAt: NOW + 11,
+    reason: "background-failure",
+  });
+  second.close();
+
+  const third = await CoordinatorStore.open(path);
+  const thirdRun = third.beginServiceRun({
+    mode: "active-execution-only",
+    startedAt: NOW + 20,
+    failureWindowSeconds: 300,
+    maximumFailures: 3,
+  });
+  assert.equal(thirdRun.status.failureCount, 2);
+  const thirdFailure = third.finishServiceRun({
+    handle: thirdRun.handle,
+    finishedAt: NOW + 21,
+    reason: "startup-failure",
+  });
+  assert.equal(thirdFailure.failureCount, 3);
+  assert.equal(thirdFailure.crashLoopOpen, true);
+  third.close();
+
+  const blocked = await CoordinatorStore.open(path);
+  assert.throws(() => blocked.beginServiceRun({
+    mode: "active-execution-only",
+    startedAt: NOW + 30,
+    failureWindowSeconds: 300,
+    maximumFailures: 3,
+  }), /crash-loop breaker is open/);
+  assert.equal(blocked.serviceRunStatus().state, "BLOCKED");
+  assert.equal(blocked.serviceRunStatus().fundingAuthorization, false);
+  blocked.close();
+
+  const recovered = await CoordinatorStore.open(path);
+  const recoveredRun = recovered.beginServiceRun({
+    mode: "active-execution-only",
+    startedAt: NOW + 311,
+    failureWindowSeconds: 300,
+    maximumFailures: 3,
+  });
+  assert.equal(recoveredRun.status.failureCount, 0);
+  assert.equal(recoveredRun.status.crashLoopOpen, false);
+  recovered.finishServiceRun({
+    handle: recoveredRun.handle,
+    finishedAt: NOW + 312,
+    reason: "requested",
+  });
+  recovered.close();
+});
+
+test("refuses crash-policy drift, clock rollback, copied handles, and authority-bearing bootstrap status", async () => {
+  const store = await CoordinatorStore.open(":memory:", { allowMemory: true });
+  const run = store.beginServiceRun({
+    mode: "active-execution-only",
+    startedAt: NOW,
+    failureWindowSeconds: 300,
+    maximumFailures: 3,
+  });
+  assert.throws(() => store.recordServiceRunStatus({
+    handle: run.handle,
+    observedAt: NOW + 1,
+    status: {
+      ...activeBootstrapStatus(store, NOW, NOW + 1),
+      fundingAuthorization: true,
+    },
+  }), /claims unavailable authority/);
+  store.finishServiceRun({
+    handle: run.handle,
+    finishedAt: NOW + 2,
+    reason: "startup-failure",
+  });
+  assert.throws(() => store.beginServiceRun({
+    mode: "active-execution-only",
+    startedAt: NOW + 3,
+    failureWindowSeconds: 600,
+    maximumFailures: 3,
+  }), /crash policy changed/);
+  assert.throws(() => store.beginServiceRun({
+    mode: "active-execution-only",
+    startedAt: NOW - 1,
+    failureWindowSeconds: 300,
+    maximumFailures: 3,
+  }), /clock moved backwards/);
+  store.close();
+});
+
+test("read-only supervision rejects semantically inconsistent service-run metadata", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "treeswap-coordinator-run-corruption-"));
+  const path = join(directory, "coordinator.sqlite");
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const store = await CoordinatorStore.open(path);
+  const run = store.beginServiceRun({
+    mode: "active-execution-only",
+    startedAt: NOW,
+    failureWindowSeconds: 300,
+    maximumFailures: 3,
+  });
+  store.finishServiceRun({ handle: run.handle, finishedAt: NOW + 1, reason: "requested" });
+  store.close();
+
+  const database = new DatabaseSync(path);
+  database.prepare("UPDATE coordinator_meta SET value = ? WHERE key = ?")
+    .run("background-failure", "service_run_outcome");
+  database.close();
+  await assert.rejects(
+    CoordinatorStore.inspectServiceRunStatus(path),
+    /lifecycle journal is inconsistent/,
+  );
+});
 
 test("atomically binds one private settlement to its nonce, payment hash, quote receipt, and selected set", async () => {
   const store = await CoordinatorStore.open(":memory:", { allowMemory: true });

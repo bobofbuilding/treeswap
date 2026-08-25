@@ -1903,6 +1903,7 @@ test("activates funding only after same-process evidence, approvals, reconciliat
           store: receivedStore,
         });
       },
+      recordStatus: async () => {},
       recoveredInterruptedActions: 0,
       releaseRefreshSeconds: 10,
       releaseSupervisor: serviceReleaseSupervisor,

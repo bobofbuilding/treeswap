@@ -90,6 +90,8 @@ test("accepts only separated, bounded closed, release, active, or recovery confi
     COORDINATOR_ACTIVE_PREPARATION_TIMEOUT_SECONDS: "45",
     COORDINATOR_ACTIVE_REPLICA_MODE: "single-host",
     COORDINATOR_ACTIVE_EXPECTED_REPLICAS: "1",
+    COORDINATOR_ACTIVE_FAILURE_WINDOW_SECONDS: "600",
+    COORDINATOR_ACTIVE_MAXIMUM_FAILURES: "4",
   });
   assert.equal(active.mode, "active-execution-only");
   assert.equal(active.activeExecutionIntervalSeconds, 5);
@@ -97,6 +99,8 @@ test("accepts only separated, bounded closed, release, active, or recovery confi
   assert.equal(active.activePreparationTimeoutSeconds, 45);
   assert.equal(active.activeReplicaMode, "single-host");
   assert.equal(active.activeExpectedReplicas, 1);
+  assert.equal(active.activeFailureWindowSeconds, 600);
+  assert.equal(active.activeMaximumFailures, 4);
   const recoveryManifestPath = join(paths.root, "recovery-inputs", "activation.json");
   const recovery = config(paths, {
     COORDINATOR_MODE: "recovery-verification-only",
@@ -164,6 +168,27 @@ test("accepts only separated, bounded closed, release, active, or recovery confi
     COORDINATOR_RELEASE_ACTIVATION_MANIFEST_PATH: manifestPath,
     COORDINATOR_ACTIVE_REPLICA_MODE: "single-host",
   }), /cannot accept active execution inputs/);
+  assert.throws(() => config(paths, {
+    COORDINATOR_MODE: "release-verification-only",
+    COORDINATOR_RELEASE_ACTIVATION_MANIFEST_PATH: manifestPath,
+    COORDINATOR_ACTIVE_MAXIMUM_FAILURES: "3",
+  }), /cannot accept active execution inputs/);
+  assert.throws(() => config(paths, {
+    COORDINATOR_MODE: "active-execution-only",
+    COORDINATOR_RELEASE_ACTIVATION_MANIFEST_PATH: manifestPath,
+    COORDINATOR_RELEASE_PROVIDER_TIMEOUT_MS: "1000",
+    COORDINATOR_ACTIVE_REPLICA_MODE: "single-host",
+    COORDINATOR_ACTIVE_EXPECTED_REPLICAS: "1",
+    COORDINATOR_ACTIVE_FAILURE_WINDOW_SECONDS: "59",
+  }), /outside policy/);
+  assert.throws(() => config(paths, {
+    COORDINATOR_MODE: "active-execution-only",
+    COORDINATOR_RELEASE_ACTIVATION_MANIFEST_PATH: manifestPath,
+    COORDINATOR_RELEASE_PROVIDER_TIMEOUT_MS: "1000",
+    COORDINATOR_ACTIVE_REPLICA_MODE: "single-host",
+    COORDINATOR_ACTIVE_EXPECTED_REPLICAS: "1",
+    COORDINATOR_ACTIVE_MAXIMUM_FAILURES: "11",
+  }), /outside policy/);
   assert.throws(() => config(paths, {
     COORDINATOR_MODE: "release-verification-only",
     COORDINATOR_RELEASE_ACTIVATION_MANIFEST_PATH: join(paths.runtimeDirectory, "activation.json"),

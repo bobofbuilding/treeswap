@@ -133,6 +133,7 @@ jobs:
       - run: node --check infra/coordinator/disk-full-smoke.mjs
       - run: node --check infra/coordinator/service.mjs
       - run: node --check infra/coordinator/healthcheck.mjs
+      - run: node --check infra/coordinator/supervision-status.mjs
       - run: node --check infra/evm/escrow-reorg-smoke.mjs
       - run: node --check infra/evm/outbox-fault-smoke.mjs
       - run: node --check infra/evm/safety-monitor-smoke.mjs
