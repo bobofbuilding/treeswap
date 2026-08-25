@@ -938,6 +938,8 @@ test("activates funding only after same-process evidence, approvals, reconciliat
   const firm = waitingStore.reserveVerifiedFirmOffer({
     offerId: waitingSettlement.selectedOfferId,
     offerDigest: id("active wrapper blind offer").toLowerCase(),
+    marketRiskDigest: id("active wrapper market risk").toLowerCase(),
+    marketRiskValidUntil: now + 25,
     selectionAuthorizationDigest: id("active wrapper selection authorization").toLowerCase(),
     selectionAuthorizationExpiresAt: now + 25,
     requestId: waitingSettlement.pricingId,
@@ -1052,7 +1054,7 @@ test("activates funding only after same-process evidence, approvals, reconciliat
     const rotatedRecoveryAuthority = verifiedSolverRecoveryAuthority(rotatedRecoverySolverCapability.verification);
     const custodyManifest = {
       schema: "treeswap.retained-release-custody.v1",
-      coordinatorSchema: "treeswap.coordinator.v7",
+      coordinatorSchema: "treeswap.coordinator.v8",
       createdAt: now + 3,
       sealedHostInstanceId: id("retained original host").toLowerCase(),
       sealedProcessInstanceId: id("retained original process").toLowerCase(),
@@ -1101,7 +1103,7 @@ test("activates funding only after same-process evidence, approvals, reconciliat
         }],
         runtime: {
           sourceCommit: candidate.record.reviewedBuildCommit,
-          coordinatorSchema: "treeswap.coordinator.v7",
+          coordinatorSchema: "treeswap.coordinator.v8",
           nodeVersion: process.version,
           archive: await retainedFileReference(runtimeArchivePath, serviceRoot),
         },
@@ -2046,6 +2048,8 @@ test("activates funding only after same-process evidence, approvals, reconciliat
     const unmatchedOffer = waitingStore.reserveVerifiedFirmOffer({
       offerId: unmatchedOfferId,
       offerDigest: id("unmatched active lifecycle blind offer").toLowerCase(),
+      marketRiskDigest: id("unmatched active lifecycle market risk").toLowerCase(),
+      marketRiskValidUntil: now + 25,
       selectionAuthorizationDigest: id("unmatched active lifecycle selection").toLowerCase(),
       selectionAuthorizationExpiresAt: now + 25,
       requestId: unmatchedRequestId,

@@ -75,6 +75,8 @@ function reservation(value, label, overrides = {}) {
   return {
     offerId: hash(`offer:${label}`),
     offerDigest: hash(`offer-digest:${label}`),
+    marketRiskDigest: hash(`market-risk:${label}`),
+    marketRiskValidUntil: NOW + 30,
     selectionAuthorizationDigest: hash(`selection-authorization:${label}`),
     selectionAuthorizationExpiresAt: NOW + 30,
     requestId: value.requestId,
@@ -269,6 +271,12 @@ test("atomically persists firm capacity, fails closed on conflicting snapshots, 
     store.admitRfq({ identity: identity(), request: one, policy: policy(), now: NOW });
     store.admitRfq({ identity: identity(), request: two, policy: policy(), now: NOW });
     assert.equal(store.recordSolverCapacity(snapshot()).capacityConflict, false);
+    assert.throws(() => store.reserveVerifiedFirmOffer(reservation(one, "zero-market-risk", {
+      marketRiskDigest: `0x${"0".repeat(64)}`,
+    })), /market risk digest must be non-zero/);
+    assert.throws(() => store.reserveVerifiedFirmOffer(reservation(one, "short-market-risk", {
+      marketRiskValidUntil: NOW + 29,
+    })), /market risk authorization must remain active through the firm offer/);
     const first = store.reserveVerifiedFirmOffer(reservation(one, "capacity-one"));
     assert.equal(first.state, "ACTIVE");
     assert.equal(store.getSolverCapacity(SOLVER).committedBitWei, String(60n * BIT));
@@ -321,6 +329,7 @@ test("atomically persists firm capacity, fails closed on conflicting snapshots, 
     const refreshed = store.recordSolverCapacity(snapshot(9, { observedAt: NOW + 31 }));
     assert.equal(refreshed.capacityEpoch, 9);
     const admitted = store.reserveVerifiedFirmOffer(reservation(two, "capacity-recovered", {
+      marketRiskValidUntil: NOW + 60,
       selectionAuthorizationExpiresAt: NOW + 60,
       offer: {
         ...reservation(two, "capacity-recovered").offer,
@@ -897,7 +906,7 @@ test("binds a settlement once to its reviewed release, evidence policy, and sele
       bound.executionPolicyBindingDigest,
     );
     const boundLiabilities = store.releaseLiabilitySnapshot();
-    assert.equal(boundLiabilities.coordinatorSchema, "treeswap.coordinator.v7");
+    assert.equal(boundLiabilities.coordinatorSchema, "treeswap.coordinator.v8");
     assert.equal(boundLiabilities.totalNonterminalSettlementCount, 1);
     assert.equal(boundLiabilities.unboundNonterminalSettlementCount, 0);
     assert.equal(boundLiabilities.releases.length, 1);

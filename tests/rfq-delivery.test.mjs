@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
-import { id, Wallet } from "ethers";
+import { id, TypedDataEncoder, Wallet } from "ethers";
 import {
   BLIND_RFQ_OFFER_TYPES,
   USER_EXECUTION_AUTHORIZATION_TYPES,
@@ -27,6 +27,10 @@ import {
 } from "../lib/blind-rfq.mjs";
 import { CoordinatorStore } from "../lib/coordinator-store.mjs";
 import { invoiceDigest } from "../lib/lnd-rest-client.mjs";
+import {
+  buildExecutableVenuePriceSignal,
+  executableVenueObservationTypedData,
+} from "../lib/executable-venue-price-signal.mjs";
 import { buildBlindPricingRequest } from "../lib/privacy.mjs";
 import {
   EXECUTABLE_RFQ_OFFER_TYPES,
@@ -44,6 +48,7 @@ import {
   rfqDeliveryResponseDigest,
   verifiedRfqDeliveryCollection,
 } from "../lib/rfq-delivery.mjs";
+import { buildBitRiskAttestation, evaluateBitRisk } from "../lib/risk-policy.mjs";
 import {
   SOLVER_CAPABILITY_TYPES,
   solverCapabilityClaimsDigest,
@@ -69,6 +74,21 @@ const solvers = [
   new Wallet(`0x${"34".repeat(32)}`),
 ];
 const user = new Wallet(`0x${"33".repeat(32)}`);
+const marketSigners = [
+  new Wallet(`0x${"41".repeat(32)}`),
+  new Wallet(`0x${"42".repeat(32)}`),
+  new Wallet(`0x${"43".repeat(32)}`),
+];
+const marketSourcePolicies = marketSigners.map((signer, index) => Object.freeze({
+  chainId: 1,
+  verifyingContract: "0x57A447E4d5e18A9423408C365963A73F08B9d18C",
+  source: `rfq-market-${index + 1}`,
+  venueId: id(`rfq-market-venue-${index + 1}`).toLowerCase(),
+  controlDomain: id(`rfq-market-control-${index + 1}`).toLowerCase(),
+  operatorOrganization: id(`rfq-market-operator-${index + 1}`).toLowerCase(),
+  signer: signer.address,
+  maximumValiditySeconds: 120,
+}));
 const endpointKeys = [
   generateKeyPairSync("ed25519"),
   generateKeyPairSync("ed25519"),
@@ -318,6 +338,111 @@ async function executableEnvelope(blind, index, { request = privateRequest } = {
   };
 }
 
+function marketSignal(index, direction, offerId, validUntil = NOW + 90) {
+  const sourcePolicy = marketSourcePolicies[index];
+  const observation = {
+    source: sourcePolicy.source,
+    direction,
+    observedAt: NOW,
+    validUntil,
+    priceMsatPerBit: 100_000n,
+    executableDepthSats: 1_000_000n,
+    executableDepthBitWei: 10_000n * BIT,
+    quoteCommitment: id(`rfq-market-quote:${offerId}:${index}`).toLowerCase(),
+  };
+  const typedData = executableVenueObservationTypedData({ sourcePolicy, observation });
+  return buildExecutableVenuePriceSignal({
+    sourcePolicy,
+    observation: {
+      ...observation,
+      signature: marketSigners[index].signingKey.sign(
+        TypedDataEncoder.hash(typedData.domain, typedData.types, typedData.value),
+      ).serialized,
+    },
+  });
+}
+
+function marketRiskAttestationForOffer(rawOffer, { validUntil = NOW + 90 } = {}) {
+  const direction = rawOffer?.direction === id("lightning-to-bit")
+    ? "lightning-to-bit"
+    : rawOffer?.direction === id("bit-to-lightning")
+      ? "bit-to-lightning"
+      : null;
+  if (!direction) return null;
+  const grossBitAmount = BigInt(rawOffer.grossBitAmount);
+  const feeBitAmount = BigInt(rawOffer.feeBitAmount);
+  const lightningAmountSats = BigInt(rawOffer.lightningAmountSats);
+  if (grossBitAmount <= feeBitAmount || lightningAmountSats <= 0n) return null;
+  const priceSignals = marketSigners.map(
+    (_signer, index) => marketSignal(index, direction, rawOffer.offerId, validUntil),
+  );
+  const policy = {
+    chainId: 1,
+    proxyAddress: "0x57A447E4d5e18A9423408C365963A73F08B9d18C",
+    expectedImplementation: "0x1111111111111111111111111111111111111111",
+    expectedProxyCodeHash: `0x${"aa".repeat(32)}`,
+    expectedImplementationCodeHash: `0x${"bb".repeat(32)}`,
+    decimals: 18,
+    referenceSatsPerBit: 100,
+    maxSnapshotAgeSeconds: 120,
+    maxFinalityLagBlocks: 80,
+    maxPriceAgeSeconds: 120,
+    minPriceSources: 3,
+    maxSignalSpreadBps: 100,
+    maxMarketDeviationBps: 500,
+    maxSwapBitWei: 10_000n * BIT,
+    maxEpochBitWei: 100_000n * BIT,
+    baseFeeBpsLightningToBit: 18,
+    baseFeeBpsBitToLightning: 72,
+    maxFeeBps: 300,
+    reserveFloorBps: 2_500,
+    scarcityStartsBps: 6_000,
+    allowedPriceSourcePolicyDigests: priceSignals.map((signal) => signal.pricePolicyDigest),
+  };
+  const snapshot = {
+    chainId: 1,
+    observedAt: NOW,
+    proxyAddress: policy.proxyAddress,
+    implementation: policy.expectedImplementation,
+    proxyCodeHash: policy.expectedProxyCodeHash,
+    implementationCodeHash: policy.expectedImplementationCodeHash,
+    decimals: 18,
+    paused: false,
+    latestBlock: 1_000,
+    finalizedBlock: 970,
+    epochBitVolumeWei: 0n,
+    availableBitWei: 100_000n * BIT,
+    bitCapacityWei: 100_000n * BIT,
+    availableLightningSats: 10_000_000n,
+    lightningCapacitySats: 10_000_000n,
+  };
+  const request = {
+    now: NOW,
+    direction,
+    bitWei: grossBitAmount - feeBitAmount,
+    lightningSats: lightningAmountSats,
+  };
+  const evaluation = evaluateBitRisk({ policy, snapshot, priceSignals, request });
+  if (!evaluation.enabled) return null;
+  return buildBitRiskAttestation({ policy, snapshot, request, evaluation });
+}
+
+function marketRiskAttestationsForCollection(collection) {
+  const verified = verifiedRfqDeliveryCollection(collection);
+  const attestations = new Map();
+  for (const delivery of verified.deliveries) {
+    for (const envelope of delivery.envelopes) {
+      try {
+        const attestation = marketRiskAttestationForOffer(envelope.offer);
+        if (attestation && !attestations.has(attestation.requestDigest)) {
+          attestations.set(attestation.requestDigest, attestation);
+        }
+      } catch {}
+    }
+  }
+  return [...attestations.values()];
+}
+
 function pathPlan(verifications, { includeThirdRelay = false, includeThirdSolver = false } = {}) {
   const paths = [
     {
@@ -532,10 +657,12 @@ test("atomically reserves authenticated blind competition before private disclos
     pricing,
     collection,
     capabilityVerifications: verifications,
+    marketRiskAttestations: marketRiskAttestationsForCollection(collection),
     now: NOW,
     policy: blindPolicy,
   });
   assert.equal(book.deliveryAuthenticated, true);
+  assert.equal(book.marketRiskBound, true);
   assert.equal(book.solverCount, 2);
   assert.equal(book.relayOfferPathCount, 2);
   assert.equal(book.directSolverOfferPathCount, 2);
@@ -556,6 +683,14 @@ test("atomically reserves authenticated blind competition before private disclos
   });
   assert.equal(activeBlindQuoteReservationBinding(reservation, { now: NOW }), reservation);
   assert.equal(store.getFirmOffer(reservation.selectedOfferId).state, "ACTIVE");
+  assert.equal(
+    store.getFirmOffer(reservation.selectedOfferId).marketRiskDigest,
+    selection.marketRiskDigest,
+  );
+  assert.equal(
+    store.getFirmOffer(reservation.selectedOfferId).marketRiskValidUntil,
+    Number(selection.marketRiskValidUntil),
+  );
   assert.equal(store.getSolverCapacity(reservation.selectedSolver.toLowerCase()).committedBitWei, String(100n * BIT + 5n * 10n ** 17n));
   const publicReservation = JSON.stringify(reservation).toLowerCase();
   for (const secret of [privateRequest.requestId, privateRequest.user, privateRequest.beneficiary]) {
@@ -651,16 +786,51 @@ test("atomically reserves authenticated blind competition before private disclos
   );
 });
 
+test("requires original current market evidence through every retained offer expiry", async () => {
+  const { collection, offers, verifications } = await collect();
+  const input = {
+    pricing,
+    collection,
+    capabilityVerifications: verifications,
+    now: NOW,
+    policy: blindPolicy,
+  };
+  assert.throws(
+    () => buildMultipathBlindQuoteBook(input),
+    /current market-risk attestations/,
+  );
+
+  const current = marketRiskAttestationsForCollection(collection);
+  assert.throws(() => buildMultipathBlindQuoteBook({
+    ...input,
+    marketRiskAttestations: current.map((attestation) => ({ ...attestation })),
+  }), /not enough independent valid blind solver offers/);
+
+  const tooShort = offers.map(({ envelope }) => marketRiskAttestationForOffer(
+    envelope.offer,
+    { validUntil: NOW + 30 },
+  ));
+  assert.throws(() => buildMultipathBlindQuoteBook({
+    ...input,
+    marketRiskAttestations: tooShort,
+  }), /not enough independent valid blind solver offers/);
+
+  const book = buildMultipathBlindQuoteBook({ ...input, marketRiskAttestations: current });
+  assert.equal(book.solverCount, 2);
+  assert.equal(book.rejected.length, 0);
+  assert.ok(book.offers.every((offer) => offer.marketRiskValidUntil >= BigInt(offer.offer.expiresAt)));
+});
+
 test("reserves outbound Lightning plus routing headroom before disclosing the user invoice", async (t) => {
   const offers = [
     await blindEnvelope(0, 25_000, {
       pricingRequest: bitToLightningPricing,
-      grossBitAmount: 101n * BIT,
+      grossBitAmount: 251n * BIT,
       feeBitAmount: 1n * BIT,
     }),
     await blindEnvelope(1, 25_000, {
       pricingRequest: bitToLightningPricing,
-      grossBitAmount: 102n * BIT,
+      grossBitAmount: 252n * BIT,
       feeBitAmount: 1n * BIT,
     }),
   ];
@@ -692,6 +862,7 @@ test("reserves outbound Lightning plus routing headroom before disclosing the us
     pricing: bitToLightningPricing,
     collection,
     capabilityVerifications: verifications,
+    marketRiskAttestations: marketRiskAttestationsForCollection(collection),
     now: NOW,
     policy: blindPolicy,
   });
@@ -759,6 +930,7 @@ test("requires two exact user signatures before reservation and executable use",
     pricing,
     collection,
     capabilityVerifications: verifications,
+    marketRiskAttestations: marketRiskAttestationsForCollection(collection),
     now: NOW,
     policy: blindPolicy,
   });
@@ -961,6 +1133,7 @@ test("rejects copied provenance, caller-asserted verification, fake stores, and 
     pricing,
     collection,
     capabilityVerifications: verifications,
+    marketRiskAttestations: marketRiskAttestationsForCollection(collection),
     now: NOW,
     policy: blindPolicy,
   });
@@ -1012,6 +1185,7 @@ test("revokes disclosure and finalization when the durable RFQ cancels", async (
     pricing,
     collection,
     capabilityVerifications: verifications,
+    marketRiskAttestations: marketRiskAttestationsForCollection(collection),
     now: NOW,
     policy: blindPolicy,
   });
@@ -1047,6 +1221,7 @@ test("rejects expired, same-ID-mutated, and stale-capacity reservations", async 
       pricing,
       collection,
       capabilityVerifications: verifications,
+      marketRiskAttestations: marketRiskAttestationsForCollection(collection),
       now: NOW,
       policy: blindPolicy,
     });
@@ -1152,6 +1327,7 @@ test("rejects relay rewriting while retaining valid offers from two other relay 
     pricing,
     collection,
     capabilityVerifications: data.verifications,
+    marketRiskAttestations: marketRiskAttestationsForCollection(collection),
     now: NOW,
     policy: blindPolicy,
   });
@@ -1194,6 +1370,7 @@ test("invalid relay offers cannot exhaust the retained competition limit", async
     pricing,
     collection,
     capabilityVerifications: data.verifications,
+    marketRiskAttestations: marketRiskAttestationsForCollection(collection),
     now: NOW,
     policy: { ...blindPolicy, maxOffersPerRequest: 2 },
   });
@@ -1206,6 +1383,7 @@ test("invalid relay offers cannot exhaust the retained competition limit", async
     pricing,
     collection,
     capabilityVerifications: Array.from({ length: 129 }, () => data.verifications[0]),
+    marketRiskAttestations: marketRiskAttestationsForCollection(collection),
     now: NOW,
     policy: blindPolicy,
   }), /bounded candidate limit/);
@@ -1244,6 +1422,7 @@ test("retained competition limit keeps the deterministic best valid offers", asy
     pricing,
     collection,
     capabilityVerifications: verifications,
+    marketRiskAttestations: marketRiskAttestationsForCollection(collection),
     now: NOW,
     policy: { ...blindPolicy, maxOffersPerRequest: 2 },
   });
@@ -1320,6 +1499,7 @@ test("does not count an authenticated empty path as valid quote delivery", async
     pricing,
     collection,
     capabilityVerifications: data.verifications,
+    marketRiskAttestations: marketRiskAttestationsForCollection(collection),
     now: NOW,
     policy: blindPolicy,
   }), /not enough authenticated delivery paths supplied valid blind offers/);
@@ -1520,6 +1700,7 @@ test("rejects post-selection repricing, solver change, and request linkage", asy
     pricing,
     collection,
     capabilityVerifications: verifications,
+    marketRiskAttestations: marketRiskAttestationsForCollection(collection),
     now: NOW,
     policy: blindPolicy,
   });

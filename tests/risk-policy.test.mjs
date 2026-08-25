@@ -8,6 +8,7 @@ import {
 } from "../lib/executable-venue-price-signal.mjs";
 import {
   BIT_RISK_ATTESTATION_SCHEMA,
+  assertCurrentBitRiskAttestation,
   buildBitRiskAttestation,
   evaluateBitRisk,
 } from "../lib/risk-policy.mjs";
@@ -109,7 +110,27 @@ test("enables a capped quote only when token, market, finality, and inventory ch
   assert.equal(result.enabled, true);
   assert.deepEqual(result.reasons, []);
   assert.equal(result.feeBps, 18);
+  assert.equal(result.validUntil, BigInt(NOW + 20));
   assert.deepEqual(result.qualifiedPriceSources, ["venue-a", "venue-b", "venue-c"]);
+});
+
+test("expires market authorization at the earliest snapshot or source boundary", () => {
+  const longLivedSignals = [1, 2, 3].map((index) => venueSignal(index, {
+    observedAt: NOW,
+    validUntil: NOW + 60,
+  }, { maximumValiditySeconds: 60 }));
+  const longLivedPolicy = {
+    ...policy,
+    allowedPriceSourcePolicyDigests: longLivedSignals.map((signal) => signal.pricePolicyDigest),
+  };
+  const result = evaluateBitRisk({
+    policy: longLivedPolicy,
+    snapshot,
+    priceSignals: longLivedSignals,
+    request,
+  });
+  assert.equal(result.enabled, true);
+  assert.equal(result.validUntil, BigInt(NOW + 26));
 });
 
 test("fails closed on a proxy implementation change or pause", () => {
@@ -252,6 +273,7 @@ test("commits the exact healthy proxy, finality, market, and source set", () => 
   });
   assert.equal(first.schema, BIT_RISK_ATTESTATION_SCHEMA);
   assert.equal(first.riskDigest, reordered.riskDigest);
+  assert.equal(first.validUntil, BigInt(NOW + 20));
   assert.match(first.riskDigest, /^0x[0-9a-f]{64}$/);
   assert.match(first.policyDigest, /^0x[0-9a-f]{64}$/);
 
@@ -298,6 +320,31 @@ test("commits the exact healthy proxy, finality, market, and source set", () => 
   });
   assert.notEqual(first.requestDigest, smaller.requestDigest);
   assert.notEqual(first.riskDigest, smaller.riskDigest);
+
+  assert.equal(assertCurrentBitRiskAttestation({
+    attestation: first,
+    request,
+    now: NOW,
+    requiredValidUntil: NOW + 19,
+  }), first);
+  assert.throws(() => assertCurrentBitRiskAttestation({
+    attestation: { ...first },
+    request,
+    now: NOW,
+    requiredValidUntil: NOW + 19,
+  }), /original verified risk attestation/);
+  assert.throws(() => assertCurrentBitRiskAttestation({
+    attestation: first,
+    request,
+    now: NOW + 20,
+    requiredValidUntil: NOW + 20,
+  }), /expired/);
+  assert.throws(() => assertCurrentBitRiskAttestation({
+    attestation: first,
+    request,
+    now: NOW,
+    requiredValidUntil: NOW + 21,
+  }), /does not cover the required validity window/);
 });
 
 test("does not count duplicate venues, control domains, organizations, or wrong-direction prices as independent", () => {

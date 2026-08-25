@@ -538,12 +538,12 @@ test("creates a verified private backup and restores it only to a fresh path", a
     store.acceptSettlement(value);
     assert.deepEqual(store.integrityCheck({ full: true }), {
       check: "integrity_check",
-      schema: "treeswap.coordinator.v7",
+      schema: "treeswap.coordinator.v8",
       status: "ok",
     });
     const backup = await store.createVerifiedBackup(backupPath);
     assert.equal(backup.check, "integrity_check");
-    assert.equal(backup.schema, "treeswap.coordinator.v7");
+    assert.equal(backup.schema, "treeswap.coordinator.v8");
     assert.equal(backup.status, "ok");
     assert.ok(Number(backup.pages) > 0);
     assert.equal((await stat(backupPath)).mode & 0o777, 0o600);
@@ -561,7 +561,7 @@ test("creates a verified private backup and restores it only to a fresh path", a
   const restore = await CoordinatorStore.restoreVerifiedBackup(backupPath, restoredPath);
   assert.deepEqual(restore, {
     check: "integrity_check",
-    schema: "treeswap.coordinator.v7",
+    schema: "treeswap.coordinator.v8",
     status: "ok",
     restoredToFreshPath: true,
   });
@@ -578,18 +578,18 @@ test("creates a verified private backup and restores it only to a fresh path", a
   }
 });
 
-test("refuses v6 migration with recoverable work and permits only terminal history", async (t) => {
-  const directory = await mkdtemp(join(tmpdir(), "treeswap-coordinator-v6-migration-"));
+test("refuses v7 migration with recoverable work and permits only terminal history", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "treeswap-coordinator-v7-migration-"));
   const blockedPath = join(directory, "blocked.sqlite");
   const terminalPath = join(directory, "terminal.sqlite");
   t.after(() => rm(directory, { recursive: true, force: true }));
 
-  const openValue = settlement("v6-open");
+  const openValue = settlement("v7-open");
   const blocked = await CoordinatorStore.open(blockedPath);
   blocked.acceptSettlement(openValue);
   blocked.close();
   const blockedLegacy = new DatabaseSync(blockedPath);
-  blockedLegacy.prepare("UPDATE coordinator_meta SET value = 'treeswap.coordinator.v6' WHERE key = 'schema'").run();
+  blockedLegacy.prepare("UPDATE coordinator_meta SET value = 'treeswap.coordinator.v7' WHERE key = 'schema'").run();
   blockedLegacy.close();
   await assert.rejects(
     CoordinatorStore.open(blockedPath),
@@ -598,27 +598,27 @@ test("refuses v6 migration with recoverable work and permits only terminal histo
   const blockedRead = new DatabaseSync(blockedPath, { readOnly: true });
   assert.equal(
     blockedRead.prepare("SELECT value FROM coordinator_meta WHERE key = 'schema'").get().value,
-    "treeswap.coordinator.v6",
+    "treeswap.coordinator.v7",
   );
   blockedRead.close();
 
-  const terminalValue = settlement("v6-terminal");
+  const terminalValue = settlement("v7-terminal");
   const terminal = await CoordinatorStore.open(terminalPath);
   terminal.acceptSettlement(terminalValue);
   terminal.recordTerminal({
     settlementId: terminalValue.settlementId,
     terminalState: "REFUNDED",
-    proofDigest: hash("v6-terminal-proof"),
+    proofDigest: hash("v7-terminal-proof"),
     assetsReconciled: true,
     recordedAt: NOW + 1,
   });
   terminal.close();
   const terminalLegacy = new DatabaseSync(terminalPath);
-  terminalLegacy.prepare("UPDATE coordinator_meta SET value = 'treeswap.coordinator.v6' WHERE key = 'schema'").run();
+  terminalLegacy.prepare("UPDATE coordinator_meta SET value = 'treeswap.coordinator.v7' WHERE key = 'schema'").run();
   terminalLegacy.close();
   const migrated = await CoordinatorStore.open(terminalPath);
   try {
-    assert.equal(migrated.integrityCheck().schema, "treeswap.coordinator.v7");
+    assert.equal(migrated.integrityCheck().schema, "treeswap.coordinator.v8");
     assert.equal(migrated.getSettlement(terminalValue.settlementId).executionPolicyBindingDigest, null);
   } finally {
     migrated.close();
