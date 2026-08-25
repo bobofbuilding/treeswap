@@ -252,6 +252,40 @@ test("treats redirects, status failures, malformed bodies, and transport loss as
   }
 });
 
+test("bounds and cancels the complete capability response body under the transport deadline", async () => {
+  let bodyCancelled = false;
+  await assert.rejects(queryVerifiedSolverCapability(queryOptions({
+    timeoutMs: 5,
+    requestImpl: async () => new Response(new ReadableStream({
+      cancel() {
+        bodyCancelled = true;
+      },
+    }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    }),
+  })), (error) => error.code === "TRANSPORT_FAILED" && error.ambiguous === false);
+  assert.equal(bodyCancelled, true);
+});
+
+test("cancels capability proof verification when active preparation shuts down", async () => {
+  const envelope = await capabilityEnvelope();
+  let verifierStarted;
+  const started = new Promise((resolve) => { verifierStarted = resolve; });
+  const controller = new AbortController();
+  const pending = queryVerifiedSolverCapability(queryOptions({
+    signal: controller.signal,
+    verifyLightningNodeSignature: async () => {
+      verifierStarted();
+      return new Promise(() => {});
+    },
+    requestImpl: async (_url, options) => jsonResponse(responseFor(envelope, JSON.parse(options.body))),
+  }));
+  await started;
+  controller.abort();
+  await assert.rejects(pending, (error) => error.code === "TRANSPORT_FAILED" && error.ambiguous === false);
+});
+
 test("rejects private and reserved endpoint space before any request", async () => {
   for (const address of [
     "127.0.0.1", "10.0.0.1", "169.254.169.254", "172.16.0.1", "192.168.1.1",
