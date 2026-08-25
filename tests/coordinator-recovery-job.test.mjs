@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import {
   normalizeCoordinatorRecoveryJobs,
+  snapshotCoordinatorActiveRuntime,
   snapshotCoordinatorRecoveryEvidencePolicy,
   snapshotCoordinatorRecoveryRuntime,
 } from "../lib/coordinator-recovery-job.mjs";
@@ -110,4 +111,34 @@ test("enforces exact job, runtime, control, identifier, duplicate, and count bou
     beforeSideEffect: async () => {},
   }), /fields are not exact/);
   assert.throws(() => snapshotCoordinatorRecoveryEvidencePolicy([]), /must be an object/);
+});
+
+test("active runtime snapshots the Lightning authorizer without widening recovery authority", async () => {
+  let originalCalls = 0;
+  let replacementCalls = 0;
+  const controls = {
+    authorizeLightning: async () => {
+      originalCalls += 1;
+      return "original";
+    },
+  };
+  const runtime = snapshotCoordinatorActiveRuntime({
+    packetClient: null,
+    controls,
+    lightning: null,
+    evm: null,
+  });
+  controls.authorizeLightning = async () => {
+    replacementCalls += 1;
+    return "replacement";
+  };
+  assert.equal(await runtime.controls.authorizeLightning(), "original");
+  assert.equal(originalCalls, 1);
+  assert.equal(replacementCalls, 0);
+  assert.throws(() => snapshotCoordinatorActiveRuntime({
+    packetClient: null,
+    controls: { attackerChosenBoundary: async () => true },
+    lightning: null,
+    evm: null,
+  }), /control is not permitted/);
 });
