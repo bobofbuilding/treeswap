@@ -71,6 +71,7 @@ jobs:
       - run: node --check lib/coordinator-service-state.mjs
       - run: node --check lib/coordinator-release-supervisor.mjs
       - run: node --check lib/coordinator-recovery-supervisor.mjs
+      - run: node --check lib/coordinator-recovery-action-loop.mjs
       - run: node --check lib/coordinator-action-runner.mjs
       - run: node --check lib/evm-action-runner.mjs
       - run: node --check lib/deployment-observer.mjs

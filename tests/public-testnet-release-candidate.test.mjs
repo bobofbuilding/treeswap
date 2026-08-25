@@ -43,9 +43,12 @@ import {
 } from "../lib/solver-capability.mjs";
 import {
   bindActiveSolverSettlementExecutionPolicy,
+  createRecoverySolverDaemonExecutionFence,
+  deactivateRecoverySolverDaemonExecutionFence,
   executeActiveSolverDaemonStep,
   executeRecoverySolverDaemonStep,
 } from "../lib/active-solver-daemon-runtime.mjs";
+import { createCoordinatorRecoveryActionLoop } from "../lib/coordinator-recovery-action-loop.mjs";
 import { CoordinatorStore } from "../lib/coordinator-store.mjs";
 import {
   acquireCoordinatorServiceLease,
@@ -955,6 +958,7 @@ test("activates funding only after same-process evidence, approvals, reconciliat
     COORDINATOR_INTEGRITY_SECONDS: "10",
     COORDINATOR_LEASE_STALE_SECONDS: "30",
   }), { now: () => serviceNow });
+  const recoveryExecutionFence = createRecoverySolverDaemonExecutionFence();
   const originalDateNow = Date.now;
   try {
     Date.now = () => (now + 3) * 1_000;
@@ -1256,6 +1260,7 @@ test("activates funding only after same-process evidence, approvals, reconciliat
     });
     assert.deepEqual(await executeRecoverySolverDaemonStep({
       executionContext: recoveryContext,
+      executionFence: recoveryExecutionFence,
       serviceLease,
       store: waitingStore,
       settlementId: wrapperSettlementId,
@@ -1264,6 +1269,72 @@ test("activates funding only after same-process evidence, approvals, reconciliat
       stepKind: "WAIT_FOR_RESERVATION",
       outcome: "WAITING",
     });
+    await assert.rejects(executeRecoverySolverDaemonStep({
+      executionContext: recoveryContext,
+      executionFence: structuredClone(recoveryExecutionFence),
+      serviceLease,
+      store: waitingStore,
+      settlementId: wrapperSettlementId,
+    }), /original same-process execution fence/);
+    const loopSupervisor = Object.freeze({
+      status: () => Object.freeze({ state: "active" }),
+      useActiveActivation: (callback) => callback(Object.freeze({ activation: recoveryActivation })),
+    });
+    let releaseLateObservation;
+    let markObservationStarted;
+    const observationStarted = new Promise((resolve) => { markObservationStarted = resolve; });
+    const lateObservation = new Promise((resolve) => { releaseLateObservation = resolve; });
+    const cancellingLoop = createCoordinatorRecoveryActionLoop({
+      recoverySupervisor: loopSupervisor,
+      serviceLease,
+      store: waitingStore,
+      intervalSeconds: 5,
+      jobs: [{
+        settlementId: wrapperSettlementId,
+        solverCapabilityVerification: rotatedRecoverySolverCapability.verification,
+        evidencePolicy,
+        runtime: {
+          packetClient: null,
+          controls: {
+            observeReservation: async () => {
+              markObservationStarted();
+              return lateObservation;
+            },
+          },
+          lightning: null,
+          evm: null,
+        },
+      }],
+    });
+    const cancelledCycle = cancellingLoop.runCycle();
+    await observationStarted;
+    assert.equal(cancellingLoop.stop(), true);
+    releaseLateObservation(Object.freeze({ untrustedLateEvidence: true }));
+    assert.equal((await cancelledCycle).state, "stopped");
+    assert.equal(waitingStore.getSettlement(wrapperSettlementId).reservationId, null);
+    const recoveryActionLoop = createCoordinatorRecoveryActionLoop({
+      recoverySupervisor: loopSupervisor,
+      serviceLease,
+      store: waitingStore,
+      intervalSeconds: 5,
+      jobs: [{
+        settlementId: wrapperSettlementId,
+        solverCapabilityVerification: rotatedRecoverySolverCapability.verification,
+        evidencePolicy,
+        runtime: { packetClient: null, controls: {}, lightning: null, evm: null },
+      }],
+    });
+    const waitingCycle = await recoveryActionLoop.runCycle();
+    assert.equal(waitingCycle.state, "active");
+    assert.deepEqual(waitingCycle.counts, {
+      attempted: 1,
+      advanced: 0,
+      waiting: 1,
+      gateClosed: 0,
+      done: 0,
+      halted: 0,
+    });
+    assert.equal(JSON.stringify(waitingCycle).includes(wrapperSettlementId), false);
     waitingStore.recordReservation({
       settlementId: wrapperSettlementId,
       reservationId: id("active wrapper reservation").toLowerCase(),
@@ -1273,6 +1344,10 @@ test("activates funding only after same-process evidence, approvals, reconciliat
       reservationIntentDigest: waitingSettlement.intentDigest,
       observedAt: now + 3,
     });
+    const unplannedCycle = await recoveryActionLoop.runCycle();
+    assert.equal(unplannedCycle.state, "active");
+    assert.equal(unplannedCycle.counts.gateClosed, 1);
+    assert.equal(unplannedCycle.counts.advanced, 0);
     waitingStore.planAction({
       actionId: id("active wrapper pending Lightning action").toLowerCase(),
       settlementId: wrapperSettlementId,
@@ -1288,6 +1363,7 @@ test("activates funding only after same-process evidence, approvals, reconciliat
     });
     assert.deepEqual(await executeRecoverySolverDaemonStep({
       executionContext: recoveryContext,
+      executionFence: recoveryExecutionFence,
       serviceLease,
       store: waitingStore,
       settlementId: wrapperSettlementId,
@@ -1295,8 +1371,19 @@ test("activates funding only after same-process evidence, approvals, reconciliat
       settlementId: wrapperSettlementId,
       stepKind: "AUTHORIZE_AND_DISPATCH_LIGHTNING",
       outcome: "GATE_CLOSED",
-      reason: "recovery-only daemon context cannot dispatch a Lightning action or open new exposure",
+      reason: "recovery-only daemon context cannot plan or dispatch a Lightning action or open new exposure",
     });
+    const pendingCycle = await recoveryActionLoop.runCycle();
+    assert.equal(pendingCycle.counts.gateClosed, 1);
+    assert.deepEqual(pendingCycle.authorizations, {
+      funding: false,
+      lightningDispatch: false,
+      newExposure: false,
+    });
+    assert.equal(recoveryActionLoop.stop(), true);
+    assert.equal(recoveryActionLoop.stop(), false);
+    assert.equal(recoveryActionLoop.status().state, "stopped");
+    await assert.rejects(recoveryActionLoop.runCycle(), /is stopped/);
     Date.now = () => solverBinding.expiresAt * 1_000;
     const closed = await executeActiveSolverDaemonStep({
       executionContext,
@@ -1328,6 +1415,7 @@ test("activates funding only after same-process evidence, approvals, reconciliat
     }), /original coordinator store/);
   } finally {
     Date.now = originalDateNow;
+    deactivateRecoverySolverDaemonExecutionFence(recoveryExecutionFence);
     waitingStore.close();
     await serviceLease.release();
   }
