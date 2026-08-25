@@ -12,6 +12,8 @@ Status: canonical integer model and adversarial test harness. UI decimal preview
 
 No floating-point number crosses an RFQ, signature, capacity, adapter, or contract boundary.
 
+For the offchain risk gate, `request.bitWei` is the exact net BIT economic leg after the BIT-denominated protocol fee, matching both escrows' onchain price-band denominator. The implied quote price is derived from that net amount and the exact Lightning sats. Quote/market, market/reference, source-spread, pool/TWAP, and WBTC-peg authorization ceilings use cross-multiplication; integer basis-point division is display-only and cannot round a one-unit violation into acceptance.
+
 ## Rounding order
 
 The protocol fee is always `floor(gross BIT wei × feeBps / 10,000)` and is charged only on the BIT leg.

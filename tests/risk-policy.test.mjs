@@ -6,7 +6,11 @@ import {
   executableVenueObservationTypedData,
   isVerifiedExecutableVenuePriceSignal,
 } from "../lib/executable-venue-price-signal.mjs";
-import { buildBitRiskAttestation, evaluateBitRisk } from "../lib/risk-policy.mjs";
+import {
+  BIT_RISK_ATTESTATION_SCHEMA,
+  buildBitRiskAttestation,
+  evaluateBitRisk,
+} from "../lib/risk-policy.mjs";
 
 const NOW = 2_000_000_000;
 const BIT = 10n ** 18n;
@@ -163,15 +167,90 @@ test("keeps the higher base fee for BIT to Lightning", () => {
   assert.equal(result.feeBps, 72);
 });
 
+test("rejects a Lightning-to-BIT quote at the opposite edge of the live market band", () => {
+  const highMarket = [1, 2, 3].map((index) => venueSignal(index, { priceMsatPerBit: 110_000n }));
+  const highMarketPolicy = {
+    ...policy,
+    allowedPriceSourcePolicyDigests: highMarket.map((signal) => signal.pricePolicyDigest),
+  };
+  const result = evaluateBitRisk({
+    policy: highMarketPolicy,
+    snapshot,
+    priceSignals: highMarket,
+    request: { ...request, lightningSats: 9_000n },
+  });
+  assert.equal(result.enabled, false);
+  assert.equal(result.marketPriceMsatPerBit, 110_000n);
+  assert.equal(result.quotedPriceMsatPerBit, 90_000n);
+  assert.match(result.reasons.join("; "), /quote price is outside the market band/);
+});
+
+test("rejects a BIT-to-Lightning quote at the opposite edge of the live market band", () => {
+  const lowMarket = [1, 2, 3].map((index) => venueSignal(index, {
+    direction: "bit-to-lightning",
+    priceMsatPerBit: 90_000n,
+  }));
+  const lowMarketPolicy = {
+    ...policy,
+    allowedPriceSourcePolicyDigests: lowMarket.map((signal) => signal.pricePolicyDigest),
+  };
+  const result = evaluateBitRisk({
+    policy: lowMarketPolicy,
+    snapshot,
+    priceSignals: lowMarket,
+    request: { ...request, direction: "bit-to-lightning", lightningSats: 11_000n },
+  });
+  assert.equal(result.enabled, false);
+  assert.equal(result.marketPriceMsatPerBit, 90_000n);
+  assert.equal(result.quotedPriceMsatPerBit, 110_000n);
+  assert.match(result.reasons.join("; "), /quote price is outside the market band/);
+});
+
+test("enforces market and source deviation ceilings without division-rounding bypass", () => {
+  const overReference = [1, 2, 3].map((index) => venueSignal(index, { priceMsatPerBit: 110_001n }));
+  const overReferencePolicy = {
+    ...policy,
+    allowedPriceSourcePolicyDigests: overReference.map((signal) => signal.pricePolicyDigest),
+  };
+  const marketResult = evaluateBitRisk({
+    policy: overReferencePolicy,
+    snapshot,
+    priceSignals: overReference,
+    request: { ...request, lightningSats: 11_000n },
+  });
+  assert.equal(marketResult.enabled, false);
+  assert.match(marketResult.reasons.join("; "), /market price is outside the reference band/);
+
+  const overSpread = [
+    venueSignal(1, { priceMsatPerBit: 100_000n }),
+    venueSignal(2, { priceMsatPerBit: 100_000n }),
+    venueSignal(3, { priceMsatPerBit: 103_001n }),
+  ];
+  const overSpreadPolicy = {
+    ...policy,
+    allowedPriceSourcePolicyDigests: overSpread.map((signal) => signal.pricePolicyDigest),
+  };
+  const spreadResult = evaluateBitRisk({
+    policy: overSpreadPolicy,
+    snapshot,
+    priceSignals: overSpread,
+    request,
+  });
+  assert.equal(spreadResult.enabled, false);
+  assert.match(spreadResult.reasons.join("; "), /external price sources disagree/);
+});
+
 test("commits the exact healthy proxy, finality, market, and source set", () => {
   const evaluation = evaluateBitRisk({ policy, snapshot, priceSignals, request });
-  const first = buildBitRiskAttestation({ policy, snapshot, evaluation });
+  const first = buildBitRiskAttestation({ policy, snapshot, request, evaluation });
   const reorderedEvaluation = evaluateBitRisk({ policy, snapshot, priceSignals: [...priceSignals].reverse(), request });
   const reordered = buildBitRiskAttestation({
     policy,
     snapshot,
+    request,
     evaluation: reorderedEvaluation,
   });
+  assert.equal(first.schema, BIT_RISK_ATTESTATION_SCHEMA);
   assert.equal(first.riskDigest, reordered.riskDigest);
   assert.match(first.riskDigest, /^0x[0-9a-f]{64}$/);
   assert.match(first.policyDigest, /^0x[0-9a-f]{64}$/);
@@ -179,25 +258,46 @@ test("commits the exact healthy proxy, finality, market, and source set", () => 
   const unsafeSnapshot = { ...snapshot, paused: true };
   const unsafeEvaluation = evaluateBitRisk({ policy, snapshot: unsafeSnapshot, priceSignals, request });
   assert.throws(
-    () => buildBitRiskAttestation({ policy, snapshot: unsafeSnapshot, evaluation: unsafeEvaluation }),
+    () => buildBitRiskAttestation({ policy, snapshot: unsafeSnapshot, request, evaluation: unsafeEvaluation }),
     /unsafe BIT state/,
   );
   assert.throws(
     () => buildBitRiskAttestation({
       policy,
       snapshot,
+      request,
       evaluation: { ...evaluation, qualifiedPriceSources: ["substituted", ...evaluation.qualifiedPriceSources.slice(1)] },
     }),
     /original verified evaluation/,
   );
   assert.throws(
-    () => buildBitRiskAttestation({ policy: { ...policy, maxPriceAgeSeconds: 31 }, snapshot, evaluation }),
+    () => buildBitRiskAttestation({ policy: { ...policy, maxPriceAgeSeconds: 31 }, snapshot, request, evaluation }),
     /policy or snapshot does not match/,
   );
   assert.throws(
-    () => buildBitRiskAttestation({ policy, snapshot: { ...snapshot, finalizedBlock: 969 }, evaluation }),
+    () => buildBitRiskAttestation({ policy, snapshot: { ...snapshot, finalizedBlock: 969 }, request, evaluation }),
     /policy or snapshot does not match/,
   );
+  assert.throws(
+    () => buildBitRiskAttestation({
+      policy,
+      snapshot,
+      request: { ...request, lightningSats: request.lightningSats + 1n },
+      evaluation,
+    }),
+    /request does not match/,
+  );
+
+  const smallerRequest = { ...request, bitWei: 50n * BIT, lightningSats: 5_000n };
+  const smallerEvaluation = evaluateBitRisk({ policy, snapshot, priceSignals, request: smallerRequest });
+  const smaller = buildBitRiskAttestation({
+    policy,
+    snapshot,
+    request: smallerRequest,
+    evaluation: smallerEvaluation,
+  });
+  assert.notEqual(first.requestDigest, smaller.requestDigest);
+  assert.notEqual(first.riskDigest, smaller.riskDigest);
 });
 
 test("does not count duplicate venues, control domains, organizations, or wrong-direction prices as independent", () => {

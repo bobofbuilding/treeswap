@@ -197,6 +197,8 @@ test("builds one request-sized pool signal from two agreeing provider domains", 
   assert.equal(result.evidence.fundingAuthorization, false);
   assert.match(result.evidence.evidenceDigest, /^0x[0-9a-f]{64}$/);
   assert.equal(isVerifiedBitWbtcPoolPriceSignal(result.priceSignal), true);
+  assert.equal(isVerifiedBitWbtcPoolPriceSignal(result.priceSignal, request), true);
+  assert.equal(isVerifiedBitWbtcPoolPriceSignal(result.priceSignal, { ...request, lightningSats: 101 }), false);
   assert.equal(isVerifiedBitWbtcPoolPriceSignal({ ...result.priceSignal }), false);
 });
 
@@ -393,7 +395,7 @@ test("fails closed when the pool is new, shallow, depegged, or non-executable", 
     [{ wideRangeLiquidity: 1 }, /wide-range liquidity is insufficient/],
     [{ wbtcBtcAnswer: 97_000_000 }, /peg is outside policy/],
     [{ probe: { amountWbtcAtomic: 80 } }, /probe is too far from TWAP/],
-    [{ probe: { amountBitWei: BIT - 1n } }, /probe is too shallow/],
+    [{ probe: { amountBitWei: BIT - 1n } }, /exact requested BIT amount/],
   ]) {
     assert.throws(() => buildBitWbtcPoolPriceSignal({
       policy,
@@ -401,6 +403,45 @@ test("fails closed when the pool is new, shallow, depegged, or non-executable", 
       observations: [observation(1, changes), observation(2, changes)],
     }), pattern);
   }
+});
+
+test("rejects a WBTC peg one atomic unit beyond the signed deviation ceiling", () => {
+  assert.throws(() => buildBitWbtcPoolPriceSignal({
+    policy,
+    request,
+    observations: [
+      observation(1, { wbtcBtcAnswer: 101_000_001 }),
+      observation(2, { wbtcBtcAnswer: 101_000_001 }),
+    ],
+  }), /peg is outside policy/);
+});
+
+test("requires the directional pool probe to use the exact requested BIT amount", () => {
+  const oversizedProbe = { amountBitWei: 2n * BIT, amountWbtcAtomic: 200 };
+  assert.throws(() => buildBitWbtcPoolPriceSignal({
+    policy,
+    request,
+    observations: [
+      observation(1, { probe: oversizedProbe }),
+      observation(2, { probe: oversizedProbe }),
+    ],
+  }), /exact requested BIT amount/);
+});
+
+test("accepts a favorable exact-output probe while preserving its actual market notional", () => {
+  const favorableProbe = { amountBitWei: BIT, amountWbtcAtomic: 99 };
+  const result = buildBitWbtcPoolPriceSignal({
+    policy,
+    request,
+    observations: [
+      observation(1, { probe: favorableProbe }),
+      observation(2, { probe: favorableProbe }),
+    ],
+  });
+  assert.equal(result.priceSignal.executableDepthBitWei, BIT);
+  assert.equal(result.priceSignal.executableDepthSats, 99n);
+  assert.equal(result.priceSignal.priceMsatPerBit, 99_000n);
+  assert.equal(isVerifiedBitWbtcPoolPriceSignal(result.priceSignal, request), true);
 });
 
 test("does not let WBTC/BTC feed conversion masquerade as another BIT venue", () => {
