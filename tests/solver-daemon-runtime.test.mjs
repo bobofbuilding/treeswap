@@ -181,7 +181,23 @@ function lightningAdapter() {
     nowSeconds: () => NOW + 10,
     async requestImpl(_url, options) {
       calls += 1;
-      const method = JSON.parse(options.body).payload.method;
+      const { payload } = JSON.parse(options.body);
+      const { method } = payload;
+      const role = method.startsWith("/invoicesrpc.Invoices/") ? "invoice" : "payer";
+      const audit = {
+        observedAt: payload.authorizedAt,
+        decision: "allowed",
+        role,
+        method,
+        credentialIdHash: hash(`${role}:runtime-adapter-credential`),
+        requestId: payload.requestId,
+        intentDigest: payload.intentDigest,
+        paymentHash: payload.paymentHash,
+        invoiceDigest: payload.invoiceDigest,
+        amountSats: payload.amountSats,
+        capacityEpoch: payload.capacityEpoch,
+        reasons: [],
+      };
       if (method === SEND_PAYMENT || method === "/routerrpc.Router/TrackPaymentV2") {
         return new Response(JSON.stringify({
           result: {
@@ -191,11 +207,11 @@ function lightningAdapter() {
             feeSats: "2",
             preimage: PREIMAGE,
           },
-          audit: { decision: "allow" },
+          audit,
         }), { status: 200, headers: { "content-type": "application/json" } });
       }
       if (method === SETTLE_INVOICE) {
-        return new Response(JSON.stringify({ result: { state: "SETTLED" }, audit: { decision: "allow" } }), {
+        return new Response(JSON.stringify({ result: { state: "SETTLED" }, audit }), {
           status: 200,
           headers: { "content-type": "application/json" },
         });

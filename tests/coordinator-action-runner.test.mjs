@@ -97,7 +97,65 @@ async function makeUnknown(label) {
   return prepared;
 }
 
-function successResponse(overrides = {}) {
+async function makeUnknownInvoice(label) {
+  const store = await CoordinatorStore.open(":memory:", { allowMemory: true });
+  const value = { ...settlement(label), direction: "lightning-to-bit" };
+  const settleOperation = { preimage: PREIMAGE };
+  const draft = {
+    actionId: hash(`${value.settlementId}:action`),
+    settlementId: value.settlementId,
+    method: "/invoicesrpc.Invoices/SettleInvoice",
+    requestId: hash(`${label}:settle-request`),
+    payloadDigest: hash("placeholder"),
+    intentDigest: value.intentDigest,
+    paymentHash: value.paymentHash,
+    invoiceDigest: value.invoiceDigest,
+    amountSats: value.amountSats,
+    capacityEpoch: value.capacityEpoch,
+    plannedAt: NOW + 20,
+  };
+  const action = { ...draft, payloadDigest: lightningActionCommitment(draft, settleOperation) };
+  store.acceptSettlement(value);
+  store.recordReservation(reservation(value));
+  store.planAction(action);
+  await assert.rejects(() => dispatchLightningAction({
+    store,
+    actionId: action.actionId,
+    operation: settleOperation,
+    privateKey,
+    keyId: "coordinator-test-1",
+    adapterUrl: "http://invoice-adapter:3000",
+    nowSeconds: () => NOW + 21,
+    requestImpl: async () => { throw new Error("lost after settlement"); },
+  }), (error) => error.ambiguous === true && error.actionState === "UNKNOWN");
+  return { store, value, action };
+}
+
+function adapterAudit(action, {
+  method = action.method,
+  requestId = action.requestId,
+  observedAt = NOW + 21,
+  ...overrides
+} = {}) {
+  const role = method.startsWith("/invoicesrpc.Invoices/") ? "invoice" : "payer";
+  return {
+    observedAt,
+    decision: "allowed",
+    role,
+    method,
+    credentialIdHash: hash(`${role}:credential`),
+    requestId,
+    intentDigest: action.intentDigest,
+    paymentHash: action.paymentHash,
+    invoiceDigest: action.invoiceDigest,
+    amountSats: action.amountSats,
+    capacityEpoch: action.capacityEpoch,
+    reasons: [],
+    ...overrides,
+  };
+}
+
+function successResponse(action, overrides = {}, auditOverrides = {}) {
   return new Response(JSON.stringify({
     result: {
       status: "SUCCEEDED",
@@ -107,7 +165,20 @@ function successResponse(overrides = {}) {
       preimage: PREIMAGE,
       ...overrides,
     },
-    audit: { decision: "allow" },
+    audit: adapterAudit(action, auditOverrides),
+  }), { status: 200, headers: { "content-type": "application/json" } });
+}
+
+function reconciliationResponse(action, {
+  method,
+  requestId,
+  result,
+  observedAt = NOW + 30,
+  auditOverrides = {},
+}) {
+  return new Response(JSON.stringify({
+    result,
+    audit: adapterAudit(action, { method, requestId, observedAt, ...auditOverrides }),
   }), { status: 200, headers: { "content-type": "application/json" } });
 }
 
@@ -129,7 +200,7 @@ test("dispatches the exact committed operation once and persists only its valida
         const envelope = JSON.parse(options.body);
         assert.equal(envelope.payload.requestId, action.requestId);
         assert.deepEqual(envelope.payload.operation, operation());
-        return successResponse();
+        return successResponse(action);
       },
     });
     assert.equal(calls, 1);
@@ -149,6 +220,70 @@ test("dispatches the exact committed operation once and persists only its valida
   }
 });
 
+test("requires every success audit to bind the exact action and signed authorization window", async () => {
+  const malformedAudits = [
+    { requestId: hash("another-request") },
+    { intentDigest: hash("another-intent") },
+    { paymentHash: hash("another-payment") },
+    { invoiceDigest: hash("another-invoice") },
+    { amountSats: "9999" },
+    { capacityEpoch: 4 },
+    { method: "/routerrpc.Router/TrackPaymentV2" },
+    { role: "invoice" },
+    { observedAt: NOW + 20 },
+    { observedAt: NOW + 36 },
+    { decision: "denied" },
+    { reasons: ["generic denial"] },
+    { credentialIdHash: "not-a-hash" },
+    { credentialIdHash: `0x${"0".repeat(64)}` },
+    { unexpected: "field" },
+  ];
+  for (let index = 0; index < malformedAudits.length; index += 1) {
+    const prepared = await setup(`dispatch-audit-mismatch-${index}`);
+    try {
+      await assert.rejects(() => dispatchLightningAction({
+        store: prepared.store,
+        actionId: prepared.action.actionId,
+        operation: operation(),
+        privateKey,
+        keyId: "coordinator-test-1",
+        adapterUrl: "http://payer-adapter:3000",
+        nowSeconds: () => NOW + 21,
+        requestImpl: async () => successResponse(prepared.action, {}, malformedAudits[index]),
+      }), (error) => error.ambiguous === true && error.actionState === "UNKNOWN");
+      assert.equal(prepared.store.getAction(prepared.action.actionId).state, "UNKNOWN");
+    } finally {
+      prepared.store.close();
+    }
+  }
+
+  const generic = await setup("dispatch-generic-audit");
+  try {
+    await assert.rejects(() => dispatchLightningAction({
+      store: generic.store,
+      actionId: generic.action.actionId,
+      operation: operation(),
+      privateKey,
+      keyId: "coordinator-test-1",
+      adapterUrl: "http://payer-adapter:3000",
+      nowSeconds: () => NOW + 21,
+      requestImpl: async () => new Response(JSON.stringify({
+        result: {
+          status: "SUCCEEDED",
+          paymentHash: PAYMENT_HASH,
+          amountSats: "10000",
+          feeSats: "2",
+          preimage: PREIMAGE,
+        },
+        audit: { decision: "allowed" },
+      }), { status: 200 }),
+    }), /invalid success proof/);
+    assert.equal(generic.store.getAction(generic.action.actionId).state, "UNKNOWN");
+  } finally {
+    generic.store.close();
+  }
+});
+
 test("rejects an operation mutation before claiming or contacting the adapter", async () => {
   const { store, action } = await setup("dispatch-mutation");
   let called = false;
@@ -160,7 +295,7 @@ test("rejects an operation mutation before claiming or contacting the adapter", 
       privateKey,
       keyId: "coordinator-test-1",
       adapterUrl: "http://payer-adapter:3000",
-      requestImpl: async () => { called = true; return successResponse(); },
+      requestImpl: async () => { called = true; return successResponse(action); },
     }), /does not match the durable commitment/);
     assert.equal(called, false);
     assert.equal(store.getAction(action.actionId).state, "PENDING");
@@ -261,7 +396,7 @@ test("snapshots exact operation data without accessors, coercion, or post-review
       requestImpl: async (_url, options) => {
         const envelope = JSON.parse(options.body);
         assert.deepEqual(envelope.payload.operation, operation());
-        return successResponse();
+        return successResponse(prepared.action);
       },
     });
     assert.equal(dispatched.action.state, "CONFIRMED");
@@ -300,7 +435,7 @@ test("records transport loss and malformed success as UNKNOWN without retrying",
       keyId: "coordinator-test-1",
       adapterUrl: "http://payer-adapter:3000",
       nowSeconds: () => NOW + 21,
-      requestImpl: async () => successResponse({ paymentHash: hash("wrong-payment") }),
+      requestImpl: async () => successResponse(second.action, { paymentHash: hash("wrong-payment") }),
     }), (error) => error.ambiguous === true && error.actionState === "UNKNOWN");
     assert.equal(second.store.getAction(second.action.actionId).state, "UNKNOWN");
   } finally {
@@ -379,7 +514,9 @@ test("reconciles an unknown payment through a fresh signed read-only tracking re
         const envelope = JSON.parse(options.body);
         assert.equal(envelope.payload.method, "/routerrpc.Router/TrackPaymentV2");
         assert.deepEqual(envelope.payload.operation, {});
-        return new Response(JSON.stringify({
+        return reconciliationResponse(action, {
+          method: "/routerrpc.Router/TrackPaymentV2",
+          requestId: hash("reconcile-success:read-request"),
           result: {
             status: "SUCCEEDED",
             paymentHash: PAYMENT_HASH,
@@ -387,8 +524,7 @@ test("reconciles an unknown payment through a fresh signed read-only tracking re
             feeSats: "2",
             preimage: PREIMAGE,
           },
-          audit: { decision: "allow" },
-        }), { status: 200 });
+        });
       },
     });
     assert.equal(calls, 1);
@@ -422,7 +558,11 @@ test("rejects a successful payment lookup without the exact bound preimage", asy
         keyId: "coordinator-test-1",
         adapterUrl: "http://payer-adapter:3000",
         nowSeconds: () => NOW + 30,
-        requestImpl: async () => new Response(JSON.stringify({ result: tracked, audit: {} }), { status: 200 }),
+        requestImpl: async () => reconciliationResponse(unknown.action, {
+          method: "/routerrpc.Router/TrackPaymentV2",
+          requestId: hash(`reconcile-invalid-preimage-${"preimage" in tracked}:request`),
+          result: tracked,
+        }),
       }), /proof was invalid/);
       assert.equal(unknown.store.getAction(unknown.action.actionId).state, "UNKNOWN");
     } finally {
@@ -442,7 +582,7 @@ test("recovers a confirmed payment preimage after restart without changing durab
       keyId: "coordinator-test-1",
       adapterUrl: "http://payer-adapter:3000",
       nowSeconds: () => NOW + 21,
-      requestImpl: async () => successResponse(),
+      requestImpl: async () => successResponse(action),
     });
     const before = store.getAction(action.actionId);
     const proof = await readConfirmedLightningPaymentProof({
@@ -456,7 +596,9 @@ test("recovers a confirmed payment preimage after restart without changing durab
       requestImpl: async (_url, options) => {
         const envelope = JSON.parse(options.body);
         assert.equal(envelope.payload.method, "/routerrpc.Router/TrackPaymentV2");
-        return new Response(JSON.stringify({
+        return reconciliationResponse(action, {
+          method: "/routerrpc.Router/TrackPaymentV2",
+          requestId: hash("confirmed-proof-recovery:read"),
           result: {
             status: "SUCCEEDED",
             paymentHash: PAYMENT_HASH,
@@ -464,8 +606,7 @@ test("recovers a confirmed payment preimage after restart without changing durab
             feeSats: "2",
             preimage: PREIMAGE,
           },
-          audit: {},
-        }), { status: 200 });
+        });
       },
     });
     assert.equal(proof.preimage, PREIMAGE);
@@ -520,7 +661,9 @@ test("reconciles an unknown invoice settlement through a preimage-free lookup", 
         assert.equal(envelope.payload.method, "/invoicesrpc.Invoices/LookupInvoiceV2");
         assert.deepEqual(envelope.payload.operation, {});
         assert.equal(JSON.stringify(envelope).includes(PREIMAGE), false);
-        return new Response(JSON.stringify({
+        return reconciliationResponse(action, {
+          method: "/invoicesrpc.Invoices/LookupInvoiceV2",
+          requestId: hash("reconcile-invoice:lookup-request"),
           result: {
             paymentHash: PAYMENT_HASH,
             state: "SETTLED",
@@ -528,8 +671,7 @@ test("reconciles an unknown invoice settlement through a preimage-free lookup", 
             amountPaidSats: "10000",
             htlcs: [{ state: "SETTLED", amountMsat: "10000000", acceptHeight: 900_000, expiryHeight: 900_080 }],
           },
-          audit: { decision: "allow" },
-        }), { status: 200 });
+        });
       },
     });
     assert.equal(result.disposition, "confirmed");
@@ -537,6 +679,62 @@ test("reconciles an unknown invoice settlement through a preimage-free lookup", 
     assert.equal(store.getSettlement(value.settlementId).reconciliationRequired, false);
   } finally {
     store.close();
+  }
+});
+
+test("rejects malformed invoice states, paid amounts, and HTLC summaries without clearing UNKNOWN", async () => {
+  const malformedResults = [
+    {
+      paymentHash: PAYMENT_HASH,
+      state: "UNKNOWN",
+      valueSats: "10000",
+      amountPaidSats: "10000",
+      htlcs: [],
+    },
+    {
+      paymentHash: PAYMENT_HASH,
+      state: "SETTLED",
+      valueSats: "10000",
+      amountPaidSats: "9999",
+      htlcs: [{ state: "SETTLED", amountMsat: "10000000", acceptHeight: 900_000, expiryHeight: 900_080 }],
+    },
+    {
+      paymentHash: PAYMENT_HASH,
+      state: "SETTLED",
+      valueSats: "10000",
+      amountPaidSats: "10000",
+      htlcs: [{ state: "UNKNOWN", amountMsat: "10000000", acceptHeight: 900_000, expiryHeight: 900_080 }],
+    },
+    {
+      paymentHash: PAYMENT_HASH,
+      state: "SETTLED",
+      valueSats: "10000",
+      amountPaidSats: "10000",
+      htlcs: [{ state: "SETTLED", amountMsat: "10000000", acceptHeight: 900_080, expiryHeight: 900_000 }],
+    },
+  ];
+  for (let index = 0; index < malformedResults.length; index += 1) {
+    const unknown = await makeUnknownInvoice(`reconcile-malformed-invoice-${index}`);
+    const requestId = hash(`reconcile-malformed-invoice-${index}:lookup`);
+    try {
+      await assert.rejects(() => reconcileLightningAction({
+        store: unknown.store,
+        actionId: unknown.action.actionId,
+        reconciliationRequestId: requestId,
+        privateKey,
+        keyId: "coordinator-test-1",
+        adapterUrl: "http://invoice-adapter:3000",
+        nowSeconds: () => NOW + 30,
+        requestImpl: async () => reconciliationResponse(unknown.action, {
+          method: "/invoicesrpc.Invoices/LookupInvoiceV2",
+          requestId,
+          result: malformedResults[index],
+        }),
+      }), /proof was invalid/);
+      assert.equal(unknown.store.getAction(unknown.action.actionId).state, "UNKNOWN");
+    } finally {
+      unknown.store.close();
+    }
   }
 });
 
@@ -551,10 +749,11 @@ test("keeps IN_FLIGHT and NOT_FOUND observations blocked until a terminal proof 
       keyId: "coordinator-test-1",
       adapterUrl: "http://payer-adapter:3000",
       nowSeconds: () => NOW + 30,
-      requestImpl: async () => new Response(JSON.stringify({
+      requestImpl: async () => reconciliationResponse(inflight.action, {
+        method: "/routerrpc.Router/TrackPaymentV2",
+        requestId: hash("reconcile-inflight:first-read"),
         result: { status: "IN_FLIGHT", paymentHash: PAYMENT_HASH, amountSats: "10000", feeSats: "1" },
-        audit: {},
-      }), { status: 200 }),
+      }),
     });
     assert.equal(pending.disposition, "unresolved");
     assert.equal(inflight.store.getAction(inflight.action.actionId).state, "UNKNOWN");
@@ -586,6 +785,80 @@ test("keeps IN_FLIGHT and NOT_FOUND observations blocked until a terminal proof 
   }
 });
 
+test("keeps reconciliation unknown on a copied audit, unsupported state, or malformed NOT_FOUND", async () => {
+  const requestId = hash("reconcile-exact-response:request");
+  const copied = await makeUnknown("reconcile-copied-audit");
+  try {
+    await assert.rejects(() => reconcileLightningAction({
+      store: copied.store,
+      actionId: copied.action.actionId,
+      reconciliationRequestId: requestId,
+      privateKey,
+      keyId: "coordinator-test-1",
+      adapterUrl: "http://payer-adapter:3000",
+      nowSeconds: () => NOW + 30,
+      requestImpl: async () => reconciliationResponse(copied.action, {
+        method: "/routerrpc.Router/TrackPaymentV2",
+        requestId,
+        result: {
+          status: "SUCCEEDED",
+          paymentHash: PAYMENT_HASH,
+          amountSats: "10000",
+          feeSats: "2",
+          preimage: PREIMAGE,
+        },
+        auditOverrides: { intentDigest: hash("copied-from-another-action") },
+      }),
+    }), /proof was invalid/);
+    assert.equal(copied.store.getAction(copied.action.actionId).state, "UNKNOWN");
+  } finally {
+    copied.store.close();
+  }
+
+  const unsupported = await makeUnknown("reconcile-unsupported-state");
+  try {
+    await assert.rejects(() => reconcileLightningAction({
+      store: unsupported.store,
+      actionId: unsupported.action.actionId,
+      reconciliationRequestId: hash("reconcile-unsupported-state:request"),
+      privateKey,
+      keyId: "coordinator-test-1",
+      adapterUrl: "http://payer-adapter:3000",
+      nowSeconds: () => NOW + 30,
+      requestImpl: async () => reconciliationResponse(unsupported.action, {
+        method: "/routerrpc.Router/TrackPaymentV2",
+        requestId: hash("reconcile-unsupported-state:request"),
+        result: { status: "UNKNOWN", paymentHash: PAYMENT_HASH, amountSats: "10000", feeSats: "0" },
+      }),
+    }), /proof was invalid/);
+    assert.equal(unsupported.store.getAction(unsupported.action.actionId).state, "UNKNOWN");
+  } finally {
+    unsupported.store.close();
+  }
+
+  const malformedMissing = await makeUnknown("reconcile-malformed-not-found");
+  try {
+    await assert.rejects(() => reconcileLightningAction({
+      store: malformedMissing.store,
+      actionId: malformedMissing.action.actionId,
+      reconciliationRequestId: hash("reconcile-malformed-not-found:request"),
+      privateKey,
+      keyId: "coordinator-test-1",
+      adapterUrl: "http://payer-adapter:3000",
+      nowSeconds: () => NOW + 30,
+      requestImpl: async () => new Response(JSON.stringify({
+        error: "payment not found",
+        errorCode: "NOT_FOUND",
+        ambiguous: false,
+        requestId: hash("attacker-added-binding"),
+      }), { status: 502 }),
+    }), /was rejected/);
+    assert.equal(malformedMissing.store.getAction(malformedMissing.action.actionId).state, "UNKNOWN");
+  } finally {
+    malformedMissing.store.close();
+  }
+});
+
 test("does not clear UNKNOWN when a tracking response changes the bound amount", async () => {
   const { store, action } = await makeUnknown("reconcile-invalid");
   try {
@@ -597,10 +870,11 @@ test("does not clear UNKNOWN when a tracking response changes the bound amount",
       keyId: "coordinator-test-1",
       adapterUrl: "http://payer-adapter:3000",
       nowSeconds: () => NOW + 30,
-      requestImpl: async () => new Response(JSON.stringify({
+      requestImpl: async () => reconciliationResponse(action, {
+        method: "/routerrpc.Router/TrackPaymentV2",
+        requestId: hash("reconcile-invalid:read-request"),
         result: { status: "SUCCEEDED", paymentHash: PAYMENT_HASH, amountSats: "9999", feeSats: "2" },
-        audit: {},
-      }), { status: 200 }),
+      }),
     }), /proof was invalid/);
     assert.equal(store.getAction(action.actionId).state, "UNKNOWN");
   } finally {
