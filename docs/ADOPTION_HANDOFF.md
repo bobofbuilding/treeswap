@@ -90,6 +90,7 @@ Complete and retain:
 - the five-report, five-signer [independent review package](./INDEPENDENT_REVIEW_EVIDENCE.md), with every finding closed or safely dispositioned and no accepted critical/high risk;
 - the exact artifact and independent signer package required by [qualification review evidence](./QUALIFICATION_REVIEW_EVIDENCE.md);
 - the three-role [service-isolation package](./SERVICE_ISOLATION_EVIDENCE.md);
+- the exact v4 [safety-monitor policy](./MONITORING.md) whose confirmer routes are assigned to the two isolated EVM services;
 - the five-role [operational-readiness package](./OPERATIONAL_READINESS_EVIDENCE.md), including alert delivery, backup/restore, every required incident drill, support, loss allocation, and zero unreconciled liabilities; and
 - the exact public adoption policy used by every package and release limit.
 
@@ -98,7 +99,7 @@ Raw reports, credentials, endpoints, invoices, preimages, private identity evide
 ### 6. Prepare and approve the tiny release
 
 1. Prepare the evidence-derived bootstrap candidate through [public-testnet release candidates](./PUBLIC_TESTNET_RELEASE_CANDIDATES.md).
-   Candidate v5 reconstructs the original qualification artifact and reviewer signature in-process; a copied verification summary or opaque test digest is rejected.
+   Candidate v6 reconstructs the original qualification artifact and reviewer signature in-process, exposes the monitor upstream-record and operational safety-monitor/confirmer digests, and derives the final-release monitor policy; a copied verification summary, opaque test digest, or legacy candidate v5 is rejected.
 2. Have all five release roles independently reconstruct the candidate from original evidence and compare both candidate digests out of band.
 3. Prepare each role's exact payload without exposing a private key.
 4. Collect controller and guardian ERC-1271 approvals from the reviewed Safes plus the three exact EIP-712 role approvals.

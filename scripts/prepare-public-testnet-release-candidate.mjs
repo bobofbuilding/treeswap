@@ -19,6 +19,7 @@ const FLAGS = Object.freeze([
   "--operations-attestations",
   "--operations-policy",
   "--operations-record",
+  "--operations-safety-monitor-policy",
   "--policy-template",
   "--qualification-artifact",
   "--qualification-attestation",
@@ -34,7 +35,7 @@ const FLAGS = Object.freeze([
   "--review-policy",
   "--review-record",
 ]);
-const USAGE = "Usage: prepare-public-testnet-release-candidate --record-template record-template.json --policy-template policy-template.json --adoption-policy adoption-policy.json --promotion-record promotion-record.json --promotion-policy promotion-policy.json --deployment-policy deployment-policy.json --promotion-observations promotion-observations.json --promotion-attestations promotion-attestations.json --postflight-bundle postflight-bundle.json --campaign-record campaign-record.json --campaign-policy campaign-policy.json --campaign-attestations campaign-attestations.json --review-record review-record.json --review-policy review-policy.json --review-attestations review-attestations.json --qualification-artifact qualification.json --qualification-review qualification-review.json --qualification-policy qualification-policy.json --qualification-attestation qualification-attestation.json --isolation-record isolation-record.json --isolation-policy isolation-policy.json --isolation-attestations isolation-attestations.json --operations-record operations-record.json --operations-policy operations-policy.json --operations-attestations operations-attestations.json --out release-candidate.json";
+const USAGE = "Usage: prepare-public-testnet-release-candidate --record-template record-template.json --policy-template policy-template.json --adoption-policy adoption-policy.json --promotion-record promotion-record.json --promotion-policy promotion-policy.json --deployment-policy deployment-policy.json --promotion-observations promotion-observations.json --promotion-attestations promotion-attestations.json --postflight-bundle postflight-bundle.json --campaign-record campaign-record.json --campaign-policy campaign-policy.json --campaign-attestations campaign-attestations.json --review-record review-record.json --review-policy review-policy.json --review-attestations review-attestations.json --qualification-artifact qualification.json --qualification-review qualification-review.json --qualification-policy qualification-policy.json --qualification-attestation qualification-attestation.json --isolation-record isolation-record.json --isolation-policy isolation-policy.json --isolation-attestations isolation-attestations.json --operations-record operations-record.json --operations-policy operations-policy.json --operations-attestations operations-attestations.json --operations-safety-monitor-policy safety-monitor-policy.json --out release-candidate.json";
 
 function argumentsFromCommandLine(values) {
   if (values.length !== FLAGS.length * 2) throw new Error(USAGE);
@@ -68,6 +69,7 @@ const candidate = await rebuildPublicTestnetReleaseCandidateFromFiles({
   operationsRecord: args["--operations-record"],
   operationsPolicy: args["--operations-policy"],
   operationsAttestations: args["--operations-attestations"],
+  operationsSafetyMonitorPolicy: args["--operations-safety-monitor-policy"],
   isolationRecord: args["--isolation-record"],
   isolationPolicy: args["--isolation-policy"],
   isolationAttestations: args["--isolation-attestations"],

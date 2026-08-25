@@ -55,11 +55,13 @@ import { verifyPublicTestnetBootstrapEvidence } from "../lib/public-testnet-boot
 import { verifyIndependentReviewEvidence } from "../lib/independent-review-evidence.mjs";
 import { verifyOperationalReadinessEvidence } from "../lib/operational-readiness-evidence.mjs";
 import { buildAdoptionPolicyEvidence } from "../lib/adoption-policy.mjs";
+import { safetyMonitorPolicyDigest } from "../lib/safety-observation-attestation.mjs";
 import {
   buildPublicTestnetReleaseApproval,
   buildPublicTestnetReleaseCandidateSummary,
   preparePublicTestnetBootstrapReleaseCandidate,
   preparePublicTestnetReleaseCandidate,
+  verifiedPublicTestnetReleaseCandidateRuntimeBinding,
 } from "../lib/public-testnet-release-candidate.mjs";
 import {
   buildReleaseApprovalMessage,
@@ -486,6 +488,7 @@ function releaseEvidenceValues({ campaign, deployment, operations, qualification
     operationsRecord: operations.candidate.record,
     operationsPolicy: operations.candidate.policy,
     operationsAttestations: operations.candidate.attestations,
+    operationsSafetyMonitorPolicy: operations.candidate.safetyMonitorPolicy,
     adoptionPolicy: operations.candidate.adoptionPolicy,
     isolationRecord: operations.serviceIsolation.candidate.record,
     isolationPolicy: operations.serviceIsolation.candidate.policy,
@@ -516,6 +519,7 @@ function bootstrapReleaseEvidenceValues({ bootstrap, deployment, operations, qua
     operationsRecord: operations.candidate.record,
     operationsPolicy: operations.candidate.policy,
     operationsAttestations: operations.candidate.attestations,
+    operationsSafetyMonitorPolicy: operations.candidate.safetyMonitorPolicy,
     adoptionPolicy: operations.candidate.adoptionPolicy,
     isolationRecord: operations.serviceIsolation.candidate.record,
     isolationPolicy: operations.serviceIsolation.candidate.policy,
@@ -621,6 +625,27 @@ test("derives one exact release candidate from verified deployment, campaign, an
   assert.equal(candidate.evidence.independentReviewRecordDigest, review.verification.recordDigest);
   assert.equal(candidate.evidence.operationalReadinessRecordDigest, operations.verification.recordDigest);
   assert.equal(candidate.evidence.adoptionPolicyDigest, operations.verification.adoptionPolicyDigest);
+  assert.equal(candidate.evidence.safetyMonitorPolicyDigest, operations.verification.safetyMonitorPolicyDigest);
+  assert.equal(
+    candidate.evidence.safetyMonitorUpstreamRecordDigest,
+    operations.verification.safetyMonitor.safetyMonitorReleaseRecordDigest,
+  );
+  assert.equal(candidate.evidence.gateConfirmerBindingDigest, operations.verification.gateConfirmerBindingDigest);
+  const runtimeBinding = verifiedPublicTestnetReleaseCandidateRuntimeBinding(candidate);
+  assert.equal(runtimeBinding.operationalSafetyMonitorPolicyDigest, candidate.evidence.safetyMonitorPolicyDigest);
+  assert.equal(
+    runtimeBinding.operationalSafetyMonitorUpstreamRecordDigest,
+    candidate.evidence.safetyMonitorUpstreamRecordDigest,
+  );
+  assert.equal(runtimeBinding.safetyMonitorPolicy.releaseRecordDigest, candidate.recordDigest);
+  assert.equal(runtimeBinding.safetyMonitorPolicy.validFrom <= candidate.record.validFrom, true);
+  assert.equal(runtimeBinding.safetyMonitorPolicy.validUntil >= candidate.record.validUntil, true);
+  assert.equal(runtimeBinding.safetyMonitorPolicyDigest, safetyMonitorPolicyDigest(runtimeBinding.safetyMonitorPolicy));
+  assert.notEqual(runtimeBinding.safetyMonitorPolicyDigest, runtimeBinding.operationalSafetyMonitorPolicyDigest);
+  assert.throws(
+    () => verifiedPublicTestnetReleaseCandidateRuntimeBinding(structuredClone(candidate)),
+    /provenance/,
+  );
   assert.deepEqual(buildReleaseApprovalMessage(candidate.record, candidate.policy), candidate.approval.message);
   assert.equal(buildPublicTestnetReleaseApproval(candidate).value.recordDigest, candidate.recordDigest);
   assert.equal(
@@ -2001,6 +2026,11 @@ test("derives a distinct tiny-limit bootstrap candidate before campaign evidence
   assert.equal(candidate.record.counts.independentMonitors, 2);
   assert.notEqual(candidate.evidence.bootstrapEvidenceDigest, bootstrap.verification.recordDigest);
   assert.equal(candidate.evidence.adoptionPolicyDigest, operations.verification.adoptionPolicyDigest);
+  assert.equal(candidate.evidence.safetyMonitorUpstreamRecordDigest, bootstrap.verification.recordDigest);
+  assert.equal(
+    verifiedPublicTestnetReleaseCandidateRuntimeBinding(candidate).safetyMonitorPolicy.releaseRecordDigest,
+    candidate.recordDigest,
+  );
   assert.notEqual(candidate.record.evidenceDigests.solverOperations, bootstrap.candidate.record.artifacts.solverOperations);
   assert.equal(
     candidate.record.approvalProviderSetDigest,
@@ -2012,7 +2042,7 @@ test("derives a distinct tiny-limit bootstrap candidate before campaign evidence
   assert.equal(buildPublicTestnetReleaseApproval(candidate).value.recordDigest, candidate.recordDigest);
   assert.equal(
     inspectPreparedPublicTestnetReleaseCandidate(structuredClone(candidate)).candidateSchema,
-    "treeswap.prepared-public-testnet-bootstrap-release-candidate.v5",
+    "treeswap.prepared-public-testnet-bootstrap-release-candidate.v6",
   );
 
   assert.throws(() => preparePublicTestnetBootstrapReleaseCandidate({
@@ -2316,6 +2346,20 @@ test("requires exact operational roles, alert channels, drills, artifacts, and r
     operationalReadinessVerification: wrongDrillVerification,
   }), /operational alert-delivery-and-escalation drill/);
 
+  const wrongMonitorUpstream = rawOperations();
+  wrongMonitorUpstream.safetyMonitorPolicy.releaseRecordDigest = id("substituted monitor upstream record").toLowerCase();
+  const wrongMonitorPolicyDigest = safetyMonitorPolicyDigest(wrongMonitorUpstream.safetyMonitorPolicy);
+  wrongMonitorUpstream.record.safetyMonitorPolicyDigest = wrongMonitorPolicyDigest;
+  wrongMonitorUpstream.policy.safetyMonitorPolicyDigest = wrongMonitorPolicyDigest;
+  for (const drill of wrongMonitorUpstream.record.drills) {
+    if (drill.safetyControls) drill.safetyControls.safetyMonitorPolicyDigest = wrongMonitorPolicyDigest;
+  }
+  const wrongMonitorUpstreamVerification = await verifyOperations(wrongMonitorUpstream);
+  assert.throws(() => preparePublicTestnetReleaseCandidate({
+    ...base,
+    operationalReadinessVerification: wrongMonitorUpstreamVerification,
+  }), /operational safety monitor upstream record/);
+
   const wrongMonitor = await createVerifiedOperationalReadinessFixture({
     deployment,
     upstream: campaign,
@@ -2579,6 +2623,7 @@ test("operator CLI writes a private non-overwriting candidate without authority"
       operationsRecord: operations.candidate.record,
       operationsPolicy: operations.candidate.policy,
       operationsAttestations: operations.candidate.attestations,
+      operationsSafetyMonitorPolicy: operations.candidate.safetyMonitorPolicy,
       adoptionPolicy: operations.candidate.adoptionPolicy,
       isolationRecord: operations.serviceIsolation.candidate.record,
       isolationPolicy: operations.serviceIsolation.candidate.policy,
@@ -2616,6 +2661,7 @@ test("operator CLI writes a private non-overwriting candidate without authority"
       "--operations-record", paths.operationsRecord,
       "--operations-policy", paths.operationsPolicy,
       "--operations-attestations", paths.operationsAttestations,
+      "--operations-safety-monitor-policy", paths.operationsSafetyMonitorPolicy,
       "--adoption-policy", paths.adoptionPolicy,
       "--isolation-record", paths.isolationRecord,
       "--isolation-policy", paths.isolationPolicy,
@@ -2694,6 +2740,7 @@ test("bootstrap operator CLI also writes only a private non-authorizing candidat
       operationsRecord: operations.candidate.record,
       operationsPolicy: operations.candidate.policy,
       operationsAttestations: operations.candidate.attestations,
+      operationsSafetyMonitorPolicy: operations.candidate.safetyMonitorPolicy,
       adoptionPolicy: operations.candidate.adoptionPolicy,
       isolationRecord: operations.serviceIsolation.candidate.record,
       isolationPolicy: operations.serviceIsolation.candidate.policy,
@@ -2731,6 +2778,7 @@ test("bootstrap operator CLI also writes only a private non-authorizing candidat
       "--operations-record", paths.operationsRecord,
       "--operations-policy", paths.operationsPolicy,
       "--operations-attestations", paths.operationsAttestations,
+      "--operations-safety-monitor-policy", paths.operationsSafetyMonitorPolicy,
       "--adoption-policy", paths.adoptionPolicy,
       "--isolation-record", paths.isolationRecord,
       "--isolation-policy", paths.isolationPolicy,

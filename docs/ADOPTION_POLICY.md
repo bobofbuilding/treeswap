@@ -43,7 +43,7 @@ The exact policy:
 
 ## Signed release path
 
-Operational-readiness v3 requires `--adoption-policy`. All five operational roles sign an EIP-712 payload that displays the exact adoption-policy digest as well as the operational record and policy digests. The record's loss-allocation, privacy-retention, and support commitments are derived from the same complete policy digest, so changing any adoption term changes the signed package.
+Operational-readiness v4 requires `--adoption-policy`. All five operational roles sign an EIP-712 payload that displays the exact adoption-policy, safety-monitor-policy, gate-confirmer-binding, operational-record, and operational-policy digests. The record's loss-allocation, privacy-retention, and support commitments are derived from the same complete adoption-policy digest, so changing any adoption term changes the signed package.
 
 Prepared public-testnet release candidates v4 retain that digest, compare every release limit to the exact policy, compare the policy's admission/risk/fee commitments to signed upstream evidence, and check the policy fees against both deployed escrow ceilings. A copied policy, copied verification object, legacy schema, mismatched cap, changed fee commitment, unbound support owner, short validity interval, or permissionless bootstrap fails closed.
 
