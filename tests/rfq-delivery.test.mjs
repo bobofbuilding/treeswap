@@ -66,6 +66,17 @@ import {
   verifiedRfqDeliveryCollection,
 } from "../lib/rfq-delivery.mjs";
 import {
+  RFQ_QUOTE_AUTHORIZATION_TYPES,
+  buildRfqQuoteAuthorization,
+  createRfqQuoteIngressReader,
+  createRfqQuoteIngressRoute,
+  createTestRfqQuoteIngressReader,
+  createTestRfqQuoteIngressRoute,
+  isRfqQuoteIngressRoute,
+  rfqQuoteIngressPolicyDigest,
+} from "../lib/rfq-quote-ingress.mjs";
+import { RfqQuoteIngressStore } from "../lib/rfq-quote-ingress-store.mjs";
+import {
   isProductionRfqDeliveryService,
   isRfqDeliveryService,
   startRfqDeliveryService,
@@ -95,12 +106,37 @@ const LIGHTNING_TO_BIT = "0x1111111111111111111111111111111111111111";
 const BIT_TO_LIGHTNING = "0x2222222222222222222222222222222222222222";
 const LIGHTNING_TO_BIT_CODE_HASH = id("delivery-lightning-to-bit-runtime");
 const BIT_TO_LIGHTNING_CODE_HASH = id("delivery-bit-to-lightning-runtime");
+const QUOTE_API_ORIGIN = "https://quotes.treeswap.example";
+const QUOTE_CLIENT_ORIGIN = "https://app.treeswap.example";
 const solvers = [
   new Wallet(`0x${"31".repeat(32)}`),
   new Wallet(`0x${"32".repeat(32)}`),
   new Wallet(`0x${"34".repeat(32)}`),
 ];
 const user = new Wallet(`0x${"33".repeat(32)}`);
+const quoteIngressPolicy = Object.freeze({
+  apiOrigin: QUOTE_API_ORIGIN,
+  bitToLightningContract: BIT_TO_LIGHTNING,
+  chainId: 1,
+  clientOrigin: QUOTE_CLIENT_ORIGIN,
+  lightningToBitContract: LIGHTNING_TO_BIT,
+  maximumActiveSessionsPerIdentity: 2,
+  maximumAuthorizationTtlSeconds: 60,
+  maximumExactBitOutputWei: String(1_000n * BIT),
+  maximumExactLightningOutputSats: "1000000",
+  maximumFeeBps: 300,
+  maximumLiveRequests: 16,
+  maximumProcessingMilliseconds: 250,
+  maximumRequestBytes: 16_384,
+  maximumRequestLifetimeSeconds: 120,
+  maximumResponseBytes: 262_144,
+  maximumRequestsPerIdentityWindow: 4,
+  maximumRequestsPerWindowGlobal: 16,
+  maximumRoutingFeeSats: "1000",
+  minimumExactBitOutputWei: String(BIT / 100n),
+  minimumExactLightningOutputSats: "1",
+  quotaWindowSeconds: 600,
+});
 const marketSigners = [
   new Wallet(`0x${"41".repeat(32)}`),
   new Wallet(`0x${"42".repeat(32)}`),
@@ -625,6 +661,110 @@ async function collectedBlindBook(options = {}) {
   };
 }
 
+async function quoteIngressStore(policy = quoteIngressPolicy) {
+  return RfqQuoteIngressStore.open({
+    allowMemory: true,
+    identityKey: Buffer.alloc(32, 91),
+    initialize: true,
+    maximumActiveSessionsPerIdentity: policy.maximumActiveSessionsPerIdentity,
+    maximumLiveRequests: policy.maximumLiveRequests,
+    maximumRequestLifetimeSeconds: policy.maximumRequestLifetimeSeconds,
+    maximumRequestsPerIdentityWindow: policy.maximumRequestsPerIdentityWindow,
+    maximumRequestsPerWindowGlobal: policy.maximumRequestsPerWindowGlobal,
+    path: ":memory:",
+    policyDigest: rfqQuoteIngressPolicyDigest(policy),
+    quotaWindowSeconds: policy.quotaWindowSeconds,
+  });
+}
+
+async function signedQuoteIngressBody({
+  policy = quoteIngressPolicy,
+  publicPricing = pricing,
+  requestNonce = "17",
+  authorizationExpiresAt = NOW + 30,
+} = {}) {
+  const material = buildRfqQuoteAuthorization({
+    authorizationExpiresAt,
+    policy,
+    pricing: publicPricing,
+    requestNonce,
+    user: user.address,
+  });
+  return {
+    pricing: publicPricing,
+    authorization: material.message,
+    signature: await user.signTypedData(material.domain, RFQ_QUOTE_AUTHORIZATION_TYPES, material.message),
+  };
+}
+
+function quoteIngressRequest(path, value, overrides = {}) {
+  const body = Buffer.isBuffer(value) || value instanceof Uint8Array
+    ? Buffer.from(value)
+    : Buffer.from(typeof value === "string" ? value : JSON.stringify(value), "utf8");
+  const headers = new Headers({
+    "cache-control": "no-store",
+    "content-length": String(body.length),
+    "content-type": "application/json",
+    origin: QUOTE_CLIENT_ORIGIN,
+    ...overrides.headers,
+  });
+  if (overrides.omitContentLength) headers.delete("content-length");
+  return new Request(`${overrides.origin ?? QUOTE_API_ORIGIN}${path}`, {
+    method: overrides.method ?? "POST",
+    headers,
+    body: overrides.method === "GET" ? undefined : body,
+    signal: overrides.signal,
+  });
+}
+
+async function quoteIngressFixture(t, {
+  nowSeconds = () => NOW,
+  policy = quoteIngressPolicy,
+  read = null,
+  randomBytesImpl = null,
+} = {}) {
+  const { book } = await collectedBlindBook();
+  const store = await quoteIngressStore(policy);
+  const deployment = new AbortController();
+  let previewEntropy = 40;
+  let reads = 0;
+  let lastReaderPricing = null;
+  const reader = createTestRfqQuoteIngressReader({
+    read: read ?? (async (publicPricing, { signal }) => {
+      reads += 1;
+      lastReaderPricing = publicPricing;
+      assert.equal(signal.aborted, false);
+      return createTestClientSafeBlindQuoteSession({
+        book,
+        nowSeconds,
+        randomBytesImpl: () => Buffer.alloc(32, ++previewEntropy),
+      });
+    }),
+  });
+  let routeEntropy = 70;
+  const route = createTestRfqQuoteIngressRoute({
+    nowSeconds,
+    policy,
+    quoteReader: reader,
+    randomBytesImpl: randomBytesImpl ?? (() => Buffer.alloc(32, ++routeEntropy)),
+    replayStore: store,
+    signal: deployment.signal,
+  });
+  t.after(() => {
+    try { route.stop(); } catch {}
+    try { store.close(); } catch {}
+  });
+  return {
+    book,
+    deployment,
+    lastReaderPricing: () => lastReaderPricing,
+    reader,
+    reads: () => reads,
+    route,
+    store,
+  };
+}
+
 async function preparedDurableStore(t, {
   selection,
   verification,
@@ -891,6 +1031,297 @@ test("production preview sessions use module-owned time and entropy", async () =
   assert.equal(session.status().mode, "system-entropy");
   assert.match(session.preview().offers[0].choiceId, /^0x[0-9a-f]{64}$/);
   assert.equal(session.close().state, "closed");
+});
+
+test("authenticates quote ingress, exposes only opaque competition, and consumes selection once", async (t) => {
+  const data = await quoteIngressFixture(t);
+  const body = await signedQuoteIngressBody();
+  const created = await data.route.handle(quoteIngressRequest("/v1/quotes", body));
+  assert.equal(created.status, 200);
+  assert.equal(created.headers.get("cache-control"), "no-store");
+  assert.equal(created.headers.get("content-type"), "application/json");
+  assert.equal(created.headers.get("x-content-type-options"), "nosniff");
+  assert.equal(created.headers.get("x-frame-options"), "DENY");
+  const payload = await created.json();
+  assert.deepEqual(Object.keys(payload).sort(), [
+    "fundingAuthorization", "preview", "schema", "sessionToken", "settlementAuthorization",
+  ].sort());
+  assert.equal(payload.schema, "treeswap.rfq-quote-ingress-response.v1");
+  assert.equal(payload.fundingAuthorization, false);
+  assert.equal(payload.settlementAuthorization, false);
+  assert.match(payload.sessionToken, /^0x[0-9a-f]{64}$/);
+  assert.deepEqual(data.lastReaderPricing(), pricing);
+  assert.equal(data.reads(), 1);
+
+  const publicWire = JSON.stringify(payload).toLowerCase();
+  for (const secret of [body.signature, body.authorization.user]) {
+    assert.equal(publicWire.includes(secret.toLowerCase()), false);
+  }
+  for (const envelope of data.book.offers) {
+    for (const secret of [
+      envelope.source,
+      envelope.offer.offerId,
+      envelope.offer.solver,
+      envelope.offer.capabilityDigest,
+      envelope.offer.endpointPublicKeyDigest,
+      envelope.signature,
+    ]) assert.equal(publicWire.includes(String(secret).toLowerCase()), false);
+  }
+
+  const selected = await data.route.handle(quoteIngressRequest("/v1/quotes/select", {
+    choiceId: payload.preview.offers[0].choiceId,
+    sessionToken: payload.sessionToken,
+  }));
+  assert.equal(selected.status, 200);
+  assert.deepEqual(await selected.json(), {
+    schema: "treeswap.rfq-quote-selection-ack.v1",
+    status: "selected",
+    expiresAt: payload.preview.expiresAt,
+    privateSettlementRequired: true,
+    fundingAuthorization: false,
+    settlementAuthorization: false,
+  });
+  assert.equal((await data.route.handle(quoteIngressRequest("/v1/quotes", body))).status, 400);
+  assert.equal((await data.route.handle(quoteIngressRequest("/v1/quotes/select", {
+    choiceId: payload.preview.offers[0].choiceId,
+    sessionToken: payload.sessionToken,
+  }))).status, 400);
+  assert.equal(data.reads(), 1);
+  assert.deepEqual(data.route.status(), {
+    schema: "treeswap.rfq-quote-ingress-status.v1",
+    state: "active",
+    mode: "injected-test",
+    requestsStarted: 4,
+    requestsAccepted: 1,
+    requestsRejected: 2,
+    requestsInFlight: 0,
+    selectionsCompleted: 1,
+    inMemoryReadySessions: 0,
+    inMemorySelectedSessions: 1,
+    durableLiveClaimedRequests: 0,
+    durableLiveReadySessions: 0,
+    fundingAuthorization: false,
+    settlementAuthorization: false,
+    signingAuthorization: false,
+    networkListener: false,
+  });
+});
+
+test("keeps quote ingress factories, execution modes, and methods provenance-bound", async (t) => {
+  const store = await quoteIngressStore();
+  const deployment = new AbortController();
+  const productionReader = createRfqQuoteIngressReader({ read: async () => null });
+  const testReader = createTestRfqQuoteIngressReader({ read: async () => null });
+  t.after(() => { try { store.close(); } catch {} });
+  assert.throws(() => createRfqQuoteIngressRoute({
+    policy: quoteIngressPolicy,
+    quoteReader: testReader,
+    replayStore: store,
+    signal: deployment.signal,
+  }), /matching factory-created quote reader/);
+  assert.throws(() => createTestRfqQuoteIngressRoute({
+    nowSeconds: () => NOW,
+    policy: quoteIngressPolicy,
+    quoteReader: productionReader,
+    randomBytesImpl: () => Buffer.alloc(32, 1),
+    replayStore: store,
+    signal: deployment.signal,
+  }), /matching factory-created quote reader/);
+  const route = createRfqQuoteIngressRoute({
+    policy: quoteIngressPolicy,
+    quoteReader: productionReader,
+    replayStore: store,
+    signal: deployment.signal,
+  });
+  assert.equal(isRfqQuoteIngressRoute(route), true);
+  const copied = { ...route };
+  await assert.rejects(copied.handle(quoteIngressRequest("/v1/quotes", {})), /factory provenance/);
+  const extracted = route.handle;
+  await assert.rejects(extracted(quoteIngressRequest("/v1/quotes", {})), /factory provenance/);
+  assert.equal(route.stop().state, "stopped");
+  assert.throws(() => createRfqQuoteIngressRoute({
+    policy: quoteIngressPolicy,
+    quoteReader: productionReader,
+    replayStore: store,
+    signal: deployment.signal,
+  }), /already bound/);
+});
+
+test("permits only the exact credential-free browser preflight", async (t) => {
+  const data = await quoteIngressFixture(t);
+  const valid = () => new Request(`${QUOTE_API_ORIGIN}/v1/quotes`, {
+    method: "OPTIONS",
+    headers: {
+      "access-control-request-headers": "Content-Type, Cache-Control",
+      "access-control-request-method": "POST",
+      origin: QUOTE_CLIENT_ORIGIN,
+    },
+  });
+  const accepted = await data.route.handle(valid());
+  assert.equal(accepted.status, 204);
+  assert.equal(accepted.headers.get("access-control-allow-origin"), QUOTE_CLIENT_ORIGIN);
+  assert.equal(accepted.headers.get("access-control-allow-methods"), "POST");
+  assert.equal(accepted.headers.get("access-control-allow-headers"), "cache-control, content-type");
+  assert.equal(accepted.headers.get("access-control-allow-credentials"), null);
+  assert.equal(accepted.headers.get("cache-control"), "no-store");
+  assert.equal(await accepted.text(), "");
+  for (const headers of [
+    { "access-control-request-headers": "content-type", "access-control-request-method": "POST" },
+    { "access-control-request-headers": "authorization, cache-control, content-type", "access-control-request-method": "POST" },
+    { "access-control-request-headers": "cache-control, content-type", "access-control-request-method": "GET" },
+    { "access-control-request-headers": "cache-control, content-type", "access-control-request-method": "POST", "access-control-request-private-network": "true" },
+  ]) {
+    const request = new Request(`${QUOTE_API_ORIGIN}/v1/quotes`, {
+      method: "OPTIONS",
+      headers: { ...headers, origin: QUOTE_CLIENT_ORIGIN },
+    });
+    assert.equal((await data.route.handle(request)).status, 400);
+  }
+  assert.equal(data.reads(), 0);
+  assert.equal(data.route.status().durableLiveClaimedRequests, 0);
+});
+
+test("rejects changed, expired, overlong, and incorrectly signed quote authorizations before RFQ access", async (t) => {
+  const data = await quoteIngressFixture(t);
+  const valid = await signedQuoteIngressBody();
+  const otherSigner = await user.signTypedData(
+    buildRfqQuoteAuthorization({
+      authorizationExpiresAt: NOW + 30,
+      policy: quoteIngressPolicy,
+      pricing,
+      requestNonce: "17",
+      user: solvers[0].address,
+    }).domain,
+    RFQ_QUOTE_AUTHORIZATION_TYPES,
+    buildRfqQuoteAuthorization({
+      authorizationExpiresAt: NOW + 30,
+      policy: quoteIngressPolicy,
+      pricing,
+      requestNonce: "17",
+      user: solvers[0].address,
+    }).message,
+  );
+  const expired = await signedQuoteIngressBody({ authorizationExpiresAt: NOW });
+  const overlong = await signedQuoteIngressBody({ authorizationExpiresAt: NOW + 61 });
+  const policyInvalidPricing = { ...pricing, maxFeeBps: "301" };
+  const policyInvalid = await signedQuoteIngressBody({
+    publicPricing: policyInvalidPricing,
+    authorizationExpiresAt: NOW + 30,
+  });
+  const cases = [
+    { ...valid, pricing: { ...valid.pricing, maxFeeBps: "101" } },
+    { ...valid, authorization: { ...valid.authorization, pricingDigest: id("changed-pricing") } },
+    { ...valid, authorization: { ...valid.authorization, clientOriginDigest: id("changed-origin") } },
+    { ...valid, signature: `${valid.signature.slice(0, -2)}00` },
+    { ...valid, authorization: { ...valid.authorization, user: solvers[0].address }, signature: otherSigner },
+    expired,
+    overlong,
+    policyInvalid,
+  ];
+  for (const [index, body] of cases.entries()) {
+    const response = await data.route.handle(quoteIngressRequest("/v1/quotes", body));
+    assert.equal(response.status, 400, `authorization rejection case ${index}`);
+    assert.deepEqual(await response.json(), { error: "quote request rejected" });
+  }
+  assert.equal(data.reads(), 0);
+  assert.equal(data.route.status().durableLiveClaimedRequests, 0);
+});
+
+test("rejects noncanonical quote HTTP targets, credentials, framing, UTF-8, and JSON", async (t) => {
+  const data = await quoteIngressFixture(t);
+  const body = await signedQuoteIngressBody();
+  const encoded = Buffer.from(JSON.stringify(body), "utf8");
+  const requests = [
+    quoteIngressRequest("/v1/quotes", body, { method: "GET" }),
+    quoteIngressRequest("/v1/quotes/", body),
+    quoteIngressRequest("/v1/quotes?mode=fast", body),
+    quoteIngressRequest("/v1/quotes#fragment", body),
+    quoteIngressRequest("/v1/quotes", body, { origin: "https://other.treeswap.example" }),
+    quoteIngressRequest("/v1/quotes", body, { headers: { origin: "https://evil.example" } }),
+    quoteIngressRequest("/v1/quotes", body, { headers: { "content-type": "text/plain" } }),
+    quoteIngressRequest("/v1/quotes", body, { headers: { "content-type": "application/json; charset=utf-16" } }),
+    quoteIngressRequest("/v1/quotes", body, { headers: { "cache-control": "max-age=0" } }),
+    quoteIngressRequest("/v1/quotes", body, { headers: { "content-encoding": "gzip" } }),
+    quoteIngressRequest("/v1/quotes", body, { headers: { authorization: "Bearer ambient" } }),
+    quoteIngressRequest("/v1/quotes", body, { headers: { cookie: "session=ambient" } }),
+    quoteIngressRequest("/v1/quotes", body, { headers: { "transfer-encoding": "chunked" } }),
+    quoteIngressRequest("/v1/quotes", body, { omitContentLength: true }),
+    quoteIngressRequest("/v1/quotes", body, { headers: { "content-length": `0${encoded.length}` } }),
+    quoteIngressRequest("/v1/quotes", body, { headers: { "content-length": String(encoded.length + 1) } }),
+    quoteIngressRequest("/v1/quotes", body, { headers: { "content-length": String(quoteIngressPolicy.maximumRequestBytes + 1) } }),
+    quoteIngressRequest("/v1/quotes", Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), encoded])),
+    quoteIngressRequest("/v1/quotes", Buffer.from([0xc3, 0x28])),
+    quoteIngressRequest("/v1/quotes", "{"),
+    quoteIngressRequest("/v1/quotes", `${JSON.stringify(body)} true`),
+  ];
+  for (const request of requests) {
+    const response = await data.route.handle(request);
+    assert.equal(response.status, 400);
+    assert.equal(response.headers.get("cache-control"), "no-store");
+    assert.deepEqual(await response.json(), { error: "quote request rejected" });
+  }
+  assert.equal(data.reads(), 0);
+  assert.equal(data.route.status().durableLiveClaimedRequests, 0);
+});
+
+test("bounds stalled bodies and fails closed when deployment stops during collection", async (t) => {
+  const stalled = await quoteIngressFixture(t);
+  const neverEndingBody = new ReadableStream({ start() {} });
+  const stalledRequest = new Request(`${QUOTE_API_ORIGIN}/v1/quotes`, {
+    method: "POST",
+    headers: {
+      "cache-control": "no-store",
+      "content-length": "10",
+      "content-type": "application/json",
+      origin: QUOTE_CLIENT_ORIGIN,
+    },
+    body: neverEndingBody,
+    duplex: "half",
+  });
+  const startedAt = Date.now();
+  assert.equal((await stalled.route.handle(stalledRequest)).status, 400);
+  assert.ok(Date.now() - startedAt < 2_000);
+  assert.equal(stalled.reads(), 0);
+
+  let collectionStarted;
+  const reachedReader = new Promise((resolve) => { collectionStarted = resolve; });
+  let observedSignal;
+  const interrupted = await quoteIngressFixture(t, {
+    read: async (_publicPricing, { signal }) => {
+      observedSignal = signal;
+      collectionStarted();
+      if (!signal.aborted) {
+        await new Promise((resolve) => signal.addEventListener("abort", resolve, { once: true }));
+      }
+      return null;
+    },
+  });
+  const pending = interrupted.route.handle(quoteIngressRequest(
+    "/v1/quotes",
+    await signedQuoteIngressBody(),
+  ));
+  await reachedReader;
+  interrupted.deployment.abort();
+  assert.equal((await pending).status, 400);
+  assert.equal(observedSignal.aborted, true);
+  const stopped = interrupted.route.status();
+  assert.equal(stopped.state, "stopped");
+  assert.equal(stopped.inMemoryReadySessions, 0);
+  assert.equal(stopped.requestsInFlight, 0);
+  assert.equal(stopped.durableLiveClaimedRequests, 1);
+});
+
+test("closes a genuine preview session returned through the wrong ingress mode", async (t) => {
+  const { book } = await collectedBlindBook();
+  const productionSession = createClientSafeBlindQuoteSession(book);
+  const data = await quoteIngressFixture(t, { read: async () => productionSession });
+  const response = await data.route.handle(quoteIngressRequest(
+    "/v1/quotes",
+    await signedQuoteIngressBody(),
+  ));
+  assert.equal(response.status, 400);
+  assert.equal(productionSession.status().state, "closed");
+  assert.equal(data.route.status().durableLiveClaimedRequests, 1);
 });
 
 test("atomically reserves authenticated blind competition before private disclosure and finalization", async (t) => {

@@ -26,7 +26,7 @@ The prototype assumes a business par value of **1 BIT = 100 sats**. This value i
 - Deterministic unsigned Sepolia deployment preparation, a short-lived signed two-provider preflight, and signed finalized receipt reconstruction in [`docs/CLOSED_TESTNET_DEPLOYMENT.md`](docs/CLOSED_TESTNET_DEPLOYMENT.md) and [`docs/CLOSED_TESTNET_DEPLOYMENT_POSTFLIGHT.md`](docs/CLOSED_TESTNET_DEPLOYMENT_POSTFLIGHT.md)
 - Provider- and reviewer-signed deployment-manifest promotion in [`docs/DEPLOYMENT_PROMOTION.md`](docs/DEPLOYMENT_PROMOTION.md)
 - Deterministic cross-chain clock and payment-authorization policy in [`docs/SETTLEMENT_POLICY.md`](docs/SETTLEMENT_POLICY.md)
-- Multi-solver signed RFQ validation, deterministic received-set policy, authenticated multipath delivery, and durable pre-disclosure reservation in [`docs/RFQ_POLICY.md`](docs/RFQ_POLICY.md) and [`docs/RFQ_DELIVERY.md`](docs/RFQ_DELIVERY.md)
+- Multi-solver signed RFQ validation, deterministic received-set policy, authenticated multipath delivery, authority-free quote ingress, durable replay/quota control, and pre-disclosure reservation in [`docs/RFQ_POLICY.md`](docs/RFQ_POLICY.md), [`docs/RFQ_DELIVERY.md`](docs/RFQ_DELIVERY.md), and [`docs/RFQ_QUOTE_INGRESS.md`](docs/RFQ_QUOTE_INGRESS.md)
 - Canonical integer units and BIT-only fee policy in [`docs/UNITS_AND_ROUNDING.md`](docs/UNITS_AND_ROUNDING.md) and [`docs/FEES.md`](docs/FEES.md)
 - Adversarial design review and launch gates in [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md)
 - Phase-by-phase evidence ledger in [`docs/LAUNCH_CHECKLIST.md`](docs/LAUNCH_CHECKLIST.md)

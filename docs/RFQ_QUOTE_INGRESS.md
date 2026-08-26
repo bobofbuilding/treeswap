@@ -1,0 +1,52 @@
+# Authenticated RFQ quote ingress
+
+Status: the repository contains an authority-free browser/API handler and strict private SQLite replay store. They are locally tested but are not attached to a network listener, production RFQ reader, deployed persistent volume, or funded coordinator. Funded operation remains closed.
+
+## Boundary
+
+`POST /v1/quotes` accepts one public nine-field blind-pricing request plus a short-lived EIP-712 `TreeSwap Quote Request` authorization. The authorization binds:
+
+- pricing ID and canonical pricing digest;
+- direction and direction-specific escrow;
+- chain, wallet, nonce, request expiry, and authorization expiry; and
+- the exact configured browser-origin digest.
+
+This signature authenticates and rate-limits quote collection only. It is not either of the two later swap authorizations, is not a token allowance, cannot reserve inventory, and cannot fund or settle a swap. The current verifier supports canonical 65-byte EOA signatures only. ERC-1271 quote-request authentication requires a separately reviewed fixed-provider verifier before contract-wallet production use; the escrows' existing ERC-1271 settlement support does not silently extend to this HTTP boundary.
+
+The handler passes only the normalized public pricing projection and an abort signal to its factory-created RFQ reader. It never forwards the wallet, signature, nonce, session token, or browser origin to a relay or solver. The reader must return an original mode-matched client-safe preview session. A copied, injected-test/production-crossed, expired, or otherwise unbranded session rejects; a genuine session returned through the wrong mode is closed.
+
+The ingress does not calculate an executable price from the 100-sat reference. Competing solver RFQs remain the primary Lightning/BIT price. After the planned BIT/WBTC pool exists and has passed its separate maturity gate, a request-sized pool observation may contribute one independent market-risk signal; it cannot satisfy venue quorum by itself, select a solver, route settlement, or enable a silent fixed-par fallback.
+
+`POST /v1/quotes/select` accepts one opaque choice ID and one opaque session token. The durable token claim is consumed before the module-private in-memory selection is consulted. A successful response only acknowledges selection and explicitly says that private settlement is still required. No selected quote is serialized or exposed by the route.
+
+## HTTP rules
+
+The API origin and browser origin must be distinct canonical HTTPS origins. The handler accepts only the two exact paths, no query or fragment, the exact configured `Origin`, and credential-free requests. Cookie and `Authorization` headers are forbidden.
+
+JSON requests require `Cache-Control: no-store`, identity encoding, an exact canonical `Content-Length`, and `application/json` with absent or UTF-8 charset. Transfer encoding, compression, missing or mismatched length, oversize, BOM-prefixed or malformed UTF-8, malformed/trailing JSON, a stalled body, and a body that outlives the one hard processing deadline all reject with the same bounded response.
+
+The only accepted CORS preflight requests `POST` with exactly `cache-control` and `content-type`. Private-network requests and credentialed preflights reject. All responses bind `Access-Control-Allow-Origin` to the configured browser, omit credential permission, disable storage, and include no-index, no-sniff, frame-denial, referrer, and content-security headers.
+
+An HTTP adapter must preserve the network-derived content length when it constructs the Web `Request`. It must not add cookies, bearer credentials, compression, permissive CORS, alternate routes, or a second body parser in front of this boundary.
+
+## Durable replay and quotas
+
+`lib/rfq-quote-ingress-store.mjs` uses a strict SQLite schema, full synchronous writes, immediate transactions, a durable clock high-water mark, exact policy metadata, explicit first initialization, and restart refusal for missing, empty, substituted, symlinked, permissive, or differently keyed state. Production storage requires an absolute path beneath a mode-`0700` directory; the database is mode `0600`. Memory storage is initialization-only test state.
+
+A deployment-owned 32-byte random identity key HMACs wallet identities and session tokens before persistence. The database stores neither raw wallet addresses, raw session tokens, request signatures, quote bodies, solver data, nor selected quotes. It atomically enforces unique pricing IDs, unique wallet/nonce pairs, per-wallet active and rolling-window quotas, global live and rolling-window quotas, monotonic time, one transition from claimed to ready, and one transition from ready to selected.
+
+The request is claimed before RFQ collection. Failed or timed-out collection therefore consumes that signed request until it expires; the client must create a fresh pricing ID and nonce. On restart, durable claims and quota history survive, but module-private preview and selected-quote objects do not. A previously ready session consequently cannot select after restart and is burned rather than reconstructed from serialized authority.
+
+The session token is a short-lived bearer secret returned only in the `no-store` response. The browser gateway must keep it in memory, exclude it from URLs, analytics, logs, local storage, error reports, email, and receipts, and erase it after selection, failure, expiry, navigation, or sign-out.
+
+## Deployment work still required
+
+This checkpoint deliberately provides no port, TLS listener, process manager, funding key, settlement signer, Lightning credential, or action dispatcher. Before public testnet quote use, TreeSwap must:
+
+1. compose the production ingress reader with the deployment-owned RFQ lifecycle and opaque preview in one process;
+2. deploy the handler behind a preserving HTTPS adapter and exact browser origin;
+3. provision, safeguard, back up, and restore the identity key and private SQLite volume, then design and review any future key-rotation ceremony without resetting replay history;
+4. add a reviewed ERC-1271 path or explicitly exclude contract wallets from quote-request authentication;
+5. connect the selected module-private object to the existing private reservation ceremony without adding a serialization shortcut;
+6. test browser-wallet compatibility, restart burn behavior, quota exhaustion, rollback, disk-full, process death, failover, CORS, load, alerting, and deletion on deployed infrastructure; and
+7. retain evidence from independently operated relays and solvers. Global quote completeness remains unprovable, so the product must continue to say “Best received quote.”
