@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
-import { chmod, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -122,6 +122,11 @@ import {
   CONTRACT_INTENT_WALLET_SESSION_QUERY,
   createContractIntentWalletSiweEdgeForTests,
 } from "../lib/contract-intent-wallet-siwe-edge.mjs";
+import {
+  acquireContractIntentWalletEdgeReplicaFenceForTests,
+  createContractIntentWalletEdgePerimeter,
+  createContractIntentWalletEdgePerimeterForTests,
+} from "../lib/contract-intent-wallet-edge-perimeter.mjs";
 import {
   SolverContractSigningProviderStore,
   createSolverContractSigningProviderRoute,
@@ -3096,7 +3101,7 @@ for (const direction of ["lightning-to-bit", "bit-to-lightning"]) {
       }),
       /requester private key and response public key/,
     );
-    const edge = createContractIntentWalletSiweEdgeForTests({
+    const edgeCore = createContractIntentWalletSiweEdgeForTests({
       clientOrigin: "https://treeswap.vercel.app",
       clock: () => edgeClock,
       database: edgeDatabase,
@@ -3107,8 +3112,60 @@ for (const direction of ["lightning-to-bit", "bit-to-lightning"]) {
       responsePublicKey: gatewayResponseKeys.publicKey,
       signal: edgeDeployment.signal,
     });
+    const edgeFenceDirectoryAlias = await mkdtemp(join(
+      directory,
+      `wallet-siwe-edge-fence-${direction}-`,
+    ));
+    await chmod(edgeFenceDirectoryAlias, 0o700);
+    const edgeFenceDirectory = await realpath(edgeFenceDirectoryAlias);
+    const edgeFence = await acquireContractIntentWalletEdgeReplicaFenceForTests({
+      clock: () => NOW * 1_000,
+      randomBytes: () => Buffer.alloc(32, direction === "lightning-to-bit" ? 233 : 243),
+      runtimeDirectory: edgeFenceDirectory,
+      signal: edgeDeployment.signal,
+    });
+    await assert.rejects(
+      acquireContractIntentWalletEdgeReplicaFenceForTests({
+        clock: () => NOW * 1_000,
+        randomBytes: () => Buffer.alloc(32, direction === "lightning-to-bit" ? 234 : 244),
+        runtimeDirectory: edgeFenceDirectory,
+        signal: edgeDeployment.signal,
+      }),
+      /another wallet edge replica or an unreconciled crash holds the fence/,
+    );
+    await assert.rejects(
+      createContractIntentWalletEdgePerimeter({
+        edge: edgeCore,
+        fence: edgeFence,
+        signal: edgeDeployment.signal,
+      }),
+      /perimeter and SIWE edge modes must match/,
+    );
+    const edge = await createContractIntentWalletEdgePerimeterForTests({
+      clock: () => edgeClock,
+      edge: edgeCore,
+      fence: edgeFence,
+      maximumConcurrentRequests: 2,
+      maximumRequestsPerWindow: 32,
+      signal: edgeDeployment.signal,
+      windowSeconds: 1,
+    });
+    assert.throws(() => edgeCore.status(), /requires the original service/);
+    await assert.rejects(
+      createContractIntentWalletEdgePerimeterForTests({
+        clock: () => edgeClock,
+        edge: edgeCore,
+        fence: edgeFence,
+        maximumConcurrentRequests: 2,
+        maximumRequestsPerWindow: 32,
+        signal: edgeDeployment.signal,
+        windowSeconds: 1,
+      }),
+      /already belongs to a perimeter|active SIWE edge lifecycle/,
+    );
     const edgeCookie = `__Host-treeswap_session=${edgeSessionToken}`;
     let stalledBodyCanceled = false;
+    const sessionQueriesBeforeStalledBody = edgeDatabase.observed.queries;
     const stalledRequest = new Request(
       "https://treeswap.vercel.app/v1/wallet-intent/prepare",
       {
@@ -3130,6 +3187,44 @@ for (const direction of ["lightning-to-bit", "bit-to-lightning"]) {
     );
     assert.equal((await edge.issue(preflight, stalledRequest)).status, 400);
     assert.equal(stalledBodyCanceled, true);
+    assert.equal(edgeDatabase.observed.queries, sessionQueriesBeforeStalledBody);
+    let concurrentBodyCancellations = 0;
+    const concurrentStall = () => new Request(
+      "https://treeswap.vercel.app/v1/wallet-intent/prepare",
+      {
+        body: new ReadableStream({
+          cancel() { concurrentBodyCancellations += 1; },
+        }),
+        duplex: "half",
+        headers: {
+          "cache-control": "no-store",
+          "content-length": "2",
+          "content-type": "application/json",
+          cookie: edgeCookie,
+          origin: "https://treeswap.vercel.app",
+          "sec-fetch-dest": "empty",
+          "sec-fetch-mode": "cors",
+          "sec-fetch-site": "same-origin",
+        },
+        method: "POST",
+      },
+    );
+    const firstConcurrentStall = edge.issue(preflight, concurrentStall());
+    const secondConcurrentStall = edge.issue(preflight, concurrentStall());
+    await new Promise((resolve) => setImmediate(resolve));
+    const queriesBeforeConcurrentRejection = edgeDatabase.observed.queries;
+    assert.equal((await edge.issue(preflight, walletEdgeRequest(
+      "/v1/wallet-intent/prepare",
+      {},
+      { cookie: edgeCookie },
+    ))).status, 429);
+    assert.equal(edgeDatabase.observed.queries, queriesBeforeConcurrentRejection);
+    assert.deepEqual(
+      (await Promise.all([firstConcurrentStall, secondConcurrentStall]))
+        .map((response) => response.status),
+      [400, 400],
+    );
+    assert.equal(concurrentBodyCancellations, 2);
     assert.equal((await edge.issue(preflight, walletEdgeRequest(
         "/v1/wallet-intent/prepare",
         {},
@@ -3340,16 +3435,35 @@ for (const direction of ["lightning-to-bit", "bit-to-lightning"]) {
       edgeClaimBody,
       { cookie: edgeCookie },
     ))).status, 429);
+    while (edge.status().rateRejected === 1) {
+      await edge.handle(walletEdgeRequest(
+        "/v1/wallet-intent/claim",
+        edgeClaimBody,
+        { cookie: edgeCookie },
+      ));
+    }
+    const queriesBeforeGlobalRateRejection = edgeDatabase.observed.queries;
+    assert.equal((await edge.handle(walletEdgeRequest(
+      "/v1/wallet-intent/claim",
+      edgeClaimBody,
+      { cookie: edgeCookie },
+    ))).status, 429);
+    assert.equal(edgeDatabase.observed.queries, queriesBeforeGlobalRateRejection);
     const edgeStatus = edge.status();
-    assert.equal(edgeStatus.preparedHandles, 1);
-    assert.equal(edgeStatus.claimsIssued, 1);
-    assert.equal(edgeStatus.outcomeResponses, 1);
-    assert.equal(edgeStatus.activeClaims, 1);
-    assert.equal(edgeStatus.exactOriginRequired, true);
-    assert.equal(edgeStatus.fetchMetadataRequired, true);
-    assert.equal(edgeStatus.handleTokensInStatus, false);
-    assert.equal(edgeStatus.csrfTokensInStatus, false);
-    assert.equal(edgeStatus.gatewayClaimTokensInStatus, false);
+    assert.equal(edgeStatus.edge.preparedHandles, 1);
+    assert.equal(edgeStatus.edge.claimsIssued, 1);
+    assert.equal(edgeStatus.edge.outcomeResponses, 1);
+    assert.equal(edgeStatus.edge.activeClaims, 1);
+    assert.equal(edgeStatus.edge.exactOriginRequired, true);
+    assert.equal(edgeStatus.edge.fetchMetadataRequired, true);
+    assert.equal(edgeStatus.edge.handleTokensInStatus, false);
+    assert.equal(edgeStatus.edge.csrfTokensInStatus, false);
+    assert.equal(edgeStatus.edge.gatewayClaimTokensInStatus, false);
+    assert.equal(edgeStatus.preSessionRejected >= 1, true);
+    assert.equal(edgeStatus.rateRejected >= 2, true);
+    assert.equal(edgeStatus.replicaPolicy, "single-active-replica-owner-controlled-shared-volume-fence");
+    assert.equal(edgeStatus.automaticStaleTakeover, false);
+    assert.equal(edgeStatus.requestBodyLogging, false);
     const edgeStatusBytes = JSON.stringify(edgeStatus);
     for (const secret of [
       edgePreparation.ownershipHandle,
@@ -3360,12 +3474,50 @@ for (const direction of ["lightning-to-bit", "bit-to-lightning"]) {
       user.address.slice(2),
       preflight.requestDigest.slice(2),
     ]) assert.doesNotMatch(edgeStatusBytes, new RegExp(secret, "i"));
-    edgeClock = NOW - 1;
-    assert.throws(() => edge.status(), /clock regressed/);
-    assert.equal(edge.status().state, "halted");
-    assert.equal(edge.status().haltedOnClockRollback, true);
+    if (direction === "lightning-to-bit") {
+      edgeClock = NOW - 1;
+      assert.throws(() => edge.status(), /clock regressed/);
+      assert.equal(edge.status().state, "halted");
+      assert.equal(edge.status().haltedOnClockRollback, true);
+    } else {
+      await writeFile(
+        join(edgeFenceDirectory, "wallet-intent-edge.fence", "owner.json"),
+        JSON.stringify({
+          schema: "treeswap.contract-intent-wallet-edge-replica-fence.v1",
+          startedAt: new Date(NOW * 1_000).toISOString(),
+          token: "aa".repeat(32),
+        }),
+        { mode: 0o600 },
+      );
+      assert.equal((await edge.handle(walletEdgeRequest(
+        "/v1/wallet-intent/claim",
+        edgeClaimBody,
+        { cookie: edgeCookie },
+      ))).status, 429);
+      edgeClock += 1;
+      assert.equal((await edge.handle(walletEdgeRequest(
+        "/v1/wallet-intent/claim",
+        edgeClaimBody,
+        { cookie: edgeCookie },
+      ))).status, 503);
+      assert.equal(edge.status().state, "halted");
+      assert.equal(edge.status().haltedOnFenceLoss, true);
+    }
     edgeDeployment.abort();
     assert.equal(edge.status().state, "stopped");
+    if (direction === "lightning-to-bit") {
+      assert.equal(await edgeFence.release(), true);
+      const replacementDeployment = new AbortController();
+      const replacementFence = await acquireContractIntentWalletEdgeReplicaFenceForTests({
+        clock: () => (NOW + 1) * 1_000,
+        randomBytes: () => Buffer.alloc(32, 245),
+        runtimeDirectory: edgeFenceDirectory,
+        signal: replacementDeployment.signal,
+      });
+      assert.equal(replacementFence.status().automaticStaleTakeover, false);
+      assert.equal(await replacementFence.release(), true);
+      replacementDeployment.abort();
+    }
     edgeStore.close();
     const edgeDatabaseBytes = await readFile(edgeDatabasePath);
     for (const secret of [
