@@ -118,6 +118,10 @@ const campaigns = [
     "run",
     "test:account-backup-restore-evidence",
   ]],
+  ["governance:d1-access-policy-review", "npm", [
+    "run",
+    "test:d1-access-policy-review",
+  ]],
   ["operations:scheduled-account-maintenance", "npm", [
     "run",
     "test:scheduled-account-maintenance",
