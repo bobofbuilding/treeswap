@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { generateKeyPairSync, sign } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
@@ -84,6 +84,17 @@ import {
   prepareFinalizedContractIntent,
   verifiedAuthorizedContractIntent,
 } from "../lib/rfq-contract-intent.mjs";
+import {
+  SolverContractSigningProviderStore,
+  createSolverContractSigningProviderRoute,
+  createTestSolverContractSigner,
+  loadSolverContractSigner,
+} from "../lib/solver-contract-signing-provider.mjs";
+import {
+  SolverContractSigningError,
+  authorizeContractIntentWithSolverSignature,
+  createTestSolverContractSigningClient,
+} from "../lib/solver-contract-signing-transport.mjs";
 import { RfqQuoteIngressStore } from "../lib/rfq-quote-ingress-store.mjs";
 import {
   claimRfqSelectedSolverFinalizationOwnership,
@@ -122,6 +133,7 @@ import {
   solverEndpointPublicKeyDigest,
   solverLightningNodePubkeyDigest,
   verifiedSolverCapacityRecord,
+  verifiedSolverEndpointTransportBinding,
   verifiedSolverQuoteBinding,
   verifySolverCapability,
 } from "../lib/solver-capability.mjs";
@@ -1014,7 +1026,13 @@ async function authorizedContractFixture(t, direction) {
     quotePolicy,
   });
   const authorized = await executionAuthorization(request, finalized);
-  return { authorized, invoice, request, selection };
+  return {
+    authorized,
+    capabilityVerification: data.verifications[0],
+    invoice,
+    request,
+    selection,
+  };
 }
 
 test("turns an authorized Lightning-to-BIT RFQ into the exact dual-signed vault intent", async (t) => {
@@ -1186,6 +1204,182 @@ test("turns an authorized BIT-to-Lightning RFQ into a solver-signed user escrow 
     now: NOW + 31,
     settlementPolicy: TREE_SWAP_SETTLEMENT_POLICY_V1,
   }), /required wallet submission window/);
+});
+
+for (const direction of ["lightning-to-bit", "bit-to-lightning"]) {
+  test(`obtains and replays an independent ${direction} solver contract signature`, async (t) => {
+    const fixture = await authorizedContractFixture(t, direction);
+    const prepared = prepareFinalizedContractIntent({
+      bitcoinHeight: 900_000,
+      finalization: fixture.authorized,
+      invoice: fixture.invoice,
+      invoicePolicy,
+      now: NOW,
+      settlementPolicy: TREE_SWAP_SETTLEMENT_POLICY_V1,
+    });
+    const binding = verifiedSolverEndpointTransportBinding(fixture.capabilityVerification);
+    const requesterKeys = generateKeyPairSync("ed25519");
+    assert.throws(() => createTestSolverContractSigner({
+      expectedSolver: user.address,
+      privateKey: solvers[0].privateKey,
+    }), /does not match expected solver/);
+    const signer = createTestSolverContractSigner({
+      expectedSolver: binding.solverId,
+      privateKey: solvers[0].privateKey,
+    });
+    const directory = await mkdtemp(join(tmpdir(), "treeswap-solver-signing-"));
+    const databasePath = join(directory, "signing.sqlite");
+    let store = await SolverContractSigningProviderStore.open({
+      allowMemory: false,
+      initialize: true,
+      maximumLiveRequests: 8,
+      path: databasePath,
+    });
+    const providerInput = () => ({
+      capability: fixture.capabilityVerification,
+      endpointPrivateKey: endpointKeys[0].privateKey,
+      maximumInFlightRequests: 8,
+      maximumRequestBytes: 32_768,
+      nowSeconds: () => NOW,
+      requesterPublicKey: requesterKeys.publicKey,
+      requestTimeoutMs: 1_000,
+      signer,
+      store,
+    });
+    let route = createSolverContractSigningProviderRoute(providerInput());
+    let requests = 0;
+    let phase = "mutate";
+    const deployment = new AbortController();
+    const client = createTestSolverContractSigningClient({
+      nowSeconds: () => NOW,
+      requesterPrivateKey: requesterKeys.privateKey,
+      requestImpl: async (url, options) => {
+        requests += 1;
+        const requestOptions = phase === "mutate"
+          ? {
+              ...options,
+              body: JSON.stringify({
+                ...JSON.parse(options.body),
+                contractIntentDigest: `0x${"ff".repeat(32)}`,
+              }),
+            }
+          : options;
+        const response = await route.handle(new Request(url, requestOptions));
+        if (phase === "mutate") {
+          phase = "lose-after-commit";
+          return response;
+        }
+        if (phase === "lose-after-commit") {
+          phase = "replay";
+          await response.arrayBuffer();
+          throw new Error("response lost after provider commit");
+        }
+        return response;
+      },
+      signal: deployment.signal,
+    });
+    t.after(async () => {
+      deployment.abort();
+      try { store.close(); } catch {}
+      await rm(directory, { recursive: true, force: true });
+    });
+
+    await assert.rejects(
+      () => client.sign({ capability: fixture.capabilityVerification, prepared: { ...prepared } }),
+      /original prepared RFQ provenance/,
+    );
+    await assert.rejects(
+      () => client.sign({ capability: fixture.capabilityVerification, prepared }),
+      (error) => error instanceof SolverContractSigningError
+        && error.code === "HTTP_REJECTED" && error.ambiguous === false,
+    );
+    assert.equal(store.status().readyRequests, 0);
+    await assert.rejects(
+      () => client.sign({ capability: fixture.capabilityVerification, prepared }),
+      (error) => error instanceof SolverContractSigningError
+        && error.code === "TRANSPORT_AMBIGUOUS" && error.ambiguous === true,
+    );
+    assert.deepEqual(store.status(), {
+      schema: "treeswap.solver-contract-signing-provider-store-status.v1",
+      state: "open",
+      durable: true,
+      clockHighWater: NOW,
+      claimedRequests: 0,
+      readyRequests: 1,
+      privateKeyPersisted: false,
+      fundingAuthorization: false,
+    });
+
+    store.close();
+    store = await SolverContractSigningProviderStore.open({
+      allowMemory: false,
+      initialize: false,
+      maximumLiveRequests: 8,
+      path: databasePath,
+    });
+    route = createSolverContractSigningProviderRoute(providerInput());
+    const solverResult = await client.sign({
+      capability: fixture.capabilityVerification,
+      prepared,
+    });
+    assert.equal(requests, 3);
+    assert.equal(solverResult.contractIntentDigest, prepared.digest);
+    assert.equal(solverResult.solver, solvers[0].address.toLowerCase());
+    assert.equal(solverResult.fundingAuthorization, false);
+    assert.equal(signer.status().exportsPrivateKey, false);
+    const userSignature = direction === "lightning-to-bit"
+      ? await user.signTypedData(prepared.domain, prepared.types, prepared.message)
+      : null;
+    const authorized = authorizeContractIntentWithSolverSignature({
+      now: NOW,
+      prepared,
+      solverResult,
+      userSignature,
+    });
+    assert.equal(authorized.contractIntentDigest, prepared.digest);
+    assert.equal(authorized.solverSignature, solverResult.solverSignature);
+    assert.equal(authorized.walletDispatchAuthority, false);
+    store.close();
+    const databaseBytes = await readFile(databasePath);
+    assert.equal(databaseBytes.includes(Buffer.from(solvers[0].privateKey.slice(2), "utf8")), false);
+  });
+}
+
+test("loads the production solver signer only from private owner-controlled key material", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "treeswap-solver-key-"));
+  const keyPath = join(directory, "solver.key");
+  const permissivePath = join(directory, "permissive.key");
+  const symlinkPath = join(directory, "solver-link.key");
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  await writeFile(keyPath, `${solvers[0].privateKey}\n`, { mode: 0o600, flag: "wx" });
+  const signer = await loadSolverContractSigner({
+    expectedSolver: solvers[0].address,
+    path: keyPath,
+  });
+  assert.deepEqual(signer.status(), {
+    schema: "treeswap.solver-contract-signer-status.v1",
+    mode: "private-file",
+    solver: solvers[0].address.toLowerCase(),
+    exportsPrivateKey: false,
+    walletDispatchAuthority: false,
+    lightningDispatchAuthority: false,
+    fundingAuthorization: false,
+  });
+  await writeFile(permissivePath, solvers[0].privateKey, { mode: 0o600, flag: "wx" });
+  await chmod(permissivePath, 0o644);
+  await assert.rejects(
+    () => loadSolverContractSigner({ expectedSolver: solvers[0].address, path: permissivePath }),
+    /private bounded regular file/,
+  );
+  await symlink(keyPath, symlinkPath);
+  await assert.rejects(
+    () => loadSolverContractSigner({ expectedSolver: solvers[0].address, path: symlinkPath }),
+    /changed path|private bounded regular file/,
+  );
+  await assert.rejects(
+    () => loadSolverContractSigner({ expectedSolver: user.address, path: keyPath }),
+    /does not match expected solver/,
+  );
 });
 
 async function executionCeremonyFixture(t, {

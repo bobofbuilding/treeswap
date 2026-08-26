@@ -46,6 +46,7 @@ The prototype assumes a business par value of **1 BIT = 100 sats**. This value i
 - Reviewed one-use recovery operator composition with recovery-only evidence controls in [`docs/RECOVERY_OPERATOR_ENTRYPOINT.md`](docs/RECOVERY_OPERATOR_ENTRYPOINT.md)
 - Immutable public-testnet operator campaign snapshots via `npm run manage:testnet-campaign`
 - Authenticated solver request/response boundary in [`docs/SOLVER_ENDPOINT.md`](docs/SOLVER_ENDPOINT.md)
+- Capability-bound, replay-safe solver contract-signature transport in [`docs/SOLVER_CONTRACT_SIGNING.md`](docs/SOLVER_CONTRACT_SIGNING.md)
 - Concrete two-route active-daemon evidence client with fixed operator HTTPS transport and provider replay boundary in [`docs/SOLVER_DAEMON_EVIDENCE_CLIENT.md`](docs/SOLVER_DAEMON_EVIDENCE_CLIENT.md)
 - Fail-closed provider handler, strict durable replay and clock-rollback ledger, and loss/rotation runbook in [`docs/DURABLE_EVIDENCE_PROVIDER.md`](docs/DURABLE_EVIDENCE_PROVIDER.md)
 - Optional Lightning account linking in [`docs/LIGHTNING_ACCOUNTS.md`](docs/LIGHTNING_ACCOUNTS.md)

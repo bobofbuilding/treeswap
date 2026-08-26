@@ -20,6 +20,7 @@ import {
   pinnedPublicHttpsRequest,
   pinnedPublicRfqRequest,
   pinnedPublicSelectedSolverRequest,
+  pinnedPublicSolverContractSigningRequest,
   queryVerifiedSolverCapability,
   solverEndpointResponseDigest,
 } from "../lib/solver-endpoint-transport.mjs";
@@ -486,6 +487,16 @@ test("keeps the selected-solver finalization route pinned and separate", async (
   await assert.rejects(() => pinnedPublicSelectedSolverRequest(`${ORIGIN}/v1/rfq`, {
     body: "{}",
   }), /invalid/);
+});
+
+test("keeps the solver contract-signing route pinned and separate", async () => {
+  await assert.rejects(() => pinnedPublicSolverContractSigningRequest(`${ORIGIN}/v1/finalize`, {
+    body: "{}",
+  }), /invalid/);
+  await assert.rejects(() => pinnedPublicSelectedSolverRequest(
+    `${ORIGIN}/v1/sign-contract-intent`,
+    { body: "{}" },
+  ), /invalid/);
 });
 
 test("rejects expired responses, oversized bodies, and signed capacity overstatement", async () => {
