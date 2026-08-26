@@ -89,8 +89,11 @@ import {
   verifySelectedSolverFinalizationRequest,
 } from "../lib/selected-solver-finalization-transport.mjs";
 import {
+  createRfqExecutionCeremonyRoute,
   createRfqPrivateCeremonyRoute,
+  createTestRfqExecutionCeremonyRoute,
   createTestRfqPrivateCeremonyRoute,
+  isRfqExecutionCeremonyRoute,
   isRfqPrivateCeremonyRoute,
 } from "../lib/rfq-private-ceremony.mjs";
 import {
@@ -939,6 +942,130 @@ async function durableReservation(t, {
   return { ...prepared, reservation, userAuthorization };
 }
 
+async function executionCeremonyFixture(t, {
+  onRequest = null,
+  pricingRequest = pricing,
+  privateSettlementRequest = privateRequest,
+  routePolicy = privateCeremonyPolicy,
+} = {}) {
+  const data = await collectedBlindBook({ pricingRequest });
+  const selection = selectBlindQuote(data.book, data.book.offers[0].offer.offerId);
+  const coordinatorStore = await CoordinatorStore.open(":memory:", { allowMemory: true });
+  const deployment = new AbortController();
+  const service = createTestRfqSelectionReservationService({
+    admissionPolicy,
+    capabilityVerifications: data.verifications,
+    coordinatorStore,
+    maximumPendingSelections: 4,
+    nowSeconds: () => NOW,
+    randomBytesImpl: () => Buffer.alloc(32, 137),
+    signal: deployment.signal,
+  });
+  const selectionLease = claimRfqSelectionReservationOwnership(service, deployment.signal);
+  const handoff = selectionLease.accept({
+    expiresAt: NOW + 45,
+    identityCommitment: id(`execution-ceremony:${pricingRequest.direction}`).toLowerCase(),
+    requestNonce: "31",
+    selection,
+    user: user.address,
+  });
+  const firstPrompt = service.prepare({
+    authorizationExpiresAt: NOW + 40,
+    request: privateSettlementRequest,
+    reservationToken: handoff.reservationToken,
+  });
+  service.reserve({
+    authorization: firstPrompt.message,
+    request: privateSettlementRequest,
+    reservationToken: handoff.reservationToken,
+    signature: await user.signTypedData(firstPrompt.domain, firstPrompt.types, firstPrompt.message),
+  });
+
+  const requesterKeys = generateKeyPairSync("ed25519");
+  const requesterDigest = solverEndpointPublicKeyDigest(pem(requesterKeys));
+  const invoice = pricingRequest.direction === "lightning-to-bit"
+    ? "lnbc1000n1treeswapbrowserfinalization"
+    : userInvoice;
+  let requests = 0;
+  const defaultResponse = async (options) => {
+    const providerBinding = verifiedSolverQuoteBinding(data.verifications[0]);
+    const providerRequest = verifySelectedSolverFinalizationRequest({
+      request: JSON.parse(options.body),
+      authority: {
+        requesterPublicKeyDigest: requesterDigest,
+        capabilityDigest: providerBinding.capabilityDigest,
+        endpointPublicKeyDigest: providerBinding.endpointPublicKeyDigest,
+        solverId: providerBinding.solverId,
+        direction: providerBinding.direction,
+      },
+      now: NOW,
+    });
+    let envelope = await executableEnvelope(selection.selected.offer, 0, {
+      request: privateSettlementRequest,
+    });
+    if (pricingRequest.direction === "lightning-to-bit") {
+      const offer = { ...envelope.offer, invoiceDigest: invoiceDigest(invoice) };
+      envelope = {
+        offer,
+        signature: await solvers[0].signTypedData(
+          rfqDomain(privateSettlementRequest),
+          EXECUTABLE_RFQ_OFFER_TYPES,
+          offer,
+        ),
+      };
+    }
+    return jsonResponse(buildSignedSelectedSolverFinalizationResponse({
+      request: providerRequest,
+      invoice,
+      envelope,
+      servedAt: NOW,
+      expiresAt: NOW + 15,
+      endpointPrivateKey: endpointKeys[0].privateKey,
+    }));
+  };
+  const client = createTestSelectedSolverFinalizationClient({
+    requesterPrivateKey: requesterKeys.privateKey,
+    signal: deployment.signal,
+    nowSeconds: () => NOW,
+    requestImpl: async (_url, options) => {
+      requests += 1;
+      const buildDefaultResponse = () => defaultResponse(options);
+      return onRequest
+        ? onRequest(Object.freeze({ buildDefaultResponse, options, requestNumber: requests }))
+        : buildDefaultResponse();
+    },
+  });
+  const route = createTestRfqExecutionCeremonyRoute({
+    client,
+    policy: routePolicy,
+    quotePolicy,
+    selectionReservation: service,
+    signal: deployment.signal,
+  });
+  t.after(() => {
+    deployment.abort();
+    try { route.stop(); } catch {}
+    try { coordinatorStore.close(); } catch {}
+  });
+  return {
+    ...data,
+    client,
+    coordinatorStore,
+    deployment,
+    finalizeBody: {
+      invoice: pricingRequest.direction === "lightning-to-bit" ? "" : invoice,
+      request: privateSettlementRequest,
+      reservationToken: handoff.reservationToken,
+    },
+    handoff,
+    invoice,
+    requests: () => requests,
+    route,
+    selection,
+    service,
+  };
+}
+
 test("projects authenticated competition into an opaque client-safe quote set", async () => {
   const { book } = await collectedBlindBook();
   let entropy = 0;
@@ -1524,6 +1651,40 @@ test("bounds stalled private-ceremony bodies and shares deployment shutdown", as
   ))).status, 400);
 });
 
+test("keeps sibling ceremony leases active until the shared route lifecycle closes", async (t) => {
+  const data = await quoteIngressFixture(t);
+  const selectionCeremony = createTestRfqPrivateCeremonyRoute({
+    policy: privateCeremonyPolicy,
+    selectionReservation: data.selectionReservation,
+    signal: data.deployment.signal,
+  });
+  const requesterKeys = generateKeyPairSync("ed25519");
+  const client = createTestSelectedSolverFinalizationClient({
+    requesterPrivateKey: requesterKeys.privateKey,
+    signal: data.deployment.signal,
+    nowSeconds: () => NOW,
+    requestImpl: async () => { throw new Error("unreachable sibling route transport"); },
+  });
+  const executionCeremony = createTestRfqExecutionCeremonyRoute({
+    client,
+    policy: privateCeremonyPolicy,
+    quotePolicy,
+    selectionReservation: data.selectionReservation,
+    signal: data.deployment.signal,
+  });
+  t.after(() => {
+    try { executionCeremony.stop(); } catch {}
+    try { selectionCeremony.stop(); } catch {}
+  });
+
+  assert.equal(executionCeremony.stop().state, "stopped");
+  assert.equal(data.selectionReservation.status().state, "active");
+  assert.equal(selectionCeremony.stop().state, "stopped");
+  assert.equal(data.selectionReservation.status().state, "active");
+  assert.equal(data.route.stop().state, "stopped");
+  assert.equal(data.selectionReservation.status().state, "stopped");
+});
+
 test("hands one original selection into user-authorized durable reservation without bearer-token griefing", async (t) => {
   const data = await collectedBlindBook();
   const selection = selectBlindQuote(data.book, data.book.offers[0].offer.offerId);
@@ -2029,6 +2190,363 @@ test("keeps the user's BIT-to-Lightning invoice fixed through selected-solver fi
   assert.equal(ack.invoice, userInvoice);
   assert.equal(ack.invoiceDigest, bitToLightningRequest.invoiceDigest);
   assert.equal(ack.paymentHash, bitToLightningRequest.paymentHash);
+});
+
+test("serves selected-solver finalization and exact second authorization through the private browser route", async (t) => {
+  const data = await executionCeremonyFixture(t);
+  assert.equal(isRfqExecutionCeremonyRoute(data.route), true);
+  assert.throws(() => data.service.stop(), /lifecycle is route-owned/);
+  assert.throws(() => createRfqExecutionCeremonyRoute({
+    client: data.client,
+    policy: privateCeremonyPolicy,
+    quotePolicy,
+    selectionReservation: data.service,
+    signal: data.deployment.signal,
+  }), /matching reservation service/);
+  assert.throws(() => createTestRfqExecutionCeremonyRoute({
+    client: data.client,
+    policy: privateCeremonyPolicy,
+    quotePolicy,
+    selectionReservation: data.service,
+    signal: data.deployment.signal,
+  }), /already route-bound/);
+
+  const finalized = await data.route.handle(privateCeremonyRequest(
+    "/v1/selection/finalize",
+    data.finalizeBody,
+  ));
+  assert.equal(finalized.status, 200);
+  assert.equal(finalized.headers.get("cache-control"), "no-store, max-age=0");
+  assert.equal(finalized.headers.get("access-control-allow-origin"), QUOTE_CLIENT_ORIGIN);
+  assert.equal(finalized.headers.get("access-control-allow-credentials"), null);
+  const prompt = await finalized.json();
+  assert.equal(prompt.schema, "treeswap.selected-solver-execution-signing-payload.v1");
+  assert.equal(prompt.invoice, data.invoice);
+  assert.equal(prompt.message.selectedSolver, data.selection.selected.offer.solver);
+  assert.equal(prompt.movesFundsImmediately, false);
+  assert.equal(prompt.requiresSeparateAssetAction, true);
+  assert.equal(data.requests(), 1);
+
+  const wrongSignature = await Wallet.createRandom().signTypedData(
+    prompt.domain,
+    prompt.types,
+    prompt.message,
+  );
+  const wrong = await data.route.handle(privateCeremonyRequest(
+    "/v1/selection/authorize",
+    {
+      authorization: prompt.message,
+      request: privateRequest,
+      reservationToken: data.handoff.reservationToken,
+      signature: wrongSignature,
+    },
+  ));
+  assert.equal(wrong.status, 400);
+  const wrongWire = await wrong.text();
+  assert.equal(wrongWire.includes(data.handoff.reservationToken), false);
+  assert.equal(wrongWire.toLowerCase().includes(privateRequest.user.toLowerCase()), false);
+
+  const signature = await user.signTypedData(prompt.domain, prompt.types, prompt.message);
+  const authorized = await data.route.handle(privateCeremonyRequest(
+    "/v1/selection/authorize",
+    {
+      authorization: prompt.message,
+      request: privateRequest,
+      reservationToken: data.handoff.reservationToken,
+      signature,
+    },
+  ));
+  assert.equal(authorized.status, 200);
+  const ack = await authorized.json();
+  assert.equal(ack.schema, "treeswap.selected-solver-authorization-ack.v1");
+  assert.equal(ack.status, "authorized");
+  assert.equal(ack.invoice, data.invoice);
+  assert.equal(ack.settlementDispatchAuthority, false);
+
+  const replay = await data.route.handle(privateCeremonyRequest(
+    "/v1/selection/finalize",
+    data.finalizeBody,
+  ));
+  assert.equal(replay.status, 200);
+  assert.deepEqual(await replay.json(), ack);
+  assert.equal(data.requests(), 1);
+  const status = data.route.status();
+  assert.deepEqual(status, {
+    schema: "treeswap.rfq-execution-ceremony-status.v1",
+    state: "active",
+    mode: "injected-test",
+    requestsStarted: 4,
+    requestsCompleted: 3,
+    requestsRejected: 1,
+    requestsPending: 0,
+    requestsInFlight: 0,
+    finalizationsInFlight: 0,
+    executionSigningPayloadsPrepared: 1,
+    executionAuthorizationsCompleted: 1,
+    bearerTokensInStatus: false,
+    privateTermsInStatus: false,
+    networkListener: false,
+    signingAuthority: false,
+    fundingAuthorization: false,
+    settlementDispatchAuthority: false,
+  });
+  const statusWire = JSON.stringify(status).toLowerCase();
+  for (const secret of [
+    data.handoff.reservationToken,
+    privateRequest.requestId,
+    privateRequest.user,
+    privateRequest.beneficiary,
+    prompt.message.selectedSolver,
+    data.invoice,
+    signature,
+  ]) assert.equal(statusWire.includes(secret.toLowerCase()), false);
+  const copied = { ...data.route };
+  await assert.rejects(
+    copied.handle(privateCeremonyRequest("/v1/selection/finalize", data.finalizeBody)),
+    /factory provenance/,
+  );
+});
+
+test("preserves the user invoice through the BIT-to-Lightning browser finalization route", async (t) => {
+  const data = await executionCeremonyFixture(t, {
+    pricingRequest: bitToLightningPricing,
+    privateSettlementRequest: bitToLightningRequest,
+  });
+  const finalized = await data.route.handle(privateCeremonyRequest(
+    "/v1/selection/finalize",
+    data.finalizeBody,
+  ));
+  assert.equal(finalized.status, 200);
+  const prompt = await finalized.json();
+  assert.equal(prompt.invoice, userInvoice);
+  assert.equal(prompt.message.invoiceDigest, bitToLightningRequest.invoiceDigest);
+  assert.equal(prompt.message.paymentHash, bitToLightningRequest.paymentHash);
+  const authorized = await data.route.handle(privateCeremonyRequest(
+    "/v1/selection/authorize",
+    {
+      authorization: prompt.message,
+      request: bitToLightningRequest,
+      reservationToken: data.handoff.reservationToken,
+      signature: await user.signTypedData(prompt.domain, prompt.types, prompt.message),
+    },
+  ));
+  assert.equal(authorized.status, 200);
+  const ack = await authorized.json();
+  assert.equal(ack.direction, "bit-to-lightning");
+  assert.equal(ack.invoice, userInvoice);
+  assert.equal(ack.invoiceDigest, bitToLightningRequest.invoiceDigest);
+  assert.equal(ack.paymentHash, bitToLightningRequest.paymentHash);
+});
+
+test("returns generic pending while browser finalization continues and replays one solver result", async (t) => {
+  let releaseResponse;
+  let buildResponse;
+  const transport = new Promise((resolve) => { releaseResponse = resolve; });
+  const data = await executionCeremonyFixture(t, {
+    routePolicy: {
+      ...privateCeremonyPolicy,
+      maximumProcessingMilliseconds: 250,
+    },
+    onRequest: ({ buildDefaultResponse }) => {
+      buildResponse = buildDefaultResponse;
+      return transport;
+    },
+  });
+  const first = await data.route.handle(privateCeremonyRequest(
+    "/v1/selection/finalize",
+    data.finalizeBody,
+  ));
+  assert.equal(first.status, 425);
+  assert.equal(first.headers.get("retry-after"), "1");
+  assert.deepEqual(await first.json(), {
+    schema: "treeswap.rfq-execution-ceremony-pending.v1",
+    status: "pending",
+    retryable: true,
+  });
+  assert.equal(data.route.status().finalizationsInFlight, 1);
+  assert.throws(() => data.route.stop(), /cannot stop while finalization is pending/);
+
+  const concurrent = await data.route.handle(privateCeremonyRequest(
+    "/v1/selection/finalize",
+    data.finalizeBody,
+  ));
+  assert.equal(concurrent.status, 425);
+  assert.equal(data.requests(), 1);
+  releaseResponse(await buildResponse());
+  for (let attempt = 0; attempt < 20 && data.route.status().finalizationsInFlight !== 0; attempt += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.equal(data.route.status().finalizationsInFlight, 0);
+  const recovered = await data.route.handle(privateCeremonyRequest(
+    "/v1/selection/finalize",
+    data.finalizeBody,
+  ));
+  assert.equal(recovered.status, 200);
+  const prompt = await recovered.json();
+  assert.equal(prompt.schema, "treeswap.selected-solver-execution-signing-payload.v1");
+  assert.equal(prompt.invoice, data.invoice);
+  assert.equal(data.requests(), 1);
+  const status = data.route.status();
+  assert.equal(status.requestsPending, 2);
+  assert.equal(status.executionSigningPayloadsPrepared, 1);
+  assert.equal(JSON.stringify(status).includes(data.handoff.reservationToken), false);
+});
+
+test("retries the same solver attempt after an authenticated provider-pending response", async (t) => {
+  const requestBodies = [];
+  const data = await executionCeremonyFixture(t, {
+    onRequest: ({ buildDefaultResponse, options, requestNumber }) => {
+      requestBodies.push(options.body);
+      if (requestNumber === 1) {
+        return new Response(JSON.stringify({ status: "pending" }), {
+          status: 425,
+          headers: { "cache-control": "no-store", "content-type": "application/json" },
+        });
+      }
+      return buildDefaultResponse();
+    },
+  });
+  const pending = await data.route.handle(privateCeremonyRequest(
+    "/v1/selection/finalize",
+    data.finalizeBody,
+  ));
+  assert.equal(pending.status, 425);
+  const recovered = await data.route.handle(privateCeremonyRequest(
+    "/v1/selection/finalize",
+    data.finalizeBody,
+  ));
+  assert.equal(recovered.status, 200);
+  assert.equal((await recovered.json()).invoice, data.invoice);
+  assert.equal(data.requests(), 2);
+  assert.equal(requestBodies[0], requestBodies[1]);
+});
+
+test("fails the execution ceremony closed on origin, framing, fields, and lifecycle", async (t) => {
+  const data = await executionCeremonyFixture(t);
+  const preflight = await data.route.handle(new Request(
+    `${CEREMONY_API_ORIGIN}/v1/selection/finalize`,
+    {
+      method: "OPTIONS",
+      headers: {
+        "access-control-request-headers": "Content-Type, Cache-Control",
+        "access-control-request-method": "POST",
+        origin: QUOTE_CLIENT_ORIGIN,
+      },
+    },
+  ));
+  assert.equal(preflight.status, 204);
+  assert.equal(preflight.headers.get("access-control-allow-credentials"), null);
+  for (const request of [
+    privateCeremonyRequest("/v1/selection/finalize?token=secret", data.finalizeBody),
+    privateCeremonyRequest("/v1/selection/finalize", data.finalizeBody, {
+      headers: { origin: "https://evil.example" },
+    }),
+    privateCeremonyRequest("/v1/selection/finalize", data.finalizeBody, {
+      headers: { authorization: "Bearer leaked" },
+    }),
+    privateCeremonyRequest("/v1/selection/finalize", data.finalizeBody, {
+      headers: { cookie: "reservation=leaked" },
+    }),
+    privateCeremonyRequest("/v1/selection/finalize", data.finalizeBody, {
+      headers: { "cache-control": "" },
+    }),
+    privateCeremonyRequest("/v1/selection/finalize", { ...data.finalizeBody, extra: true }),
+    privateCeremonyRequest("/v1/selection/finalize", Buffer.alloc(32_769, 1)),
+    privateCeremonyRequest("/v1/selection/finalize", data.finalizeBody, { method: "GET" }),
+  ]) {
+    const response = await data.route.handle(request);
+    assert.equal(response.status, 400);
+    const wire = await response.text();
+    assert.equal(wire.includes(data.handoff.reservationToken), false);
+    assert.equal(wire.includes("Bearer leaked"), false);
+  }
+  assert.equal(data.requests(), 0);
+  data.deployment.abort();
+  assert.equal(data.route.status().state, "stopped");
+  assert.equal(data.service.status().state, "stopped");
+  assert.equal((await data.route.handle(privateCeremonyRequest(
+    "/v1/selection/finalize",
+    data.finalizeBody,
+  ))).status, 400);
+});
+
+test("rejects a delayed solver result after execution-ceremony shutdown", async (t) => {
+  let releaseResponse;
+  let buildResponse;
+  const transport = new Promise((resolve) => { releaseResponse = resolve; });
+  const data = await executionCeremonyFixture(t, {
+    onRequest: ({ buildDefaultResponse }) => {
+      buildResponse = buildDefaultResponse;
+      return transport;
+    },
+  });
+  const pending = data.route.handle(privateCeremonyRequest(
+    "/v1/selection/finalize",
+    data.finalizeBody,
+  ));
+  for (let attempt = 0; attempt < 20 && data.requests() === 0; attempt += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.equal(data.requests(), 1);
+  data.deployment.abort();
+  assert.equal((await pending).status, 425);
+  releaseResponse(await buildResponse());
+  for (let attempt = 0; attempt < 20 && data.route.status().finalizationsInFlight !== 0; attempt += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.equal(data.route.status().finalizationsInFlight, 0);
+  assert.equal(data.route.status().state, "stopped");
+  const firm = data.coordinatorStore.getFirmOffer(data.selection.selected.offer.offerId);
+  assert.equal(firm.state, "ACTIVE");
+  assert.equal(firm.privateRequestDigest, null);
+  assert.equal(firm.executionAuthorizationDigest, null);
+});
+
+test("does not deserialize an expired browser bearer token after lifecycle replacement", async (t) => {
+  const data = await executionCeremonyFixture(t);
+  data.deployment.abort();
+  const replacementDeployment = new AbortController();
+  const replacementService = createTestRfqSelectionReservationService({
+    admissionPolicy,
+    capabilityVerifications: data.verifications,
+    coordinatorStore: data.coordinatorStore,
+    maximumPendingSelections: 4,
+    nowSeconds: () => NOW,
+    randomBytesImpl: () => Buffer.alloc(32, 138),
+    signal: replacementDeployment.signal,
+  });
+  const replacementKeys = generateKeyPairSync("ed25519");
+  let solverRequests = 0;
+  const replacementClient = createTestSelectedSolverFinalizationClient({
+    requesterPrivateKey: replacementKeys.privateKey,
+    signal: replacementDeployment.signal,
+    nowSeconds: () => NOW,
+    requestImpl: async () => {
+      solverRequests += 1;
+      throw new Error("old browser authority reached the solver");
+    },
+  });
+  const replacementRoute = createTestRfqExecutionCeremonyRoute({
+    client: replacementClient,
+    policy: privateCeremonyPolicy,
+    quotePolicy,
+    selectionReservation: replacementService,
+    signal: replacementDeployment.signal,
+  });
+  t.after(() => {
+    replacementDeployment.abort();
+    try { replacementRoute.stop(); } catch {}
+  });
+  const response = await replacementRoute.handle(privateCeremonyRequest(
+    "/v1/selection/finalize",
+    data.finalizeBody,
+  ));
+  assert.equal(response.status, 400);
+  assert.equal(solverRequests, 0);
+  const firm = data.coordinatorStore.getFirmOffer(data.selection.selected.offer.offerId);
+  assert.equal(firm.state, "ACTIVE");
+  assert.equal(firm.privateRequestDigest, null);
+  assert.equal(firm.executionAuthorizationDigest, null);
 });
 
 test("composes quote ingress through the owned RFQ service and reviewed evidence", async (t) => {

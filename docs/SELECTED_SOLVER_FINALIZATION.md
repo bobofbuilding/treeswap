@@ -1,6 +1,6 @@
 # Selected-solver finalization
 
-Status: the exact client, strict repository-only `/v1/finalize` handler, private durable claim/response journal, recovery-capable finalizer boundary, signed response construction, same-process reservation consumer, stable retry identity, two-direction invoice binding, second user authorization, and deterministic LND invoice-material core are implemented and tested locally. The Lightning → BIT path is now composed through a signed, TLS-pinned private invoice-material client/service with durable replay; BIT → Lightning provably bypasses it. No public solver listener, reviewed production requester key, browser route, independent BOLT 11 decoder, or deployed solver exists. Funded operation remains closed.
+Status: the exact client, strict repository-only `/v1/finalize` handler, private durable claim/response journal, recovery-capable finalizer boundary, signed response construction, same-process reservation consumer, stable retry identity, two-direction invoice binding, strict browser finalization/authorization route, second user authorization, and deterministic LND invoice-material core are implemented and tested locally. The Lightning → BIT path is composed through a signed, TLS-pinned private invoice-material client/service with durable replay; BIT → Lightning provably bypasses it. No public solver listener, reviewed production requester key, deployed browser adapter, independent BOLT 11 decoder, or independently operated solver exists. Funded operation remains closed.
 
 ## Purpose
 
@@ -43,6 +43,8 @@ After the response passes transport and executable-quote validation, the reserva
 
 The service retains the original module-private authorized result for the later settlement consumer. Its aggregate status contains no bearer token, invoice, address, signature, request ID, payment hash, or private failure reason and grants no network-listener, funding, signing, or settlement-dispatch authority.
 
+`lib/rfq-private-ceremony.mjs` now exposes that second stage only through exact credential-free browser POSTs. The execution route owns the original finalization lease, permits only `/v1/selection/finalize` and `/v1/selection/authorize`, applies the same strict origin, CORS, framing, UTF-8, body, concurrency, deadline, and no-store rules as the first ceremony, and never receives a wallet signer, solver key, LND credential, payment-secret key, or preimage. It hashes the reservation token for its in-memory pending index. If its HTTP deadline expires while the solver call is still running, the route returns generic `425`, prevents a second call for that token, and later serves the verified result. Provider ambiguity permits only the existing byte-identical signed attempt. Terminal errors stay generic. Shutdown refuses while an unresolved operation remains unless the shared deployment signal aborts; a late transport result is then rejected before it can bind the firm offer. Restart deliberately does not deserialize bearer or private-request authority: the durable capacity liability remains for reviewed expiry/recovery, but the old browser token cannot reach the solver.
+
 ## Remaining release gates
 
 Before any funded testnet use:
@@ -50,8 +52,8 @@ Before any funded testnet use:
 1. deploy the private client, service, and public selected-solver listener behind reviewed network policy, TLS, logging/tracing exclusions, encrypted secret volumes, backups, restart controls, and rate limits;
 2. publish the separately scoped requester/provider key identities through reviewed deployment policy and drill rotation, revocation, retained payment-secret recovery, and two-person custody;
 3. independently decode and validate every returned BOLT 11 invoice—network, checksum/signature, amount, payment hash/secret, payee, expiry, final CLTV, features, route hints, hold-invoice requirement, and replay state—before showing a pay action;
-4. persist enough coordinator token/request commitment to recover or safely burn an in-flight reservation across coordinator restart without creating another invoice;
-5. expose the second prompt through the strict private browser ceremony and retain wallet evidence for EOA plus an explicit ERC-1271 support decision;
+4. design and review a coordinator restart policy that safely burns the browser ceremony while preserving enough non-secret liability evidence for expiry/release without creating another invoice;
+5. deploy the implemented second-prompt browser route and retain wallet evidence for EOA plus an explicit ERC-1271 support decision;
 6. run deployed ambiguous-response, timeout-during-LND, accepted-HTLC, LND/process/host restart, real-volume-full, backup/restore, cache-loss, key-rotation, stale-capability, malformed-invoice, and both-direction drills; and
 7. obtain independent protocol, Lightning, application-security, privacy, and operations review.
 
