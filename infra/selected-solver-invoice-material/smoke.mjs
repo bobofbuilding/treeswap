@@ -85,4 +85,9 @@ await assert.rejects(
   (error) => error instanceof LndRestError && error.reason === "permission-denied",
 );
 
-process.stdout.write(first.paymentHash);
+process.stdout.write(JSON.stringify({
+  amountSats: first.amountSats,
+  invoice: first.invoice,
+  invoiceDigest: first.invoiceDigest,
+  paymentHash: first.paymentHash,
+}));

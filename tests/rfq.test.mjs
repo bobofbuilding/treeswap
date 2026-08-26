@@ -256,7 +256,7 @@ test("requires an explicit selection from the committed received set", async () 
   );
 });
 
-test("requires each Lightning-to-BIT solver to bind a distinct hold invoice", async () => {
+test("requires each Lightning-to-BIT solver to bind a distinct invoice", async () => {
   const first = await envelope(solvers[0], 1, 10_000, "relay-a");
   const copied = await envelope(solvers[1], 2, 10_100, "relay-b");
   copied.offer.paymentHash = first.offer.paymentHash;
@@ -265,7 +265,7 @@ test("requires each Lightning-to-BIT solver to bind a distinct hold invoice", as
   const third = await envelope(solvers[2], 3, 10_200, "direct-c");
   const book = buildReceivedQuoteBook({ request, envelopes: [first, copied, third], now: NOW, policy });
   assert.equal(book.solverCount, 2);
-  assert.match(book.rejected[0].reasons.join("; "), /distinct hold invoices/);
+  assert.match(book.rejected[0].reasons.join("; "), /distinct invoices/);
 
   const prebound = { ...request, paymentHash: id("shared"), invoiceDigest: id("shared-invoice") };
   assert.throws(

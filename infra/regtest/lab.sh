@@ -3270,11 +3270,12 @@ wait_for_selected_solver_invoice_material_service() {
 smoke_selected_solver_invoice_material() {
   ensure_runtime_env
   start_lab >/dev/null
-  local payment_hash state
+  local material payment_hash state
   trap 'cleanup_selected_solver_material_invoices >/dev/null 2>&1 || true' EXIT
   cleanup_selected_solver_material_invoices
   compose --profile tools build selected-solver-invoice-material-smoke >/dev/null
-  payment_hash=$(compose --profile tools run --rm -T selected-solver-invoice-material-smoke)
+  material=$(compose --profile tools run --rm -T selected-solver-invoice-material-smoke)
+  payment_hash=$(printf '%s' "$material" | node "$LAB_DIR/../../scripts/verify-regtest-bolt11.mjs")
   if [[ ! "$payment_hash" =~ ^0x[0-9a-f]{64}$ ]]; then
     echo "selected-solver invoice-material smoke returned an invalid cleanup commitment" >&2
     return 1
@@ -3286,9 +3287,9 @@ smoke_selected_solver_invoice_material() {
     echo "selected-solver invoice-material cleanup did not reach CANCELED" >&2
     return 1
   fi
-  unset payment_hash
+  unset material payment_hash
   trap - EXIT
-  echo "Selected-solver invoice-material smoke passed: one exact hold invoice recovered through the private service boundary; its credential could only add and look up, and cleanup used separate authority."
+  echo "Selected-solver invoice-material smoke passed: one exact hold invoice recovered through the private service boundary and independently BOLT 11 verified; its credential could only add and look up, and cleanup used separate authority."
 }
 
 smoke_selected_solver_invoice_material_private_service() {

@@ -38,7 +38,7 @@ The lookup must prove:
 - no AMP, keysend, or blinded-invoice mode; and
 - one bounded invoice whose digest is recomputed locally.
 
-The LND `private` response field is not used as a confidentiality claim. In pinned LND it describes route-hint construction and may be false even when creation requested `private: true`. Independent BOLT 11 decoding remains mandatory before the invoice reaches a pay action.
+The LND `private` response field is not used as a confidentiality claim. In pinned LND it describes route-hint construction and may be false even when creation requested `private: true`. The implemented independent BOLT 11 decoder remains mandatory in the composed deployment before the invoice reaches a pay action.
 
 Any transport ambiguity, permission failure, malformed record, conflicting existing invoice, changed policy field, unsafe state, or post-add lookup failure returns a closed or explicitly ambiguous result. An ambiguous result permits only another exact request/payment-hash recovery attempt.
 
@@ -55,7 +55,7 @@ It cannot cancel, settle, list invoices, list payments, inspect wallet balances,
 
 ## Evidence
 
-`npm run regtest:selected-solver-invoice-smoke` uses pinned LND `v0.21.2-beta` to create one exact 10,000-sat, 3,600-second, 80-block hold invoice. It recreates the core from the retained payment-secret file, recovers the exact payment hash, invoice, digest, and add index, proves the narrow credential cannot cancel it, and then cancels through separate lab authority.
+`npm run regtest:selected-solver-invoice-smoke` uses pinned LND `v0.21.2-beta` to create one exact 10,000-sat, 3,600-second, 80-block hold invoice. It recreates the core from the retained payment-secret file, recovers the exact payment hash, invoice, digest, and add index, independently verifies the raw invoice's Bech32 checksum, compact signature, network, amount, hash, digest, nonzero secret, expiry, final CLTV, and required features, proves the narrow credential cannot cancel it, and then cancels through separate lab authority. The raw invoice is transient and is not written into the evidence output.
 
 `npm run regtest:selected-solver-invoice-private-service-smoke` adds the real private boundary. It pins a self-contained TLS identity and separate requester/provider Ed25519 identities, commits one signed response to a mode-restricted SQLite volume, hard-kills the service process, restarts against the same volumes, and requires the fresh authenticated request to receive the byte-identical response. LND must contain exactly one matching liability before and after restart. Unit tests additionally cover every signed field, concurrent claims, semantic conflict, key substitution, simulated failure after LND creation but before response commit, persistent restart, strict HTTP, service ownership, both-direction composition, fixed deterministic invoice derivation, duplicate/lost-add recovery, unsafe LND states, provenance, and lifecycle shutdown.
 
@@ -65,7 +65,7 @@ This campaign is now part of the mandatory local qualification plan. It is local
 
 Before funded testnet use:
 
-1. independently decode the returned BOLT 11 invoice and recheck network, checksum/signature, amount, payment hash/secret, payee, expiry, final CLTV, features, route hints, and hold-invoice kind;
+1. deploy the implemented independent BOLT 11 decoder with the public finalization consumer and prove live network, checksum/signature, amount, payment hash/secret, capability-bound payee, expiry, final CLTV, feature, route-hint, malformed-input, and resource-limit failures; BOLT 11 itself cannot attest the private hold-invoice creation RPC;
 2. prove payment-secret and requester/provider key rotation, retained-key recovery, volume-full rollback, encrypted backup/restore, and complete deletion behavior under two-person custody;
 3. extend the real process campaign through timeout during LND work, an accepted HTLC, LND restart, and restored-host recovery;
 4. deploy the private service and the public selected-solver listener with reviewed network policy, encrypted volumes, TLS identities, secrets, rate limits, monitoring, alerts, and log/tracing exclusions;

@@ -8,7 +8,7 @@ TreeSwap coordinates full-fill swaps between Lightning sats and BIT on Ethereum 
 
 The product displays `1 BIT = 100 sats` as a project reference value. The BIT contract does not enforce that price. TreeSwap never promises unconditional redemption at par; users accept exact integer amounts from short-lived solver quotes. When the planned BIT/WBTC pool has sufficient reviewed history and liquidity, its finalized request-sized market signal may help bound those quotes as one venue under the [BIT/WBTC market-reference policy](./BIT_WBTC_MARKET_REFERENCE.md); it does not replace solver competition or independently set settlement amounts.
 
-The user experience is invoice-first, but public quote discovery is blind. BIT → Lightning starts with one exact, amount-bearing BOLT 11 invoice supplied by the user; only its amount and user caps reach competing solvers, while the invoice, hash, digest, payee, user, and beneficiary remain private until one solver is selected. For Lightning → BIT, the selected solver creates one short-lived hold invoice only after selection. Amountless invoices remain unsupported in v1.
+The user experience is invoice-first, but public quote discovery is blind. BIT → Lightning starts with one exact, amount-bearing BOLT 11 invoice supplied by the user; only its amount and user caps reach competing solvers, while the invoice, hash, digest, payee, user, and beneficiary remain private until one solver is selected. For Lightning → BIT, the selected solver creates one short-lived invoice only after selection; the reference solver uses an isolated hold-invoice path, but invoice kind is not remotely encoded or trusted. Amountless invoices remain unsupported in v1.
 
 ## 2. Minimal participants
 
@@ -103,11 +103,11 @@ Each direction uses two readable user confirmations. The first binds the selecte
 ### Lightning → BIT
 
 1. Solvers return blind signed quotes against verified pre-funded vault inventory; no hold invoice or user address traverses the relays. The user validates the received set and selects one solver.
-2. The coordinator first reserves the selected solver's gross BIT plus inbound Lightning capacity. Only while that exact record remains active does the selected solver receive the private settlement request, create one short-lived hold invoice, and return a full executable quote whose solver, price, capacity, endpoint, and runtime must match the selected blind offer. The coordinator binds that exact request and quote once; no other solver, invoice, or price may reuse it.
+2. The coordinator first reserves the selected solver's gross BIT plus inbound Lightning capacity. Only while that exact record remains active does the selected solver receive the private settlement request, create one short-lived invoice, and return a full executable quote whose solver, price, capacity, endpoint, and runtime must match the selected blind offer. The coordinator independently decodes the raw invoice and requires its signed payee to equal the capability-bound Lightning node before binding that exact request and quote once; no other solver, invoice, or price may reuse it.
 3. The user countersigns and exercises the quote. The vault verifies both signatures, the live-open gate, BIT runtime settings, price and exposure caps, and deadline ordering. The user then verifies the finalized reservation and every supported BOLT 11 field before paying.
-4. The solver settles the hold invoice with the preimage.
+4. The reference solver settles its hold invoice with the preimage; a solver using a standard invoice reveals the same bound preimage through normal successful payment. In either case, payment occurs only after the BIT lock is canonical and finalized.
 5. The user or a relayer supplies the preimage to claim BIT.
-6. If the held payment expires, the BIT reservation returns to the solver after the Ethereum refund deadline.
+6. If the Lightning payment expires or fails, the BIT reservation returns to the solver after the Ethereum refund deadline.
 
 ## 7. Fees and units
 

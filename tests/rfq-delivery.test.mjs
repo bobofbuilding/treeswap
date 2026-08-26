@@ -119,6 +119,7 @@ import {
   verifiedSolverQuoteBinding,
   verifySolverCapability,
 } from "../lib/solver-capability.mjs";
+import { createBolt11Invoice, testBolt11Payee } from "./bolt11-fixture.mjs";
 
 const NOW = 2_000_000_000;
 const BIT = 10n ** 18n;
@@ -137,6 +138,20 @@ const privateCeremonyPolicy = Object.freeze({
   maximumRequestBytes: 32_768,
   maximumResponseBytes: 262_144,
 });
+const invoicePolicy = Object.freeze({
+  allowHashedDescriptions: false,
+  maxExpirySeconds: 86_400,
+  maxInvoiceLength: 4_096,
+  maxRouteHints: 20,
+  maximumFinalCltvDelta: 288,
+  minimumFinalCltvDelta: 80,
+  minimumRemainingSeconds: 900,
+});
+const lightningNodePrivateKeys = [
+  `0x${"51".repeat(32)}`,
+  `0x${"52".repeat(32)}`,
+  `0x${"53".repeat(32)}`,
+];
 const solvers = [
   new Wallet(`0x${"31".repeat(32)}`),
   new Wallet(`0x${"32".repeat(32)}`),
@@ -245,7 +260,12 @@ const pricing = buildBlindPricingRequest({
   pricingId: id("unlinkable-public-pricing-request"),
   capacityEpoch: 1,
 });
-const userInvoice = "lnbc250u1treeswapprivate";
+const userInvoice = createBolt11Invoice({
+  amountSats: 25_000n,
+  paymentHash: id("private-bit-to-lightning-payment").toLowerCase(),
+  paymentSecret: id("private-bit-to-lightning-secret").toLowerCase(),
+  timestamp: NOW - 30,
+});
 const bitToLightningRequest = {
   requestId: id("private-bit-to-lightning-request"),
   direction: "bit-to-lightning",
@@ -332,7 +352,7 @@ async function capability(index, { direction = "lightning-to-bit" } = {}) {
   const verifyingContract = lightningToBit ? LIGHTNING_TO_BIT : BIT_TO_LIGHTNING;
   const origin = `https://direct-${index + 1}.example`;
   const endpointPublicKey = pem(endpointKeys[index]);
-  const nodePubkey = `02${String(index + 1).padStart(2, "0").repeat(32)}`;
+  const nodePubkey = testBolt11Payee(lightningNodePrivateKeys[index]);
   const claims = {
     capabilityId: id(`delivery-capability-${direction}-${index}`),
     direction: id(direction),
@@ -818,6 +838,7 @@ async function quoteIngressFixture(t, {
     admissionPolicy,
     capabilityVerifications: verifications,
     coordinatorStore,
+    invoicePolicy,
     maximumPendingSelections: policy.maximumLiveRequests,
     nowSeconds,
     randomBytesImpl: () => Buffer.alloc(32, ++reservationEntropy),
@@ -947,6 +968,7 @@ async function executionCeremonyFixture(t, {
   pricingRequest = pricing,
   privateSettlementRequest = privateRequest,
   routePolicy = privateCeremonyPolicy,
+  solverInvoice = null,
 } = {}) {
   const data = await collectedBlindBook({ pricingRequest });
   const selection = selectBlindQuote(data.book, data.book.offers[0].offer.offerId);
@@ -956,6 +978,7 @@ async function executionCeremonyFixture(t, {
     admissionPolicy,
     capabilityVerifications: data.verifications,
     coordinatorStore,
+    invoicePolicy,
     maximumPendingSelections: 4,
     nowSeconds: () => NOW,
     randomBytesImpl: () => Buffer.alloc(32, 137),
@@ -984,7 +1007,13 @@ async function executionCeremonyFixture(t, {
   const requesterKeys = generateKeyPairSync("ed25519");
   const requesterDigest = solverEndpointPublicKeyDigest(pem(requesterKeys));
   const invoice = pricingRequest.direction === "lightning-to-bit"
-    ? "lnbc1000n1treeswapbrowserfinalization"
+    ? solverInvoice ?? createBolt11Invoice({
+        amountSats: BigInt(selection.selected.offer.lightningAmountSats),
+        paymentHash: id("private-payment-0").toLowerCase(),
+        paymentSecret: id("private-payment-secret-0").toLowerCase(),
+        privateKey: lightningNodePrivateKeys[0],
+        timestamp: NOW - 30,
+      })
     : userInvoice;
   let requests = 0;
   const defaultResponse = async (options) => {
@@ -1694,6 +1723,7 @@ test("hands one original selection into user-authorized durable reservation with
     admissionPolicy,
     capabilityVerifications: [{ ...data.verifications[0] }, data.verifications[1]],
     coordinatorStore,
+    invoicePolicy,
     maximumPendingSelections: 4,
     nowSeconds: () => NOW,
     randomBytesImpl: () => Buffer.alloc(32, 130),
@@ -1712,6 +1742,7 @@ test("hands one original selection into user-authorized durable reservation with
     admissionPolicy: accessorPolicy,
     capabilityVerifications: data.verifications,
     coordinatorStore,
+    invoicePolicy,
     maximumPendingSelections: 4,
     nowSeconds: () => NOW,
     randomBytesImpl: () => Buffer.alloc(32, 130),
@@ -1722,6 +1753,7 @@ test("hands one original selection into user-authorized durable reservation with
     admissionPolicy,
     capabilityVerifications: data.verifications,
     coordinatorStore,
+    invoicePolicy,
     maximumPendingSelections: 4,
     nowSeconds: () => NOW,
     randomBytesImpl: () => Buffer.alloc(32, 131),
@@ -1891,6 +1923,7 @@ test("reserves BIT-to-Lightning output and routing headroom through the same sel
     admissionPolicy,
     capabilityVerifications: data.verifications,
     coordinatorStore,
+    invoicePolicy,
     maximumPendingSelections: 4,
     nowSeconds: () => NOW,
     randomBytesImpl: () => Buffer.alloc(32, 132),
@@ -1943,6 +1976,7 @@ test("carries one durable reservation through authenticated solver finalization 
     admissionPolicy,
     capabilityVerifications: data.verifications,
     coordinatorStore,
+    invoicePolicy,
     maximumPendingSelections: 4,
     nowSeconds: () => NOW,
     randomBytesImpl: () => Buffer.alloc(32, 133),
@@ -1975,7 +2009,13 @@ test("carries one durable reservation through authenticated solver finalization 
 
   const requesterKeys = generateKeyPairSync("ed25519");
   const requesterDigest = solverEndpointPublicKeyDigest(pem(requesterKeys));
-  const solverInvoice = "lnbc1000n1treeswapselectedsolver";
+  const solverInvoice = createBolt11Invoice({
+    amountSats: BigInt(selection.selected.offer.lightningAmountSats),
+    paymentHash: id("private-payment-0").toLowerCase(),
+    paymentSecret: id("private-payment-secret-durable-0").toLowerCase(),
+    privateKey: lightningNodePrivateKeys[0],
+    timestamp: NOW - 30,
+  });
   let requests = 0;
   let requestBody = null;
   let providerFailure = null;
@@ -2109,6 +2149,7 @@ test("keeps the user's BIT-to-Lightning invoice fixed through selected-solver fi
     admissionPolicy,
     capabilityVerifications: data.verifications,
     coordinatorStore,
+    invoicePolicy,
     maximumPendingSelections: 4,
     nowSeconds: () => NOW,
     randomBytesImpl: () => Buffer.alloc(32, 134),
@@ -2338,6 +2379,66 @@ test("preserves the user invoice through the BIT-to-Lightning browser finalizati
   assert.equal(ack.paymentHash, bitToLightningRequest.paymentHash);
 });
 
+test("rejects an invalid user invoice before disclosing it to the selected solver", async (t) => {
+  const data = await executionCeremonyFixture(t, {
+    pricingRequest: bitToLightningPricing,
+    privateSettlementRequest: bitToLightningRequest,
+  });
+  const corrupted = `${userInvoice.slice(0, -1)}${userInvoice.endsWith("q") ? "p" : "q"}`;
+  const response = await data.route.handle(privateCeremonyRequest(
+    "/v1/selection/finalize",
+    { ...data.finalizeBody, invoice: corrupted },
+  ));
+  assert.equal(response.status, 400);
+  assert.equal(data.requests(), 0);
+  assert.equal(data.service.status().terminalFinalizationFailures, 1);
+  const wire = await response.text();
+  assert.equal(wire.includes(corrupted), false);
+  assert.equal(wire.includes(bitToLightningRequest.paymentHash), false);
+});
+
+test("rejects a solver-signed invoice unless every decoded field matches reviewed policy", async (t) => {
+  const base = {
+    amountSats: 10_000n,
+    paymentHash: id("private-payment-0").toLowerCase(),
+    paymentSecret: id("solver-policy-payment-secret").toLowerCase(),
+    privateKey: lightningNodePrivateKeys[0],
+    timestamp: NOW - 30,
+  };
+  const cases = [
+    ["malformed encoding", "lnbc1invalid"],
+    ["changed amount", createBolt11Invoice({ ...base, amountSats: 10_001n })],
+    ["changed payment hash", createBolt11Invoice({
+      ...base,
+      paymentHash: id("wrong-solver-payment-hash").toLowerCase(),
+    })],
+    ["wrong capability-bound payee", createBolt11Invoice({
+      ...base,
+      privateKey: lightningNodePrivateKeys[1],
+    })],
+    ["unknown required feature", createBolt11Invoice({
+      ...base,
+      featureBits: [2, 9, 15],
+    })],
+  ];
+  for (const [name, solverInvoice] of cases) {
+    await t.test(name, async (child) => {
+      const data = await executionCeremonyFixture(child, { solverInvoice });
+      const response = await data.route.handle(privateCeremonyRequest(
+        "/v1/selection/finalize",
+        data.finalizeBody,
+      ));
+      assert.equal(response.status, 400);
+      assert.equal(data.requests(), 1);
+      assert.equal(data.service.status().executableQuotesFinalized, 0);
+      assert.equal(data.service.status().terminalFinalizationFailures, 1);
+      const wire = await response.text();
+      assert.equal(wire.includes(solverInvoice), false);
+      assert.equal(wire.includes(id("private-payment-0")), false);
+    });
+  }
+});
+
 test("returns generic pending while browser finalization continues and replays one solver result", async (t) => {
   let releaseResponse;
   let buildResponse;
@@ -2510,6 +2611,7 @@ test("does not deserialize an expired browser bearer token after lifecycle repla
     admissionPolicy,
     capabilityVerifications: data.verifications,
     coordinatorStore: data.coordinatorStore,
+    invoicePolicy,
     maximumPendingSelections: 4,
     nowSeconds: () => NOW,
     randomBytesImpl: () => Buffer.alloc(32, 138),
@@ -2763,6 +2865,7 @@ test("keeps quote ingress factories, execution modes, and methods provenance-bou
     admissionPolicy,
     capabilityVerifications: data.verifications,
     coordinatorStore,
+    invoicePolicy,
     maximumPendingSelections: quoteIngressPolicy.maximumLiveRequests,
     signal: deployment.signal,
   });
@@ -2770,6 +2873,7 @@ test("keeps quote ingress factories, execution modes, and methods provenance-bou
     admissionPolicy,
     capabilityVerifications: data.verifications,
     coordinatorStore,
+    invoicePolicy,
     maximumPendingSelections: quoteIngressPolicy.maximumLiveRequests,
     nowSeconds: () => NOW,
     randomBytesImpl: () => Buffer.alloc(32, 2),

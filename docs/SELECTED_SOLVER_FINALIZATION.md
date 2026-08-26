@@ -1,6 +1,6 @@
 # Selected-solver finalization
 
-Status: the exact client, strict repository-only `/v1/finalize` handler, private durable claim/response journal, recovery-capable finalizer boundary, signed response construction, same-process reservation consumer, stable retry identity, two-direction invoice binding, strict browser finalization/authorization route, second user authorization, and deterministic LND invoice-material core are implemented and tested locally. The Lightning → BIT path is composed through a signed, TLS-pinned private invoice-material client/service with durable replay; BIT → Lightning provably bypasses it. No public solver listener, reviewed production requester key, deployed browser adapter, independent BOLT 11 decoder, or independently operated solver exists. Funded operation remains closed.
+Status: the exact client, strict repository-only `/v1/finalize` handler, private durable claim/response journal, recovery-capable finalizer boundary, signed response construction, same-process reservation consumer, stable retry identity, two-direction invoice binding, independent bounded BOLT 11 decoder, strict browser finalization/authorization route, second user authorization, and deterministic LND invoice-material core are implemented and tested locally. The Lightning → BIT path is composed through a signed, TLS-pinned private invoice-material client/service with durable replay; BIT → Lightning provably bypasses it. No public solver listener, reviewed production requester key, deployed browser adapter, or independently operated solver exists. Funded operation remains closed.
 
 ## Purpose
 
@@ -27,6 +27,8 @@ The solver must compare the requester-key digest with its deployment allowlist b
 
 The response invoice must hash to the executable offer's invoice digest. BIT → Lightning must reproduce the user's original invoice byte-canonically; Lightning → BIT must supply one non-empty solver invoice. The existing executable-quote verifier then rechecks the complete EIP-712 offer and refuses changes to solver, price, fee, amounts, capacity, endpoint key, settlement runtime, or expiry.
 
+The reservation consumer then independently parses the raw invoice through `lib/bolt11.mjs`; it never accepts decoded fields from the solver, relay, LND response, browser, or caller. User invoices fail before disclosure. Solver invoices fail before the second prompt unless their signature recovers the capability-bound Lightning node and their exact amount, hash, digest, payment secret, expiry, final CLTV, features, route/fallback structure, singleton fields, and resource bounds pass the reviewed invoice policy. BOLT 11 carries no verifiable hold/standard creation flag, so TreeSwap accepts no such remote assertion. The reference solver separately proves its own local `AddHoldInvoice` path, while the cross-party safety condition remains conservative timing plus finalized EVM state before Lightning action.
+
 ## Retry and authorization
 
 One prepared attempt retains one signed request packet. A transport loss or timeout is ambiguous, so the same in-memory attempt may resend only that byte-identical packet. Concurrent sends reject, and the first verified response is cached for exact local replay. A non-ambiguous invalid or unauthorized response makes the reservation's finalization terminal; the user must obtain fresh competition instead of asking the solver for changed terms.
@@ -51,7 +53,7 @@ Before any funded testnet use:
 
 1. deploy the private client, service, and public selected-solver listener behind reviewed network policy, TLS, logging/tracing exclusions, encrypted secret volumes, backups, restart controls, and rate limits;
 2. publish the separately scoped requester/provider key identities through reviewed deployment policy and drill rotation, revocation, retained payment-secret recovery, and two-person custody;
-3. independently decode and validate every returned BOLT 11 invoice—network, checksum/signature, amount, payment hash/secret, payee, expiry, final CLTV, features, route hints, hold-invoice requirement, and replay state—before showing a pay action;
+3. deploy the implemented raw BOLT 11 decoder in the same reviewed process boundary and prove through live standard/hold, malformed, stale, unknown-feature, oversized, and payee-substitution drills that no pay action or second authorization bypasses it;
 4. design and review a coordinator restart policy that safely burns the browser ceremony while preserving enough non-secret liability evidence for expiry/release without creating another invoice;
 5. deploy the implemented second-prompt browser route and retain wallet evidence for EOA plus an explicit ERC-1271 support decision;
 6. run deployed ambiguous-response, timeout-during-LND, accepted-HTLC, LND/process/host restart, real-volume-full, backup/restore, cache-loss, key-rotation, stale-capability, malformed-invoice, and both-direction drills; and

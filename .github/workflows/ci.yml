@@ -122,6 +122,9 @@ jobs:
       - run: node --check lib/blind-quote-preview.mjs
       - run: node --check lib/rfq-quote-ingress-store.mjs
       - run: node --check lib/rfq-quote-ingress-reader.mjs
+      - run: node --check lib/bolt11.mjs
+      - run: node --check lib/invoice-policy.mjs
+      - run: node --check scripts/verify-regtest-bolt11.mjs
       - run: node --check lib/rfq-selection-reservation.mjs
       - run: node --check lib/rfq-private-ceremony.mjs
       - run: node --check lib/rfq-quote-ingress.mjs
