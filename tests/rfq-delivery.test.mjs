@@ -99,6 +99,7 @@ import {
   verifyReplacementContractIntentWalletTransaction,
   verifyReportedContractIntentWalletTransaction,
 } from "../lib/contract-intent-wallet.mjs";
+import { ContractIntentWalletStore } from "../lib/contract-intent-wallet-store.mjs";
 import {
   SolverContractSigningProviderStore,
   createSolverContractSigningProviderRoute,
@@ -1502,6 +1503,13 @@ for (const direction of ["lightning-to-bit", "bit-to-lightning"]) {
     });
     assert.equal(includedReplacement.state, "INCLUDED");
     assert.equal(includedReplacement.replacementOf, reportedHash);
+    const forkedReplacement = verifyReplacementContractIntentWalletTransaction({
+      previous: verifiedPending,
+      transaction: {
+        ...pendingRpcTransaction,
+        hash: id(`wallet-forked-replacement:${direction}`).toLowerCase(),
+      },
+    });
     assert.throws(() => verifyReplacementContractIntentWalletTransaction({
       previous: verifiedPending,
       transaction: {
@@ -1631,6 +1639,147 @@ for (const direction of ["lightning-to-bit", "bit-to-lightning"]) {
       transaction: includedReplacement,
     });
     assert.equal(reorged.state, "REORGED");
+
+    const walletDatabasePath = join(directory, `wallet-${direction}.sqlite`);
+    let walletStore = await ContractIntentWalletStore.open({
+      allowMemory: false,
+      initialize: true,
+      maximumIntents: 8,
+      path: walletDatabasePath,
+    });
+    const claim = walletStore.claim(preflight, { now: NOW });
+    assert.equal(claim.status, "CLAIMED");
+    assert.equal(claim.state, "WALLET_REQUEST_CLAIMED");
+    assert.equal(claim.retryAuthorized, false);
+    assert.equal(walletStore.claim(preflight, { now: NOW }).status, "EXISTS");
+    assert.throws(
+      () => walletStore.record({ ...submission }, { now: NOW }),
+      /original contract-intent wallet provenance/,
+    );
+    assert.equal(walletStore.record(submission, { now: NOW }).state, "SUBMISSION_REPORTED");
+    assert.equal(walletStore.record(verifiedPending, { now: NOW }).state, "PENDING");
+    assert.equal(walletStore.record(includedReplacement, { now: NOW }).state, "INCLUDED");
+    assert.throws(
+      () => walletStore.record(forkedReplacement, { now: NOW }),
+      /forked the durable replacement chain/,
+    );
+    assert.throws(
+      () => walletStore.record(firstObservation, { now: NOW }),
+      /cannot be persisted before observation/,
+    );
+    assert.equal(walletStore.record(firstObservation, { now: NOW + 1 }).state, "FINALITY_QUORUM_PENDING");
+    assert.throws(
+      () => walletStore.record(receiptQuorum, { now: NOW + 1 }),
+      /lacks both durable provider observations/,
+    );
+    assert.equal(walletStore.record(secondObservation, { now: NOW + 1 }).state, "FINALITY_QUORUM_PENDING");
+    assert.equal(walletStore.record(receiptQuorum, { now: NOW + 1 }).state, "FINALIZED_CORE");
+    assert.deepEqual(walletStore.status(), {
+      schema: "treeswap.contract-intent-wallet-store-status.v1",
+      state: "open",
+      durable: true,
+      clockHighWater: NOW + 1,
+      totalIntents: 1,
+      unresolvedAttempts: 1,
+      repositoryFinalized: 1,
+      retryAuthorizationCount: 0,
+      walletDispatchAuthority: false,
+      lightningDispatchAuthority: false,
+      fundingAuthorization: false,
+    });
+    walletStore.close();
+    walletStore = await ContractIntentWalletStore.open({
+      allowMemory: false,
+      initialize: false,
+      maximumIntents: 8,
+      path: walletDatabasePath,
+    });
+    const recovered = walletStore.recover({ limit: 8, now: NOW + 2 });
+    assert.equal(recovered.length, 1);
+    assert.equal(recovered[0].state, "FINALIZED_CORE");
+    assert.equal(recovered[0].transactionHash, replacementHash);
+    assert.equal(recovered[0].replacementCount, 1);
+    assert.equal(recovered[0].action, "REQUIRE_DEPLOYED_FINALITY_PROOF_NO_LIGHTNING");
+    assert.equal(recovered[0].canonicalFinalizedReservation, false);
+    assert.equal(recovered[0].retryAuthorized, false);
+    assert.equal(recovered[0].fundingAuthorization, false);
+    assert.throws(
+      () => walletStore.recover({ limit: 8, now: NOW + 1 }),
+      /clock regressed/,
+    );
+    assert.equal(walletStore.record(receiptQuorum, { now: NOW + 2 }).status, "EXISTS");
+    assert.equal(walletStore.record(reorged, { now: NOW + 2 }).state, "REORGED");
+    const recoveredReorg = walletStore.recover({ limit: 8, now: NOW + 3 });
+    assert.equal(recoveredReorg[0].state, "REORGED");
+    assert.equal(recoveredReorg[0].action, "HALT_AND_RECONCILE_NO_RESEND");
+    assert.equal(recoveredReorg[0].transactionHash, replacementHash);
+    assert.equal(recoveredReorg[0].retryAuthorized, false);
+    walletStore.close();
+    const walletDatabaseBytes = await readFile(walletDatabasePath);
+    assert.equal(walletDatabaseBytes.includes(Buffer.from(fixture.invoice, "utf8")), false);
+    assert.equal(walletDatabaseBytes.includes(Buffer.from(solvers[0].privateKey.slice(2), "utf8")), false);
+
+    const ambiguousWalletDatabasePath = join(directory, `wallet-ambiguous-${direction}.sqlite`);
+    let ambiguousWalletStore = await ContractIntentWalletStore.open({
+      allowMemory: false,
+      initialize: true,
+      maximumIntents: 8,
+      path: ambiguousWalletDatabasePath,
+    });
+    ambiguousWalletStore.claim(preflight, { now: NOW });
+    ambiguousWalletStore.record(ambiguous, { now: NOW });
+    ambiguousWalletStore.close();
+    ambiguousWalletStore = await ContractIntentWalletStore.open({
+      allowMemory: false,
+      initialize: false,
+      maximumIntents: 8,
+      path: ambiguousWalletDatabasePath,
+    });
+    const ambiguousRecovery = ambiguousWalletStore.recover({ limit: 8, now: NOW + 2 });
+    assert.equal(ambiguousRecovery[0].state, "SUBMISSION_UNKNOWN");
+    assert.equal(ambiguousRecovery[0].action, "SEARCH_QUOTE_NO_RESEND");
+    assert.equal(ambiguousRecovery[0].transactionHash, null);
+    assert.equal(ambiguousRecovery[0].retryAuthorized, false);
+    assert.throws(
+      () => ambiguousWalletStore.record(verifiedPending, { now: NOW + 2 }),
+      /transaction transition is invalid/,
+    );
+    ambiguousWalletStore.close();
+    const walletSymlinkPath = join(directory, `wallet-link-${direction}.sqlite`);
+    await symlink(ambiguousWalletDatabasePath, walletSymlinkPath);
+    await assert.rejects(
+      () => ContractIntentWalletStore.open({
+        allowMemory: false,
+        initialize: false,
+        maximumIntents: 8,
+        path: walletSymlinkPath,
+      }),
+      /private regular file/,
+    );
+    await chmod(ambiguousWalletDatabasePath, 0o644);
+    await assert.rejects(
+      () => ContractIntentWalletStore.open({
+        allowMemory: false,
+        initialize: false,
+        maximumIntents: 8,
+        path: ambiguousWalletDatabasePath,
+      }),
+      /private regular file/,
+    );
+    const corruptWalletDatabase = new DatabaseSync(walletDatabasePath);
+    corruptWalletDatabase.prepare(`
+      UPDATE contract_intent_wallet_intents SET state = 'PENDING'
+    `).run();
+    corruptWalletDatabase.close();
+    await assert.rejects(
+      () => ContractIntentWalletStore.open({
+        allowMemory: false,
+        initialize: false,
+        maximumIntents: 8,
+        path: walletDatabasePath,
+      }),
+      /durable record changed|artifact journal is inconsistent/,
+    );
     store.close();
     const databaseBytes = await readFile(databasePath);
     assert.equal(databaseBytes.includes(Buffer.from(solvers[0].privateKey.slice(2), "utf8")), false);

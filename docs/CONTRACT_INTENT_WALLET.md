@@ -1,6 +1,6 @@
 # Contract-intent wallet boundary
 
-Status: a non-dispatching repository core prepares and reviews the exact user-wallet transaction for either TreeSwap escrow, records the wallet outcome without authorizing retry, verifies a reported or same-nonce replacement transaction, and classifies its receipt, reservation event, finality, mismatch, revert, disappearance, or reorg. It does not call a wallet, Ethereum provider, escrow, or Lightning node. Its two-observation result explicitly does not prove independent provider operation or authorize funds. Funded operation remains closed.
+Status: a non-dispatching repository core prepares and reviews the exact user-wallet transaction for either TreeSwap escrow, records the wallet outcome without authorizing retry, verifies a reported or same-nonce replacement transaction, and classifies its receipt, reservation event, finality, mismatch, revert, disappearance, or reorg. A separate strict private SQLite journal now durably claims the wallet attempt and records each original core artifact, allowing restart to produce reconciliation-only work without inventing resend authority. Neither component calls a wallet, Ethereum provider, escrow, or Lightning node. Its two-observation result explicitly does not prove independent provider operation or authorize funds. Funded operation remains closed.
 
 ## Pricing and settlement scope
 
@@ -46,12 +46,31 @@ The repository core classifies observations as:
 
 Two original observations must use distinct provider identities and agree on the exact transaction, receipt, inclusion block, finalized head, runtime-code hash, request, and contract-intent commitments. Even then the result is named `REPOSITORY_CORE_VERIFIED` and keeps `canonicalFinalizedReservation: false`: caller-supplied identity labels and projections do not prove that two independent providers were actually operated.
 
+## Durable attempt journal
+
+`ContractIntentWalletStore` is a Node-only, non-dispatching storage boundary. Before a future wallet dispatcher can be composed, it must durably claim the original preflight in this journal. That claim is an unresolved wallet attempt on every restart; serialization never restores same-process preflight provenance or permission to call the wallet.
+
+The journal uses one exact strict SQLite schema, full synchronous writes, WAL, foreign keys, a monotonic high-water clock, bounded intent/artifact counts, canonical payloads, record digests, and owner-only regular files under an owner-only directory. It stores the exact chain, sender, escrow, calldata and digest, runtime-code commitment, quote commitments, expiry, wallet outcome, transaction/replacement chain, nonce, inclusion block, provider observations, and repository quorum. It stores no raw invoice, preimage, private key, provider URL, or wallet credential.
+
+Only original same-process core artifacts can append. A copied object, second conflicting submission, invalid transition, future-dated observation, clock rollback, malformed path, permissive or symlinked database, changed schema, changed record, changed artifact, or inconsistent transition fails closed. Exact retries are idempotent.
+
+Startup recovery returns one of four authority-free actions:
+
+- `SEARCH_QUOTE_NO_RESEND` when the attempt was claimed or the wallet response was ambiguous;
+- `RECONCILE_TRANSACTION_NO_RESEND` for a reported, pending, or temporarily missing transaction;
+- `RECONCILE_RECEIPT_NO_LIGHTNING` after inclusion but before acceptable external finality; or
+- `HALT_AND_RECONCILE_NO_RESEND` after revert, mismatch, or reorg.
+
+A repository quorum returns `REQUIRE_DEPLOYED_FINALITY_PROOF_NO_LIGHTNING`. Every recovery has `retryAuthorized: false`; none authorizes wallet dispatch, Lightning, provider independence, canonical finality, or funding.
+
+The journal cannot prevent unrelated application code from calling an injected wallet provider. Production safety therefore still requires a fixed dispatcher that is structurally reachable only through the journal claim and explicit user confirmation, plus deployed browser and process-failure evidence.
+
 ## Remaining release gates
 
 This checkpoint intentionally leaves the production checklist open. Before either asset can move, TreeSwap still needs:
 
-1. a fixed EIP-1193 dispatcher that invokes only the original preflight after a fresh explicit user confirmation, retains the returned hash, and never retries an ambiguous request automatically;
-2. a strict durable journal and startup reconciler for preflight, wallet outcome, nonce, replacements, receipts, and reorgs, with disk-full, process-kill, backup/restore, and clock-rollback drills;
+1. a fixed EIP-1193 dispatcher that is reachable only after the durable claim, invokes only the original preflight after a fresh explicit user confirmation, retains the returned hash, and never retries an ambiguous request automatically;
+2. composition of the journal into the persistent coordinator plus process-kill, disk-full, backup/restore, and multi-replica conflict drills;
 3. fixed authenticated Ethereum clients that project raw responses into this core, prove two genuinely independent providers, and bind the finalized reservation to the durable coordinator settlement;
 4. deployed testnet evidence for both directions and common wallet types, including rejection, disconnect, dropped response, speed-up, cancellation, nonce contention, revert, provider disagreement/outage, and reorg before and after finality;
 5. independent contract, wallet, coordinator, and operations review.
