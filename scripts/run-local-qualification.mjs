@@ -113,6 +113,23 @@ const campaigns = [
   ["coordinator:evm-faults", "npm", ["run", "test:coordinator-evm"]],
   ["evm:outbox-finality-and-provider-faults", "npm", ["run", "test:evm-outbox-faults"]],
   ["operations:safety-monitor", "npm", ["run", "test:safety-monitor"]],
+  ["operations:account-storage-monitor", "npm", ["run", "test:account-storage-monitor"]],
+  ["operations:scheduled-account-storage-monitor", "npm", [
+    "run",
+    "test:scheduled-account-storage-monitor",
+  ]],
+  ["governance:account-backup-restore-evidence", "npm", [
+    "run",
+    "test:account-backup-restore-evidence",
+  ]],
+  ["governance:d1-access-policy-review", "npm", [
+    "run",
+    "test:d1-access-policy-review",
+  ]],
+  ["operations:scheduled-account-maintenance", "npm", [
+    "run",
+    "test:scheduled-account-maintenance",
+  ]],
   ["operations:retained-release-custody", "node", [
     "--test",
     "tests/release-retention-custody.test.mjs",
@@ -154,6 +171,19 @@ const campaigns = [
     "--test",
     "tests/bit-reviewed-manifest.test.mjs",
   ]],
+  ["governance:wallet-session-route-review", "npm", ["run", "test:wallet-session-route-review"]],
+  ["governance:wallet-session-route-deployment-preflight", "npm", [
+    "run",
+    "test:wallet-session-route-deployment-preflight",
+  ]],
+  ["governance:wallet-session-route-deployment-postflight", "npm", [
+    "run",
+    "test:wallet-session-route-deployment-postflight",
+  ]],
+  ["governance:wallet-session-route-deployment-live-review", "npm", [
+    "run",
+    "test:wallet-session-route-deployment-live-review",
+  ]],
   ["evm:escrow-reorgs", "npm", ["run", "test:escrow-reorg"]],
   ["lightning:credential-lifecycle", "npm", ["run", "regtest:credential-smoke"]],
   ["lightning:credential-overlap-rotation", "npm", ["run", "regtest:credential-rotation-smoke"]],
@@ -170,6 +200,8 @@ const campaigns = [
   ["lightning:force-close-recovery", "npm", ["run", "regtest:force-close-smoke"]],
   ["lightning:route-and-duplicate-faults", "npm", ["run", "regtest:route-fault-smoke"]],
   ["lightning:htlc-cutoff", "npm", ["run", "regtest:htlc-cutoff-smoke"]],
+  ["lightning:selected-solver-invoice-material", "npm", ["run", "regtest:selected-solver-invoice-smoke"]],
+  ["lightning:selected-solver-invoice-private-service", "npm", ["run", "regtest:selected-solver-invoice-private-service-smoke"]],
   ["cross-chain:deadline-ordering", "npm", ["run", "test:cross-chain-deadlines"]],
   ["solver:lightning-node-proof", "npm", ["run", "regtest:solver-node-proof-smoke"]],
   ["solver:capacity-readers", "npm", ["run", "regtest:solver-capacity-smoke"]],

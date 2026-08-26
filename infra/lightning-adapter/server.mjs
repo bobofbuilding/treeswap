@@ -2,14 +2,21 @@ import { createPrivateKey, createPublicKey } from "node:crypto";
 import { readFile, stat } from "node:fs/promises";
 import { createServer } from "node:http";
 import { LightningActionJournal } from "../../lib/lightning-action-journal.mjs";
+import { signLightningAdapterResponseEnvelope } from "../../lib/lightning-adapter-response.mjs";
 import { LightningChainProgressStore } from "../../lib/lightning-chain-progress.mjs";
 import { LightningAdapterRuntime } from "../../lib/lightning-adapter-runtime.mjs";
 import { LndRestClient, LndRestError } from "../../lib/lnd-rest-client.mjs";
+import {
+  lightningAuthorizationEnvelopeDigest,
+  normalizeLightningAuthorizationPayload,
+} from "../../lib/lightning-authorization-envelope.mjs";
 import {
   buildLightningCapacityObservation,
   signLightningCapacityObservation,
   verifyLightningCapacityRequest,
 } from "../../lib/lightning-capacity-protocol.mjs";
+
+const ZERO_BYTES32 = `0x${"00".repeat(32)}`;
 
 function required(name) {
   const value = process.env[name];
@@ -63,6 +70,20 @@ if ((capacitySigningKeyStat.mode & 0o077) !== 0) throw new Error("capacity signi
 const capacitySigningKey = createPrivateKey(capacitySigningKeyPem);
 if (capacitySigningKey.asymmetricKeyType !== "ed25519") throw new Error("capacity signing key must be Ed25519");
 const capacitySigningKeyId = required("CAPACITY_SIGNING_KEY_ID");
+const responseSigningKeyPath = required("RESPONSE_SIGNING_PRIVATE_KEY_PATH");
+const [responseSigningKeyPem, responseSigningKeyStat] = await Promise.all([
+  readFile(responseSigningKeyPath),
+  stat(responseSigningKeyPath),
+]);
+if ((responseSigningKeyStat.mode & 0o077) !== 0) throw new Error("response signing key must not be group/world accessible");
+const responseSigningKey = createPrivateKey(responseSigningKeyPem);
+if (responseSigningKey.asymmetricKeyType !== "ed25519") throw new Error("response signing key must be Ed25519");
+const responseSigningKeyId = required("RESPONSE_SIGNING_KEY_ID");
+const capacitySigningPublicDer = createPublicKey(capacitySigningKey).export({ format: "der", type: "spki" });
+const responseSigningPublicDer = createPublicKey(responseSigningKey).export({ format: "der", type: "spki" });
+if (capacitySigningPublicDer.equals(responseSigningPublicDer)) {
+  throw new Error("response signing key must be separate from the capacity signing key");
+}
 const capacityRequestLifetimeSeconds = integer("MAX_CAPACITY_REQUEST_LIFETIME_SECONDS", 60);
 const capacityObservationTtlSeconds = integer("MAX_CAPACITY_OBSERVATION_TTL_SECONDS", 60);
 const capacityClockSkewSeconds = integer("MAX_CAPACITY_CLOCK_SKEW_SECONDS", 60);
@@ -166,20 +187,41 @@ const server = createServer(async (request, response) => {
     send(response, 415, { error: "content-type must be application/json" });
     return;
   }
+  let authorizationEnvelope = null;
   try {
-    send(response, 200, await runtime.execute(await readJsonBody(request)));
+    authorizationEnvelope = await readJsonBody(request);
+    send(response, 200, signLightningAdapterResponseEnvelope({
+      body: await runtime.execute(authorizationEnvelope),
+      keyId: responseSigningKeyId,
+      privateKey: responseSigningKey,
+    }));
   } catch (error) {
-    const message = error instanceof Error ? error.message : "adapter request failed";
+    const rawMessage = error instanceof Error ? error.message : "";
+    const message = rawMessage.length > 0 ? rawMessage : "adapter request failed";
     const errorCode = error instanceof LndRestError && Number(error.grpcCode) === 5 ? "NOT_FOUND" : "REJECTED";
     const status = /already used/.test(message) ? 409
       : error instanceof LndRestError && error.ambiguous ? 503
         : error instanceof LndRestError ? 502
           : 403;
-    send(response, status, {
-      error: message.slice(0, 240),
-      errorCode,
-      ambiguous: error instanceof LndRestError && error.ambiguous,
-    });
+    let requestId = ZERO_BYTES32;
+    let authorizationDigest = ZERO_BYTES32;
+    try {
+      authorizationDigest = lightningAuthorizationEnvelopeDigest(authorizationEnvelope);
+      requestId = normalizeLightningAuthorizationPayload(authorizationEnvelope.payload).requestId;
+    } catch {
+      // A malformed request still receives an authenticated but deliberately unbound rejection.
+    }
+    send(response, status, signLightningAdapterResponseEnvelope({
+      body: {
+        error: message.slice(0, 240),
+        errorCode,
+        ambiguous: error instanceof LndRestError && error.ambiguous,
+        requestId,
+        authorizationDigest,
+      },
+      keyId: responseSigningKeyId,
+      privateKey: responseSigningKey,
+    }));
   }
 });
 

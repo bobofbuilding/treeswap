@@ -92,6 +92,10 @@ test("allows only an exact intent-bound payer RPC and emits a secret-free audit"
   assert.equal(assertAuditIsSecretFree(result.audit), true);
   assert.equal("preimage" in result.audit, false);
   assert.equal("macaroon" in result.audit, false);
+  assert.equal(result.audit.invoiceDigest, intent.invoiceDigest);
+  assert.equal(result.audit.capacityEpoch, intent.capacityEpoch);
+  assert.equal(result.audit.amountSats, intent.amountSats.toString());
+  assert.equal(Object.isFrozen(result.audit.reasons), true);
 });
 
 test("separates invoice and payment credentials by exact RPC URI", () => {

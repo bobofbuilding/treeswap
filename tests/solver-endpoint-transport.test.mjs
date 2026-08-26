@@ -19,6 +19,9 @@ import {
   isPublicSolverEndpointAddress,
   pinnedPublicHttpsRequest,
   pinnedPublicRfqRequest,
+  pinnedPublicSelectedSolverRequest,
+  pinnedPublicSolverContractSigningRequest,
+  pinnedPublicWalletSessionRequest,
   queryVerifiedSolverCapability,
   solverEndpointResponseDigest,
 } from "../lib/solver-endpoint-transport.mjs";
@@ -121,7 +124,11 @@ function responseFor(envelope, request, overrides = {}) {
 function jsonResponse(value, options = {}) {
   return new Response(typeof value === "string" ? value : JSON.stringify(value), {
     status: options.status ?? 200,
-    headers: { "content-type": options.contentType ?? "application/json", ...options.headers },
+    headers: {
+      "cache-control": "no-store",
+      "content-type": options.contentType ?? "application/json",
+      ...options.headers,
+    },
   });
 }
 
@@ -252,6 +259,111 @@ test("treats redirects, status failures, malformed bodies, and transport loss as
   }
 });
 
+test("bounds and cancels the complete capability response body under the transport deadline", async () => {
+  let bodyCancelled = false;
+  await assert.rejects(queryVerifiedSolverCapability(queryOptions({
+    timeoutMs: 5,
+    requestImpl: async () => new Response(new ReadableStream({
+      cancel() {
+        bodyCancelled = true;
+      },
+    }), {
+      status: 200,
+      headers: { "cache-control": "no-store", "content-type": "application/json" },
+    }),
+  })), (error) => error.code === "TRANSPORT_FAILED" && error.ambiguous === false);
+  assert.equal(bodyCancelled, true);
+});
+
+test("requires strict non-cacheable capability response framing", async () => {
+  const envelope = await capabilityEnvelope();
+  const cases = [
+    { "cache-control": "" },
+    { "content-encoding": "gzip" },
+    { "content-length": "01" },
+    { "content-length": "2", "transfer-encoding": "chunked" },
+    { "content-length": "1" },
+    { "content-type": "application/json; charset=utf-16" },
+    { "transfer-encoding": "gzip" },
+  ];
+  for (const headers of cases) {
+    await assert.rejects(queryVerifiedSolverCapability(queryOptions({
+      requestImpl: async (_url, options) => jsonResponse(
+        responseFor(envelope, JSON.parse(options.body)),
+        { headers },
+      ),
+    })), (error) => error.code === "INVALID_RESPONSE" && error.ambiguous === false);
+  }
+
+  for (const bytes of [
+    [0x7b, 0x22, 0x78, 0x22, 0x3a, 0x22, 0xc0, 0xaf, 0x22, 0x7d],
+    [0xef, 0xbb, 0xbf, ...Buffer.from('{"x":true}')],
+  ]) {
+    await assert.rejects(queryVerifiedSolverCapability(queryOptions({
+      requestImpl: async () => new Response(Uint8Array.from(bytes), {
+        headers: { "cache-control": "no-store", "content-type": "application/json; charset=utf-8" },
+      }),
+    })), (error) => error.code === "INVALID_RESPONSE" && error.ambiguous === false);
+  }
+
+  let cancelled = 0;
+  await assert.rejects(queryVerifiedSolverCapability(queryOptions({
+    requestImpl: async () => ({
+      status: 200,
+      redirected: false,
+      headers: new Headers({ "cache-control": "no-store", "content-type": "text/plain" }),
+      body: new ReadableStream({
+        cancel() {
+          cancelled += 1;
+          return new Promise(() => {});
+        },
+      }),
+    }),
+  })), (error) => error.code === "INVALID_RESPONSE" && error.ambiguous === false);
+  assert.equal(cancelled, 1);
+});
+
+test("cancels rejected capability response bodies without trusting teardown", async () => {
+  let cancelled = 0;
+  for (const response of [
+    { status: 503, redirected: false },
+    { status: 200, redirected: true },
+  ]) {
+    await assert.rejects(queryVerifiedSolverCapability(queryOptions({
+      requestImpl: async () => ({
+        ...response,
+        headers: new Headers({ "cache-control": "no-store", "content-type": "application/json" }),
+        body: new ReadableStream({
+          cancel() {
+            cancelled += 1;
+            return new Promise(() => {});
+          },
+        }),
+      }),
+    })), (error) => (error.code === "HTTP_REJECTED" || error.code === "REDIRECT_REFUSED")
+      && error.ambiguous === false);
+  }
+  assert.equal(cancelled, 2);
+});
+
+test("cancels capability proof verification when active preparation shuts down", async () => {
+  const envelope = await capabilityEnvelope();
+  let verifierStarted;
+  const started = new Promise((resolve) => { verifierStarted = resolve; });
+  const controller = new AbortController();
+  const pending = queryVerifiedSolverCapability(queryOptions({
+    signal: controller.signal,
+    verifyLightningNodeSignature: async () => {
+      verifierStarted();
+      return new Promise(() => {});
+    },
+    requestImpl: async (_url, options) => jsonResponse(responseFor(envelope, JSON.parse(options.body))),
+  }));
+  await started;
+  controller.abort();
+  await assert.rejects(pending, (error) => error.code === "TRANSPORT_FAILED" && error.ambiguous === false);
+});
+
 test("rejects private and reserved endpoint space before any request", async () => {
   for (const address of [
     "127.0.0.1", "10.0.0.1", "169.254.169.254", "172.16.0.1", "192.168.1.1",
@@ -321,6 +433,31 @@ test("pins the resolved public address while preserving the TLS and HTTP hostnam
   );
 });
 
+test("bounds the live pinned public response stream before JSON parsing", async () => {
+  let incoming;
+  const response = await pinnedPublicHttpsRequest(`${ORIGIN}/v1/capability`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: "{}",
+  }, {
+    maximumResponseBytes: 2,
+    lookupImpl: async () => [{ address: "8.8.8.8", family: 4 }],
+    httpsRequestImpl: (_options, callback) => {
+      const request = new EventEmitter();
+      request.end = () => {
+        incoming = Readable.from([Buffer.from("oversized")]);
+        incoming.statusCode = 200;
+        incoming.headers = { "cache-control": "no-store", "content-type": "application/json" };
+        queueMicrotask(() => callback(incoming));
+      };
+      return request;
+    },
+  });
+  const reader = response.body.getReader();
+  await assert.rejects(reader.read(), /exceeded its size limit/);
+  assert.equal(incoming.destroyed, true);
+});
+
 test("keeps the public RFQ route pinned and separate from the capability route", async () => {
   const response = await pinnedPublicRfqRequest(`${ORIGIN}/v1/rfq`, {
     method: "POST",
@@ -345,6 +482,58 @@ test("keeps the public RFQ route pinned and separate from the capability route",
   assert.equal(response.status, 200);
   await assert.rejects(pinnedPublicRfqRequest(`${ORIGIN}/v1/capability`, { body: "{}" }), /invalid/);
   await assert.rejects(pinnedPublicHttpsRequest(`${ORIGIN}/v1/rfq`, { body: "{}" }), /invalid/);
+});
+
+test("keeps the selected-solver finalization route pinned and separate", async () => {
+  await assert.rejects(() => pinnedPublicSelectedSolverRequest(`${ORIGIN}/v1/rfq`, {
+    body: "{}",
+  }), /invalid/);
+});
+
+test("keeps the solver contract-signing route pinned and separate", async () => {
+  await assert.rejects(() => pinnedPublicSolverContractSigningRequest(`${ORIGIN}/v1/finalize`, {
+    body: "{}",
+  }), /invalid/);
+  await assert.rejects(() => pinnedPublicSelectedSolverRequest(
+    `${ORIGIN}/v1/sign-contract-intent`,
+    { body: "{}" },
+  ), /invalid/);
+});
+
+test("keeps the private wallet-session read route pinned and separate", async () => {
+  const response = await pinnedPublicWalletSessionRequest(
+    `${ORIGIN}/api/internal/wallet-session-read`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    },
+    {
+      lookupImpl: async () => [{ address: "8.8.8.8", family: 4 }],
+      httpsRequestImpl: (options, callback) => {
+        assert.equal(options.path, "/api/internal/wallet-session-read");
+        assert.equal(options.hostname, "8.8.8.8");
+        assert.equal(options.servername, "solver.example");
+        const request = new EventEmitter();
+        request.end = () => {
+          const incoming = Readable.from([Buffer.from("{}")]);
+          incoming.statusCode = 200;
+          incoming.headers = { "content-type": "application/json" };
+          queueMicrotask(() => callback(incoming));
+        };
+        return request;
+      },
+    },
+  );
+  assert.equal(response.status, 200);
+  await assert.rejects(
+    pinnedPublicWalletSessionRequest(`${ORIGIN}/v1/rfq`, { body: "{}" }),
+    /invalid/,
+  );
+  await assert.rejects(
+    pinnedPublicRfqRequest(`${ORIGIN}/api/internal/wallet-session-read`, { body: "{}" }),
+    /invalid/,
+  );
 });
 
 test("rejects expired responses, oversized bodies, and signed capacity overstatement", async () => {

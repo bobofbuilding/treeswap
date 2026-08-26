@@ -12,17 +12,24 @@ docker run --rm --read-only \
   --entrypoint node \
   "$runtime_image" \
   --test --test-concurrency=1 \
-    tests/admission-store.test.mjs tests/coordinator-store.test.mjs tests/coordinator-service-state.test.mjs \
+    tests/admission-store.test.mjs tests/coordinator-store.test.mjs tests/rfq-finalization-restart-policy.test.mjs \
+    tests/coordinator-service-state.test.mjs \
     tests/coordinator-release-supervisor.test.mjs tests/coordinator-recovery-supervisor.test.mjs \
     tests/coordinator-recovery-job.test.mjs tests/coordinator-recovery-action-loop.test.mjs \
-    tests/coordinator-active-execution-service.test.mjs \
-    tests/coordinator-recovery-execution-service.test.mjs \
+    tests/coordinator-active-execution-service.test.mjs tests/coordinator-active-operator-policy.test.mjs \
+    tests/coordinator-recovery-execution-service.test.mjs tests/coordinator-recovery-operator-policy.test.mjs \
     tests/release-retention-custody.test.mjs \
     tests/coordinator-action-runner.test.mjs tests/evm-action-runner.test.mjs \
     tests/deployment-observer.test.mjs tests/deployment-policy.test.mjs \
     tests/safety-monitor.test.mjs tests/solver-capability.test.mjs \
-    tests/solver-daemon-planner.test.mjs tests/solver-daemon-evidence.test.mjs tests/solver-daemon-runtime.test.mjs \
-    tests/solver-endpoint-transport.test.mjs tests/solver-private-packet.test.mjs
+    tests/solver-daemon-planner.test.mjs tests/solver-daemon-evidence.test.mjs \
+    tests/solver-daemon-evidence-client.test.mjs tests/solver-daemon-evidence-provider.test.mjs \
+    tests/solver-daemon-runtime.test.mjs \
+    tests/private-operator-dns-pinning.test.mjs \
+    tests/private-json-response.test.mjs \
+    tests/solver-endpoint-transport.test.mjs tests/contract-intent-wallet-abuse-store.test.mjs \
+    tests/rfq-delivery.test.mjs \
+    tests/solver-private-packet.test.mjs
 docker run --rm --read-only \
   --tmpfs /tmp:rw,noexec,nosuid,size=64m \
   --mount type=bind,src="$project_root/tests",dst=/app/tests,readonly \
@@ -37,6 +44,12 @@ docker run --rm --read-only \
   --entrypoint node \
   "$runtime_image" \
   infra/coordinator/disk-full-smoke.mjs
+docker run --rm --read-only \
+  --tmpfs /tmp:rw,noexec,nosuid,size=64m \
+  --tmpfs /data:rw,noexec,nosuid,size=128k,mode=0700,uid=1000,gid=1000 \
+  --entrypoint node \
+  "$runtime_image" \
+  infra/coordinator/wallet-abuse-disk-full-smoke.mjs
 
 closed_container=$(docker run --detach --read-only \
   --tmpfs /data:rw,noexec,nosuid,size=16m,mode=0700,uid=1000,gid=1000 \

@@ -191,14 +191,16 @@ services:
         cp -f /source/treeswap/payer.macaroon /target/role.macaroon;
         cp -f /coordinator-public.pem /target/coordinator-public.pem;
         cp -f /capacity-private.pem /target/capacity-private.pem;
-        chown 1000:1000 /target/tls.cert /target/role.macaroon /target/coordinator-public.pem /target/capacity-private.pem;
-        chmod 0400 /target/role.macaroon /target/capacity-private.pem;
+        cp -f /response-private.pem /target/response-private.pem;
+        chown 1000:1000 /target/tls.cert /target/role.macaroon /target/coordinator-public.pem /target/capacity-private.pem /target/response-private.pem;
+        chmod 0400 /target/role.macaroon /target/capacity-private.pem /target/response-private.pem;
         chmod 0444 /target/tls.cert /target/coordinator-public.pem
     volumes:
       - alice-data:/source:ro
       - alice-payer-credentials:/target
       - ${COORDINATOR_PUBLIC_KEY_PATH}:/coordinator-public.pem:ro
       - ${ALICE_CAPACITY_PRIVATE_KEY_PATH}:/capacity-private.pem:ro
+      - ${ALICE_RESPONSE_PRIVATE_KEY_PATH}:/response-private.pem:ro
     networks: [regtest]
 
   export-bob-invoice-credential:
@@ -212,14 +214,97 @@ services:
         cp -f /source/treeswap/invoice.macaroon /target/role.macaroon;
         cp -f /coordinator-public.pem /target/coordinator-public.pem;
         cp -f /capacity-private.pem /target/capacity-private.pem;
-        chown 1000:1000 /target/tls.cert /target/role.macaroon /target/coordinator-public.pem /target/capacity-private.pem;
-        chmod 0400 /target/role.macaroon /target/capacity-private.pem;
+        cp -f /response-private.pem /target/response-private.pem;
+        chown 1000:1000 /target/tls.cert /target/role.macaroon /target/coordinator-public.pem /target/capacity-private.pem /target/response-private.pem;
+        chmod 0400 /target/role.macaroon /target/capacity-private.pem /target/response-private.pem;
         chmod 0444 /target/tls.cert /target/coordinator-public.pem
     volumes:
       - bob-data:/source:ro
       - bob-invoice-credentials:/target
       - ${COORDINATOR_PUBLIC_KEY_PATH}:/coordinator-public.pem:ro
       - ${BOB_CAPACITY_PRIVATE_KEY_PATH}:/capacity-private.pem:ro
+      - ${BOB_RESPONSE_PRIVATE_KEY_PATH}:/response-private.pem:ro
+    networks: [regtest]
+
+  export-bob-invoice-material-credential:
+    image: node:22.22.0-alpine@sha256:e4bf2a82ad0a4037d28035ae71529873c069b13eb0455466ae0bc13363826e34
+    profiles: [tools]
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - >-
+        umask 077;
+        chown 1000:1000 /target;
+        chmod 0700 /target;
+        cp -f /source/tls.cert /target/tls.cert;
+        cp -f /source/treeswap/invoice-material.macaroon /target/role.macaroon;
+        test -s /target/payment-secret.bin || head -c 32 /dev/urandom > /target/payment-secret.bin;
+        chown 1000:1000 /target/tls.cert /target/role.macaroon /target/payment-secret.bin;
+        chmod 0400 /target/role.macaroon /target/payment-secret.bin;
+        chmod 0444 /target/tls.cert
+    volumes:
+      - bob-data:/source:ro
+      - bob-invoice-material-credentials:/target
+    networks: [regtest]
+
+  export-selected-solver-invoice-material-provider-credential:
+    image: node:22.22.0-alpine@sha256:e4bf2a82ad0a4037d28035ae71529873c069b13eb0455466ae0bc13363826e34
+    profiles: [tools]
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - >-
+        umask 077;
+        chown 1000:1000 /target;
+        chmod 0700 /target;
+        cp -f /provider-private.pem /target/provider-private.pem;
+        cp -f /requester-public.pem /target/requester-public.pem;
+        cp -f /tls.key /target/tls.key;
+        cp -f /tls.cert /target/tls.cert;
+        chown 1000:1000 /target/provider-private.pem /target/requester-public.pem /target/tls.key /target/tls.cert;
+        chmod 0400 /target/provider-private.pem /target/requester-public.pem /target/tls.key /target/tls.cert
+    volumes:
+      - selected-solver-invoice-material-provider-credentials:/target
+      - ${INVOICE_MATERIAL_PROVIDER_PRIVATE_KEY_PATH}:/provider-private.pem:ro
+      - ${INVOICE_MATERIAL_REQUESTER_PUBLIC_KEY_PATH}:/requester-public.pem:ro
+      - ${INVOICE_MATERIAL_TLS_PRIVATE_KEY_PATH}:/tls.key:ro
+      - ${INVOICE_MATERIAL_TLS_CERTIFICATE_PATH}:/tls.cert:ro
+    networks: [regtest]
+
+  export-selected-solver-invoice-material-client-credential:
+    image: node:22.22.0-alpine@sha256:e4bf2a82ad0a4037d28035ae71529873c069b13eb0455466ae0bc13363826e34
+    profiles: [tools]
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - >-
+        umask 077;
+        chown 1000:1000 /target;
+        chmod 0700 /target;
+        cp -f /requester-private.pem /target/requester-private.pem;
+        cp -f /provider-public.pem /target/provider-public.pem;
+        cp -f /tls.cert /target/tls.cert;
+        chown 1000:1000 /target/requester-private.pem /target/provider-public.pem /target/tls.cert;
+        chmod 0400 /target/requester-private.pem /target/provider-public.pem /target/tls.cert
+    volumes:
+      - selected-solver-invoice-material-client-credentials:/target
+      - ${INVOICE_MATERIAL_REQUESTER_PRIVATE_KEY_PATH}:/requester-private.pem:ro
+      - ${INVOICE_MATERIAL_PROVIDER_PUBLIC_KEY_PATH}:/provider-public.pem:ro
+      - ${INVOICE_MATERIAL_TLS_CERTIFICATE_PATH}:/tls.cert:ro
+    networks: [regtest]
+
+  prepare-selected-solver-invoice-material-state:
+    image: node:22.22.0-alpine@sha256:e4bf2a82ad0a4037d28035ae71529873c069b13eb0455466ae0bc13363826e34
+    profiles: [tools]
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - >-
+        chown 1000:1000 /provider /client;
+        chmod 0700 /provider /client
+    volumes:
+      - selected-solver-invoice-material-provider-state:/provider
+      - selected-solver-invoice-material-client-state:/client
     networks: [regtest]
 
   export-alice-close-collector-a-credential:
@@ -270,12 +355,17 @@ services:
         cp -f /coordinator-private.pem /target/coordinator-private.pem;
         cp -f /alice-capacity-public.pem /target/alice-capacity-public.pem;
         cp -f /bob-capacity-public.pem /target/bob-capacity-public.pem;
-        chown 1000:1000 /target/coordinator-private.pem /target/alice-capacity-public.pem /target/bob-capacity-public.pem;
-        chmod 0400 /target/coordinator-private.pem
+        cp -f /alice-response-public.pem /target/alice-response-public.pem;
+        cp -f /bob-response-public.pem /target/bob-response-public.pem;
+        chown 1000:1000 /target/coordinator-private.pem /target/alice-capacity-public.pem /target/bob-capacity-public.pem /target/alice-response-public.pem /target/bob-response-public.pem;
+        chmod 0400 /target/coordinator-private.pem;
+        chmod 0444 /target/alice-capacity-public.pem /target/bob-capacity-public.pem /target/alice-response-public.pem /target/bob-response-public.pem
     volumes:
       - ${COORDINATOR_PRIVATE_KEY_PATH}:/coordinator-private.pem:ro
       - ${ALICE_CAPACITY_PUBLIC_KEY_PATH}:/alice-capacity-public.pem:ro
       - ${BOB_CAPACITY_PUBLIC_KEY_PATH}:/bob-capacity-public.pem:ro
+      - ${ALICE_RESPONSE_PUBLIC_KEY_PATH}:/alice-response-public.pem:ro
+      - ${BOB_RESPONSE_PUBLIC_KEY_PATH}:/bob-response-public.pem:ro
       - coordinator-credentials:/target
     networks: [regtest]
 
@@ -295,6 +385,8 @@ services:
       COORDINATOR_KEY_ID: regtest-coordinator-1
       CAPACITY_SIGNING_PRIVATE_KEY_PATH: /run/treeswap/credentials/capacity-private.pem
       CAPACITY_SIGNING_KEY_ID: alice-capacity-regtest-1
+      RESPONSE_SIGNING_PRIVATE_KEY_PATH: /run/treeswap/credentials/response-private.pem
+      RESPONSE_SIGNING_KEY_ID: alice-payer-response-regtest-1
       ADAPTER_JOURNAL_PATH: /data/actions.jsonl
       CHAIN_PROGRESS_PATH: /data/chain-progress.json
       CREDENTIAL_ID: alice-payer-regtest
@@ -320,6 +412,8 @@ services:
       COORDINATOR_KEY_ID: regtest-coordinator-1
       CAPACITY_SIGNING_PRIVATE_KEY_PATH: /run/treeswap/credentials/capacity-private.pem
       CAPACITY_SIGNING_KEY_ID: bob-capacity-regtest-1
+      RESPONSE_SIGNING_PRIVATE_KEY_PATH: /run/treeswap/credentials/response-private.pem
+      RESPONSE_SIGNING_KEY_ID: bob-invoice-response-regtest-1
       ADAPTER_JOURNAL_PATH: /data/actions.jsonl
       CHAIN_PROGRESS_PATH: /data/chain-progress.json
       CREDENTIAL_ID: bob-invoice-regtest
@@ -383,6 +477,8 @@ services:
       COORDINATOR_PRIVATE_KEY_PATH: /run/treeswap/credentials/coordinator-private.pem
       COORDINATOR_DATABASE_PATH: /data/coordinator.sqlite
       COORDINATOR_KEY_ID: regtest-coordinator-1
+      PAYER_ADAPTER_RESPONSE_PUBLIC_KEY_PATH: /run/treeswap/credentials/alice-response-public.pem
+      PAYER_ADAPTER_RESPONSE_KEY_ID: alice-payer-response-regtest-1
       PAYMENT_HASH: ${COORDINATOR_SMOKE_PAYMENT_HASH:-pending}
     volumes:
       - coordinator-credentials:/run/treeswap/credentials:ro
@@ -405,10 +501,119 @@ services:
       COORDINATOR_PRIVATE_KEY_PATH: /run/treeswap/credentials/coordinator-private.pem
       COORDINATOR_DATABASE_PATH: /data/coordinator-invoice.sqlite
       COORDINATOR_KEY_ID: regtest-coordinator-1
+      INVOICE_ADAPTER_RESPONSE_PUBLIC_KEY_PATH: /run/treeswap/credentials/bob-response-public.pem
+      INVOICE_ADAPTER_RESPONSE_KEY_ID: bob-invoice-response-regtest-1
       PAYMENT_HASH: ${COORDINATOR_SMOKE_PAYMENT_HASH:-pending}
     volumes:
       - coordinator-credentials:/run/treeswap/credentials:ro
       - coordinator-state:/data
+    networks: [regtest]
+
+  selected-solver-invoice-material-smoke:
+    build:
+      context: ../..
+      dockerfile: infra/selected-solver-invoice-material/Dockerfile
+    image: treeswap/selected-solver-invoice-material:regtest
+    profiles: [tools]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=8m
+    environment:
+      LND_REST_URL: https://bob:8080
+      LND_MACAROON_PATH: /run/treeswap/credentials/role.macaroon
+      LND_TLS_CERT_PATH: /run/treeswap/credentials/tls.cert
+      LND_TLS_CERT_FINGERPRINT: ${BOB_TLS_FINGERPRINT}
+      PAYMENT_SECRET_KEY_PATH: /run/treeswap/credentials/payment-secret.bin
+    volumes:
+      - bob-invoice-material-credentials:/run/treeswap/credentials:ro
+    networks: [regtest]
+
+  selected-solver-invoice-material-service:
+    build:
+      context: ../..
+      dockerfile: infra/selected-solver-invoice-material/Dockerfile
+    image: treeswap/selected-solver-invoice-material:regtest
+    command: ["node", "infra/selected-solver-invoice-material/service.mjs"]
+    profiles: [private-service]
+    restart: "no"
+    depends_on:
+      bob:
+        condition: service_started
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=8m
+    environment:
+      PROVIDER_ORIGIN: https://selected-solver-invoice-material-service
+      PORT: "443"
+      PROVIDER_STATE_PATH: /data/provider.sqlite
+      PROVIDER_PRIVATE_KEY_PATH: /run/treeswap/provider/provider-private.pem
+      REQUESTER_PUBLIC_KEY_PATH: /run/treeswap/provider/requester-public.pem
+      TLS_PRIVATE_KEY_PATH: /run/treeswap/provider/tls.key
+      TLS_CERTIFICATE_PATH: /run/treeswap/provider/tls.cert
+      REQUESTER_KEY_ID: selected-solver-provider-regtest-1
+      PROVIDER_KEY_ID: invoice-material-provider-regtest-1
+      PAYMENT_SECRET_KEY_ID: selected-solver-payment-secret-regtest-1
+      PAYMENT_SECRET_KEY_PATH: /run/treeswap/lnd/payment-secret.bin
+      LND_REST_URL: https://bob:8080
+      LND_MACAROON_PATH: /run/treeswap/lnd/role.macaroon
+      LND_TLS_CERT_PATH: /run/treeswap/lnd/tls.cert
+      LND_TLS_CERT_FINGERPRINT: ${BOB_TLS_FINGERPRINT}
+      INVOICE_MEMO: treeswap-selected-solver-private-service-regtest
+      MAXIMUM_LND_RESPONSE_BYTES: "1048576"
+      LND_ADD_TIMEOUT_MS: "5000"
+      LND_LOOKUP_TIMEOUT_MS: "5000"
+      INVOICE_EXPIRY_SECONDS: "3600"
+      INVOICE_CLTV_EXPIRY: "80"
+      MAXIMUM_INVOICE_BYTES: "4096"
+      MAXIMUM_LIVE_REQUESTS: "64"
+      MAXIMUM_REQUEST_BYTES: "16384"
+      MAXIMUM_CLOCK_SKEW_SECONDS: "5"
+      REQUEST_TIMEOUT_MS: "5000"
+      RECOVERY_LEASE_SECONDS: "6"
+      RESPONSE_TTL_SECONDS: "30"
+    volumes:
+      - bob-invoice-material-credentials:/run/treeswap/lnd:ro
+      - selected-solver-invoice-material-provider-credentials:/run/treeswap/provider:ro
+      - selected-solver-invoice-material-provider-state:/data
+    networks: [regtest]
+    healthcheck:
+      test: ["CMD", "node", "infra/selected-solver-invoice-material/healthcheck.mjs"]
+      interval: 1s
+      timeout: 2s
+      retries: 30
+
+  selected-solver-invoice-material-private-smoke:
+    build:
+      context: ../..
+      dockerfile: infra/selected-solver-invoice-material/Dockerfile
+    image: treeswap/selected-solver-invoice-material:regtest
+    command: ["node", "infra/selected-solver-invoice-material/private-service-smoke.mjs"]
+    profiles: [tools]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=8m
+    environment:
+      SMOKE_MODE: ${INVOICE_MATERIAL_SMOKE_MODE:-create}
+      PROVIDER_ORIGIN: https://selected-solver-invoice-material-service
+      CLIENT_STATE_PATH: /data/client.json
+      REQUESTER_PRIVATE_KEY_PATH: /run/treeswap/client/requester-private.pem
+      REQUESTER_KEY_ID: selected-solver-provider-regtest-1
+      PROVIDER_PUBLIC_KEY_PATH: /run/treeswap/client/provider-public.pem
+      PROVIDER_KEY_ID: invoice-material-provider-regtest-1
+      PROVIDER_TLS_CERTIFICATE_PATH: /run/treeswap/client/tls.cert
+      PROVIDER_TLS_CERT_FINGERPRINT: ${INVOICE_MATERIAL_TLS_FINGERPRINT}
+      PAYMENT_SECRET_KEY_ID: selected-solver-payment-secret-regtest-1
+      REQUEST_TTL_SECONDS: "30"
+      REQUEST_TIMEOUT_MS: "5000"
+    volumes:
+      - selected-solver-invoice-material-client-credentials:/run/treeswap/client:ro
+      - selected-solver-invoice-material-client-state:/data
     networks: [regtest]
 
 networks:
@@ -422,6 +627,11 @@ volumes:
   charlie-data:
   alice-payer-credentials:
   bob-invoice-credentials:
+  bob-invoice-material-credentials:
+  selected-solver-invoice-material-provider-credentials:
+  selected-solver-invoice-material-client-credentials:
+  selected-solver-invoice-material-provider-state:
+  selected-solver-invoice-material-client-state:
   alice-close-collector-a-credentials:
   alice-close-collector-b-credentials:
   payer-adapter-state:

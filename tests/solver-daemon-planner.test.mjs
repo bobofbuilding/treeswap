@@ -3,6 +3,7 @@ import test from "node:test";
 import { id } from "ethers";
 import { CoordinatorStore } from "../lib/coordinator-store.mjs";
 import { classifySolverDaemonStep, nextSolverDaemonStep } from "../lib/solver-daemon-planner.mjs";
+import { bindTestContractIntent } from "./helpers/contract-intent-fixture.mjs";
 
 const NOW = 2_000_000_000;
 const SEND_PAYMENT = "/routerrpc.Router/SendPaymentV2";
@@ -142,14 +143,15 @@ test("reads the next step only from the durable coordinator store", async () => 
   };
   try {
     store.acceptSettlement(value);
+    const contractBound = bindTestContractIntent(store, value);
     assert.equal(nextSolverDaemonStep({ store, settlementId: value.settlementId }).kind, "WAIT_FOR_RESERVATION");
     store.recordReservation({
       settlementId: value.settlementId,
-      reservationId: hash("store:daemon:reservation"),
+      reservationId: contractBound.contractQuoteId,
       reservationTxHash: hash("store:daemon:tx"),
       reservationBlockNumber: 20_000_000,
       reservationBlockHash: hash("store:daemon:block"),
-      reservationIntentDigest: value.intentDigest,
+      reservationIntentDigest: contractBound.contractIntentDigest,
       observedAt: NOW + 1,
     });
     assert.equal(nextSolverDaemonStep({ store, settlementId: value.settlementId }).kind, "PLAN_LIGHTNING_ACTION");
@@ -159,7 +161,7 @@ test("reads the next step only from the durable coordinator store", async () => 
       method: SEND_PAYMENT,
       requestId: hash("store:daemon:request"),
       payloadDigest: hash("store:daemon:payload"),
-      intentDigest: value.intentDigest,
+      intentDigest: contractBound.contractIntentDigest,
       paymentHash: value.paymentHash,
       invoiceDigest: value.invoiceDigest,
       amountSats: value.amountSats,

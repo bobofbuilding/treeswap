@@ -56,8 +56,12 @@ test("server-renders the TreeSwap prototype", async () => {
   assert.match(html, />Earn</);
   assert.match(html, /Receive BIT/);
   assert.match(html, /Review invoice payment/);
-  assert.match(html, /Best received of .*signed quotes/);
-  assert.match(html, /1 BIT = 100 sats/);
+  assert.match(html, /Best of .*example quotes/);
+  assert.match(html, /Reference only · 100 sats\/BIT/);
+  assert.match(html, /Verified markets required/);
+  assert.match(html, /Future BIT\/WBTC pool/);
+  assert.match(html, /One price check only/);
+  assert.doesNotMatch(html, /Exact solver quote|signed quotes/);
   assert.match(html, /Swap prototype · Sends use your wallet/);
   assert.match(html, /Sends use your wallet/);
   assert.match(html, /Invoice in\. Quote out/i);

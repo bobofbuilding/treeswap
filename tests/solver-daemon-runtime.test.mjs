@@ -8,6 +8,7 @@ import { Transaction, Wallet, id, keccak256, sha256 } from "ethers";
 import { CoordinatorStore } from "../lib/coordinator-store.mjs";
 import { evmClaimActionCommitment } from "../lib/evm-action-runner.mjs";
 import { invoiceDigest } from "../lib/lnd-rest-client.mjs";
+import { signLightningAdapterResponseEnvelope } from "../lib/lightning-adapter-response.mjs";
 import {
   SOLVER_DAEMON_EVIDENCE_POLICY_SCHEMA,
   SOLVER_DAEMON_EVIDENCE_SCHEMA,
@@ -16,9 +17,20 @@ import {
   solverDaemonEvidencePolicyDigest,
   verifySolverDaemonEvidence,
 } from "../lib/solver-daemon-evidence.mjs";
-import { createAuthenticatedPrivatePacketClient, executeSolverDaemonStep } from "../lib/solver-daemon-runtime.mjs";
+import {
+  authenticatedPrivatePacketClientTransportMode,
+  createAuthenticatedPrivatePacketClient,
+  createTestAuthenticatedPrivatePacketClient,
+  executeSolverDaemonStep,
+  isProductionAuthenticatedPrivatePacketClient,
+} from "../lib/solver-daemon-runtime.mjs";
 import { nextSolverDaemonStep } from "../lib/solver-daemon-planner.mjs";
 import { buildSignedPrivatePacketResponse } from "../lib/solver-private-packet.mjs";
+import {
+  bindTestContractIntent,
+  testContractIntentDigest,
+  testContractQuoteId,
+} from "./helpers/contract-intent-fixture.mjs";
 
 const NOW = 2_000_000_000;
 const SEND_PAYMENT = "/routerrpc.Router/SendPaymentV2";
@@ -34,6 +46,7 @@ const PAYMENT_HASH = sha256(PREIMAGE).toLowerCase();
 const PAYMENT_REQUEST = "lnbcrt100u1solverdaemonruntime";
 const CLAIMED_TOPIC = id("Claimed(bytes32,address,uint256,uint256)").toLowerCase();
 const lightningKeys = generateKeyPairSync("ed25519");
+const adapterResponseKeys = generateKeyPairSync("ed25519");
 const packetRequesterKeys = generateKeyPairSync("ed25519");
 const packetProviderKeys = generateKeyPairSync("ed25519");
 const evidenceLightningOperator = new Wallet(`0x${"31".repeat(32)}`);
@@ -65,19 +78,32 @@ function settlement(label, direction) {
 function reservation(value) {
   return {
     settlementId: value.settlementId,
-    reservationId: hash(`${value.settlementId}:reservation`),
+    reservationId: value.contractQuoteId ?? testContractQuoteId(value, {
+      chainId: CHAIN_ID.toString(),
+      settlementContractCodeHash: CONTRACT_CODE_HASH,
+      verifyingContract: CONTRACT,
+    }),
     reservationTxHash: hash(`${value.settlementId}:reservation-transaction`),
     reservationBlockNumber: 100,
     reservationBlockHash: hash(`${value.settlementId}:reservation-block`),
-    reservationIntentDigest: value.intentDigest,
+    reservationIntentDigest: value.contractIntentDigest ?? testContractIntentDigest(value, {
+      chainId: CHAIN_ID.toString(),
+      settlementContractCodeHash: CONTRACT_CODE_HASH,
+      verifyingContract: CONTRACT,
+    }),
     observedAt: NOW + 1,
   };
 }
 
 async function openStore(label, direction, { path = ":memory:" } = {}) {
   const store = await CoordinatorStore.open(path, { allowMemory: path === ":memory:" });
-  const value = settlement(label, direction);
-  store.acceptSettlement(value);
+  const input = settlement(label, direction);
+  store.acceptSettlement(input);
+  const value = bindTestContractIntent(store, input, {
+    chainId: CHAIN_ID.toString(),
+    settlementContractCodeHash: CONTRACT_CODE_HASH,
+    verifyingContract: CONTRACT,
+  });
   store.recordReservation(reservation(value));
   return { store, value };
 }
@@ -98,7 +124,8 @@ function claimTemplate(value) {
 
 function packetClient(value) {
   let reads = 0;
-  const authenticated = createAuthenticatedPrivatePacketClient({
+  const consumedRequests = new Set();
+  const authenticated = createTestAuthenticatedPrivatePacketClient({
     providerOrigin: "https://packet-provider.internal",
     requesterPrivateKey: packetRequesterKeys.privateKey,
     requesterKeyId: "daemon-requester-test",
@@ -135,13 +162,18 @@ function packetClient(value) {
         evmRefundAt: NOW + 2_000,
         operation,
       };
-      const signed = buildSignedPrivatePacketResponse({
+      const signed = await buildSignedPrivatePacketResponse({
         requestEnvelope: request,
         requesterPublicKey: packetRequesterKeys.publicKey,
         expectedRequesterKeyId: "daemon-requester-test",
         packet: privatePacket,
         providerKeyId: "packet-provider-test",
         providerPrivateKey: packetProviderKeys.privateKey,
+        consumeRequest: async ({ requestId }) => {
+          if (consumedRequests.has(requestId)) return false;
+          consumedRequests.add(requestId);
+          return true;
+        },
         servedAt: NOW + 10,
         expiresAt: NOW + 20,
         minimumEvmSafetySeconds: 600,
@@ -168,12 +200,33 @@ function lightningAdapter() {
     privateKey: lightningKeys.privateKey,
     keyId: "coordinator-daemon-test",
     adapterUrl: "http://lightning-adapter.internal:3000",
+    responsePublicKey: adapterResponseKeys.publicKey,
+    responseKeyId: "daemon-adapter-response-test",
     nowSeconds: () => NOW + 10,
     async requestImpl(_url, options) {
       calls += 1;
-      const method = JSON.parse(options.body).payload.method;
+      const { payload } = JSON.parse(options.body);
+      const { method } = payload;
+      const role = method.startsWith("/invoicesrpc.Invoices/") ? "invoice" : "payer";
+      const audit = {
+        observedAt: payload.authorizedAt,
+        decision: "allowed",
+        role,
+        method,
+        credentialIdHash: hash(`${role}:runtime-adapter-credential`),
+        requestId: payload.requestId,
+        intentDigest: payload.intentDigest,
+        paymentHash: payload.paymentHash,
+        invoiceDigest: payload.invoiceDigest,
+        amountSats: payload.amountSats,
+        capacityEpoch: payload.capacityEpoch,
+        reasons: [],
+      };
       if (method === SEND_PAYMENT || method === "/routerrpc.Router/TrackPaymentV2") {
-        return new Response(JSON.stringify({
+        return new Response(JSON.stringify(signLightningAdapterResponseEnvelope({
+          keyId: "daemon-adapter-response-test",
+          privateKey: adapterResponseKeys.privateKey,
+          body: {
           result: {
             status: "SUCCEEDED",
             paymentHash: PAYMENT_HASH,
@@ -181,13 +234,21 @@ function lightningAdapter() {
             feeSats: "2",
             preimage: PREIMAGE,
           },
-          audit: { decision: "allow" },
-        }), { status: 200, headers: { "content-type": "application/json" } });
+          audit,
+          },
+        })), {
+          status: 200,
+          headers: { "cache-control": "no-store", "content-type": "application/json" },
+        });
       }
       if (method === SETTLE_INVOICE) {
-        return new Response(JSON.stringify({ result: { state: "SETTLED" }, audit: { decision: "allow" } }), {
+        return new Response(JSON.stringify(signLightningAdapterResponseEnvelope({
+          keyId: "daemon-adapter-response-test",
+          privateKey: adapterResponseKeys.privateKey,
+          body: { result: { state: "SETTLED" }, audit },
+        })), {
           status: 200,
-          headers: { "content-type": "application/json" },
+          headers: { "cache-control": "no-store", "content-type": "application/json" },
         });
       }
       throw new Error(`unexpected method ${method}`);
@@ -249,7 +310,7 @@ function baseEvidence(kind, settlementValue, overrides = {}) {
       reservationBlockNumber: settlementValue.reservationBlockNumber,
       reservationBlockHash: settlementValue.reservationBlockHash,
       actionId: dispatch ? hash(`${settlementValue.settlementId}:placeholder-action`) : SOLVER_DAEMON_ZERO_BYTES32,
-      intentDigest: settlementValue.intentDigest,
+      intentDigest: settlementValue.contractIntentDigest,
       packetResponseDigest: dispatch ? hash(`${settlementValue.settlementId}:placeholder-packet`) : SOLVER_DAEMON_ZERO_BYTES32,
       quoteExpiresAt: dispatch ? NOW + 1_500 : 0,
       lightningActionDeadline: dispatch ? NOW + 1_000 : 0,
@@ -308,6 +369,71 @@ function runtimeArgs(fixture, extras = {}) {
     ...extras,
   };
 }
+
+test("brands fixed and injected private-packet transports without transferable provenance", () => {
+  const input = {
+    providerOrigin: "https://packet-provider.internal",
+    requesterPrivateKey: packetRequesterKeys.privateKey,
+    requesterKeyId: "daemon-transport-test",
+    providerPublicKey: packetProviderKeys.publicKey,
+    providerKeyId: "packet-provider-transport-test",
+    minimumEvmSafetySeconds: 600,
+    requestTtlSeconds: 15,
+    timeoutMs: 1_000,
+  };
+  const fixed = createAuthenticatedPrivatePacketClient(input);
+  assert.equal(authenticatedPrivatePacketClientTransportMode(fixed), "fixed-node-https");
+  assert.equal(isProductionAuthenticatedPrivatePacketClient(fixed), true);
+  assert.throws(
+    () => authenticatedPrivatePacketClientTransportMode({ ...fixed }),
+    /factory provenance/,
+  );
+
+  const injected = createTestAuthenticatedPrivatePacketClient({
+    ...input,
+    nowSeconds: () => NOW,
+    randomBytesImpl: randomSource(),
+    requestImpl: async () => { throw new Error("test-only transport"); },
+  });
+  assert.equal(authenticatedPrivatePacketClientTransportMode(injected), "injected-test");
+  assert.equal(isProductionAuthenticatedPrivatePacketClient(injected), false);
+  assert.throws(
+    () => createAuthenticatedPrivatePacketClient({
+      ...input,
+      nowSeconds: () => NOW,
+      randomBytesImpl: randomSource(),
+    }),
+    /fields are not exact/,
+  );
+  assert.throws(
+    () => createAuthenticatedPrivatePacketClient({
+      ...input,
+      providerPublicKey: packetRequesterKeys.publicKey,
+    }),
+    /keys must be separate/,
+  );
+  let getterCalls = 0;
+  const accessorInput = { ...input };
+  Object.defineProperty(accessorInput, "providerOrigin", {
+    enumerable: true,
+    get() {
+      getterCalls += 1;
+      return "https://packet-provider.internal";
+    },
+  });
+  assert.throws(
+    () => createAuthenticatedPrivatePacketClient(accessorInput),
+    /enumerable data properties/,
+  );
+  assert.equal(getterCalls, 0);
+  assert.throws(
+    () => createAuthenticatedPrivatePacketClient(Object.assign(
+      Object.create({ requestImpl: async () => {} }),
+      input,
+    )),
+    /plain data object/,
+  );
+});
 
 function hexQuantity(value) {
   return `0x${BigInt(value).toString(16)}`;
@@ -559,7 +685,7 @@ test("recovers an unbound EVM action, broadcasts exact bytes, reconciles finalit
     method: "evm:claim",
     requestId: hash("payment-flow:claim-request"),
     payloadDigest: hash("placeholder"),
-    intentDigest: fixture.value.intentDigest,
+    intentDigest: fixture.value.contractIntentDigest,
     paymentHash: fixture.value.paymentHash,
     invoiceDigest: fixture.value.invoiceDigest,
     amountSats: fixture.value.amountSats,
@@ -666,8 +792,13 @@ test("records only original dual-signed reservation evidence and rejects a nomin
     t.after(() => store.close());
     const value = settlement(`reservation-evidence-${valid}`, "lightning-to-bit");
     store.acceptSettlement(value);
-    const observed = reservation(value);
-    const bound = { ...value, ...observed };
+    const contractBound = bindTestContractIntent(store, value, {
+      chainId: CHAIN_ID.toString(),
+      settlementContractCodeHash: CONTRACT_CODE_HASH,
+      verifyingContract: CONTRACT,
+    });
+    const observed = reservation(contractBound);
+    const bound = { ...contractBound, ...observed };
     const controls = {
       observeReservation: async () => {
         const evidence = baseEvidence("RESERVATION", bound, { proofDigest: hash(`reservation-proof-${valid}`) });
@@ -711,7 +842,7 @@ test("rejects nominal both-assets completion evidence and does not create comple
   assert.equal(fixture.store.getSettlement(fixture.value.settlementId).terminalState, null);
 });
 
-test("rejects an unverified packet result before planning any action", async (t) => {
+test("rejects an unverified or copied packet result before planning any action", async (t) => {
   const fixture = await openStore("unverified-packet", "lightning-to-bit");
   t.after(() => fixture.store.close());
   await assert.rejects(
@@ -722,6 +853,18 @@ test("rejects an unverified packet result before planning any action", async (t)
             responseDigest: hash("forged-response"),
             packet: { operation: { preimage: PREIMAGE } },
           };
+        },
+      },
+    })),
+    /not authenticated/,
+  );
+
+  const authenticated = packetClient(fixture.value);
+  await assert.rejects(
+    executeSolverDaemonStep(runtimeArgs(fixture, {
+      packetClient: {
+        async read(input) {
+          return { ...await authenticated.read(input) };
         },
       },
     })),
@@ -771,7 +914,12 @@ test("recovers only the interrupted action owned by the selected settlement", as
   second.paymentHash = hash("scoped-second:unique-payment-hash");
   for (const value of [first, second]) {
     store.acceptSettlement(value);
-    store.recordReservation(reservation(value));
+    const contractBound = bindTestContractIntent(store, value, {
+      chainId: CHAIN_ID.toString(),
+      settlementContractCodeHash: CONTRACT_CODE_HASH,
+      verifyingContract: CONTRACT,
+    });
+    store.recordReservation(reservation(contractBound));
     const operation = { preimage: PREIMAGE };
     const action = {
       actionId: hash(`${value.settlementId}:settle-action`),
@@ -779,7 +927,7 @@ test("recovers only the interrupted action owned by the selected settlement", as
       method: SETTLE_INVOICE,
       requestId: hash(`${value.settlementId}:request`),
       payloadDigest: hash(`${value.settlementId}:payload`),
-      intentDigest: value.intentDigest,
+      intentDigest: contractBound.contractIntentDigest,
       paymentHash: value.paymentHash,
       invoiceDigest: value.invoiceDigest,
       amountSats: value.amountSats,

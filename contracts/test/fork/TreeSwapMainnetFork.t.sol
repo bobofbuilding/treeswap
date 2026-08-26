@@ -27,6 +27,24 @@ contract IncompatibleBitImplementation {
     }
 }
 
+contract FalseReturnBitImplementation {
+    function balanceOf(address) external pure returns (uint256) {
+        return 1_000_000 ether;
+    }
+
+    function decimals() external pure returns (uint8) {
+        return 18;
+    }
+
+    function paused() external pure returns (bool) {
+        return false;
+    }
+
+    function transfer(address, uint256) external pure returns (bool) {
+        return false;
+    }
+}
+
 /// @notice Explicit, credentialed mainnet-fork evidence. Normal unit-test runs
 ///         skip this file when MAINNET_RPC_URL is absent; `npm run test:fork`
 ///         refuses to run without that credential.
@@ -187,6 +205,47 @@ contract TreeSwapMainnetForkTest is TestBase {
         vm.expectRevert(TreeSwapBitVault.UnexpectedTokenConfiguration.selector);
         vm.prank(user);
         vault.reserve(quote, userSignature, solverSignature);
+    }
+
+    function testForkFalseReturnUpgradeCannotConsumeLockedLiability() public {
+        if (!forkReady) return;
+
+        _depositVault(1_000 ether);
+        FalseReturnBitImplementation replacement = new FalseReturnBitImplementation();
+
+        bytes32 vaultPreimage = keccak256("fork-vault-false-return");
+        TreeSwapBitVault.SelectedQuote memory vaultQuote =
+            _vaultQuote(sha256(abi.encodePacked(vaultPreimage)), 400 ether, 0);
+        _reserveVault(vaultQuote);
+        vm.store(BIT_PROXY, IMPLEMENTATION_SLOT, bytes32(uint256(uint160(address(replacement)))));
+        vm.expectRevert(TreeSwapBitVault.TokenTransferFailed.selector);
+        vault.claim(vaultQuote.quoteId, vaultPreimage);
+        assertEq(
+            uint256(vault.swapState(vaultQuote.quoteId)),
+            uint256(TreeSwapBitVault.SwapState.LOCKED),
+            "failed vault transfer consumed the swap"
+        );
+        assertEq(vault.totalLocked(), 400 ether, "failed vault transfer lost its liability");
+        vm.store(BIT_PROXY, IMPLEMENTATION_SLOT, bytes32(uint256(uint160(BIT_IMPLEMENTATION))));
+        vault.claim(vaultQuote.quoteId, vaultPreimage);
+        assertEq(vault.totalLocked(), 0, "restored vault claim retained a liability");
+
+        bytes32 userPreimage = keccak256("fork-user-false-return");
+        TreeSwapUserEscrow.SolverQuote memory userQuote =
+            _userQuote(sha256(abi.encodePacked(userPreimage)), 300 ether, 0);
+        _openUserEscrow(userQuote);
+        vm.store(BIT_PROXY, IMPLEMENTATION_SLOT, bytes32(uint256(uint160(address(replacement)))));
+        vm.expectRevert(TreeSwapUserEscrow.TokenTransferFailed.selector);
+        userEscrow.claim(userQuote.quoteId, userPreimage);
+        assertEq(
+            uint256(userEscrow.swapState(userQuote.quoteId)),
+            uint256(TreeSwapUserEscrow.SwapState.LOCKED),
+            "failed user-escrow transfer consumed the swap"
+        );
+        assertEq(userEscrow.totalLocked(), 300 ether, "failed user-escrow transfer lost its liability");
+        vm.store(BIT_PROXY, IMPLEMENTATION_SLOT, bytes32(uint256(uint160(BIT_IMPLEMENTATION))));
+        userEscrow.claim(userQuote.quoteId, userPreimage);
+        assertEq(userEscrow.totalLocked(), 0, "restored user-escrow claim retained a liability");
     }
 
     function testForkSharedRegistryRejectsCrossDirectionPaymentHashReuse() public {

@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { generateKeyPairSync } from "node:crypto";
+import { generateKeyPairSync, randomBytes } from "node:crypto";
+import { EventEmitter } from "node:events";
 import test from "node:test";
 import { Interface, Wallet, getAddress, id, keccak256 } from "ethers";
 import { createFinalizedBitVaultInventoryReader } from "../lib/solver-capacity-readers.mjs";
@@ -7,6 +8,11 @@ import {
   LIGHTNING_CAPACITY_OBSERVATION_SCHEMA,
   buildLightningCapacityObservation,
   createAuthenticatedLightningCapacityReader,
+  createTestAuthenticatedLightningCapacityReader,
+  fixedLightningCapacityHttpsRequest,
+  isProductionAuthenticatedLightningCapacityReader,
+  lightningCapacityObserverOrigin,
+  lightningCapacityReaderTransportMode,
   signLightningCapacityObservation,
   verifyLightningCapacityRequest,
 } from "../lib/lightning-capacity-protocol.mjs";
@@ -250,7 +256,7 @@ function lightningRequest(overrides = {}) {
 }
 
 function lightningReader(fetchObservation, overrides = {}) {
-  return createAuthenticatedLightningCapacityReader({
+  return createTestAuthenticatedLightningCapacityReader({
     observerPublicKey: observerKeys.publicKey,
     observerKeyId: "observer-one",
     requesterPrivateKey: requesterKeys.privateKey,
@@ -261,9 +267,194 @@ function lightningReader(fetchObservation, overrides = {}) {
     maxObservationTtlSeconds: 30,
     timeoutMs: 1_000,
     nowSeconds: () => NOW + 1,
+    randomBytesImpl: randomBytes,
     ...overrides,
   });
 }
+
+function productionLightningReader(overrides = {}) {
+  return createAuthenticatedLightningCapacityReader({
+    observerOrigin: "https://capacity-observer.internal",
+    observerPublicKey: observerKeys.publicKey,
+    observerKeyId: "observer-one",
+    requesterPrivateKey: requesterKeys.privateKey,
+    requesterKeyId: "coordinator-one",
+    maxObservationAgeSeconds: 30,
+    maxClockSkewSeconds: 5,
+    maxObservationTtlSeconds: 30,
+    timeoutMs: 1_000,
+    maximumResponseBytes: 65_536,
+    ...overrides,
+  });
+}
+
+function httpsHarness(payload, overrides = {}) {
+  const body = Buffer.from(JSON.stringify(payload));
+  const captured = { body: null, options: null };
+  const requestImpl = (options, callback) => {
+    captured.options = options;
+    const request = new EventEmitter();
+    request.end = (requestBody) => {
+      captured.body = requestBody;
+      const response = new EventEmitter();
+      response.statusCode = overrides.statusCode ?? 200;
+      response.headers = {
+        "content-type": "application/json",
+        "cache-control": "no-store",
+        "content-length": String(body.length),
+        ...overrides.headers,
+      };
+      response.destroy = () => { response.destroyed = true; };
+      callback(response);
+      queueMicrotask(() => {
+        if (overrides.responseError) response.emit("error", new Error("response failed"));
+        else if (overrides.aborted) response.emit("aborted");
+        else {
+          response.emit("data", overrides.body ?? body);
+          response.emit("end");
+        }
+      });
+    };
+    request.destroy = () => {};
+    return request;
+  };
+  return { captured, requestImpl };
+}
+
+function privateTransportDependencies(harness, addresses = [{ address: "10.23.0.9", family: 4 }]) {
+  return {
+    httpsRequestImpl: harness.requestImpl,
+    lookupImpl: async () => addresses,
+  };
+}
+
+test("separates the fixed production Lightning capacity reader from injected test readers", () => {
+  const production = productionLightningReader();
+  const injected = lightningReader(async () => { throw new Error("not called"); });
+  assert.equal(lightningCapacityReaderTransportMode(production), "fixed-node-https");
+  assert.equal(isProductionAuthenticatedLightningCapacityReader(production), true);
+  assert.equal(lightningCapacityReaderTransportMode(injected), "injected-test");
+  assert.equal(isProductionAuthenticatedLightningCapacityReader(injected), false);
+  assert.throws(() => lightningCapacityReaderTransportMode({ ...production }), /factory provenance/);
+
+  const productionInput = {
+    observerOrigin: "https://capacity-observer.internal",
+    observerPublicKey: observerKeys.publicKey,
+    observerKeyId: "observer-one",
+    requesterPrivateKey: requesterKeys.privateKey,
+    requesterKeyId: "coordinator-one",
+    maxObservationAgeSeconds: 30,
+    maxClockSkewSeconds: 5,
+    maxObservationTtlSeconds: 30,
+    timeoutMs: 1_000,
+    maximumResponseBytes: 65_536,
+  };
+  for (const injectedField of [
+    { fetchObservation: async () => null },
+    { nowSeconds: () => NOW },
+    { randomBytesImpl: () => Buffer.alloc(32) },
+  ]) {
+    assert.throws(
+      () => createAuthenticatedLightningCapacityReader({ ...productionInput, ...injectedField }),
+      /fields are not exact/,
+    );
+  }
+  assert.throws(() => productionLightningReader({
+    requesterPrivateKey: observerKeys.privateKey,
+  }), /must be separate/);
+  for (const origin of [
+    "http://capacity-observer.internal",
+    "https://capacity-observer.internal:8443",
+    "https://user@capacity-observer.internal",
+    "https://capacity-observer.internal/path",
+    "https://capacity-observer.internal?token=secret",
+    "https://capacity-observer.internal#fragment",
+    "https://capacity-observer.example",
+  ]) assert.throws(() => lightningCapacityObserverOrigin(origin), /private HTTPS|only its private origin|private hostname/);
+
+  let getterCalls = 0;
+  const accessorInput = { ...productionInput };
+  Object.defineProperty(accessorInput, "observerOrigin", {
+    enumerable: true,
+    get() {
+      getterCalls += 1;
+      return "https://capacity-observer.internal";
+    },
+  });
+  assert.throws(() => createAuthenticatedLightningCapacityReader(accessorInput), /enumerable data properties/);
+  assert.equal(getterCalls, 0);
+
+  const priorTls = process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+  try {
+    process.env.NODE_TLS_REJECT_UNAUTHORIZED = "0";
+    assert.throws(() => createAuthenticatedLightningCapacityReader(productionInput), /verification is disabled/);
+  } finally {
+    if (priorTls === undefined) delete process.env.NODE_TLS_REJECT_UNAUTHORIZED;
+    else process.env.NODE_TLS_REJECT_UNAUTHORIZED = priorTls;
+  }
+});
+
+test("uses one bounded fresh private HTTPS request for a production capacity observation", async () => {
+  const response = { observation: { safe: true }, signature: "opaque" };
+  const harness = httpsHarness(response);
+  const controller = new AbortController();
+  const envelope = { payload: { requestId: CAPABILITY_DIGEST }, signature: "opaque-request" };
+  assert.deepEqual(await fixedLightningCapacityHttpsRequest(
+    "https://capacity-observer.internal",
+    envelope,
+    { maximumResponseBytes: 65_536, signal: controller.signal },
+    privateTransportDependencies(harness),
+  ), response);
+  assert.equal(harness.captured.options.protocol, "https:");
+  assert.equal(harness.captured.options.hostname, "10.23.0.9");
+  assert.equal(harness.captured.options.family, 4);
+  assert.equal(harness.captured.options.servername, "capacity-observer.internal");
+  assert.equal(harness.captured.options.port, 443);
+  assert.equal(harness.captured.options.method, "POST");
+  assert.equal(harness.captured.options.path, "/v1/capacity");
+  assert.equal(harness.captured.options.agent, false);
+  assert.equal(harness.captured.options.rejectUnauthorized, true);
+  assert.equal(harness.captured.options.signal, controller.signal);
+  assert.equal(harness.captured.options.headers.host, "capacity-observer.internal");
+  assert.equal(harness.captured.options.headers["content-type"], "application/json");
+  assert.deepEqual(JSON.parse(harness.captured.body), envelope);
+
+  for (const unsafe of [
+    httpsHarness(response, { statusCode: 302 }),
+    httpsHarness(response, { headers: { "cache-control": "public" } }),
+    httpsHarness(response, { headers: { "content-type": "text/html" } }),
+    httpsHarness(response, { headers: { "content-encoding": "gzip" } }),
+    httpsHarness(response, { headers: { "transfer-encoding": "chunked" } }),
+    httpsHarness(response, { headers: { "content-length": "1" } }),
+  ]) {
+    await assert.rejects(() => fixedLightningCapacityHttpsRequest(
+      "https://capacity-observer.internal",
+      envelope,
+      { maximumResponseBytes: 65_536 },
+      privateTransportDependencies(unsafe),
+    ), /invalid response|length changed/);
+  }
+  const oversized = httpsHarness(response, { body: Buffer.alloc(1_025) });
+  await assert.rejects(() => fixedLightningCapacityHttpsRequest(
+    "https://capacity-observer.internal",
+    envelope,
+    { maximumResponseBytes: 1_024 },
+    privateTransportDependencies(oversized),
+  ), /size limit/);
+
+  for (const addresses of [
+    [{ address: "203.0.113.9", family: 4 }],
+    [{ address: "10.23.0.9", family: 4 }, { address: "2001:db8::9", family: 6 }],
+    [{ address: "10.23.0.9", family: 6 }],
+  ]) {
+    await assert.rejects(() => fixedLightningCapacityHttpsRequest(
+      "https://capacity-observer.internal",
+      envelope,
+      { maximumResponseBytes: 65_536 },
+      privateTransportDependencies(httpsHarness(response), addresses),
+    ), /outside the private network/);
+  }
+});
 
 test("accepts only a fresh independently keyed aggregate Lightning observation", async () => {
   const requested = [];

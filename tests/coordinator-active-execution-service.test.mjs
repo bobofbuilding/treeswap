@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { lstat, mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,6 +11,7 @@ import {
 import { CoordinatorStore } from "../lib/coordinator-store.mjs";
 import {
   acquireCoordinatorServiceLease,
+  buildCoordinatorActiveExecutionStatus,
   normalizeCoordinatorServiceConfig,
   readCoordinatorServiceHealth,
 } from "../lib/coordinator-service-state.mjs";
@@ -77,6 +79,87 @@ function activeReleaseVerification(now) {
   });
 }
 
+function aggregateActiveServiceStatus(store, startedAt, observedAt) {
+  const observed = new Date(observedAt * 1_000).toISOString();
+  const releaseVerification = activeReleaseVerification(observedAt);
+  return buildCoordinatorActiveExecutionStatus({
+    store,
+    serviceStartedAt: new Date(startedAt * 1_000).toISOString(),
+    heartbeatAt: observed,
+    leaseIdentifier: `sha256:${"1".repeat(64)}`,
+    recoveredInterruptedActions: 0,
+    releaseVerification,
+    activeExecution: {
+      schema: "treeswap.coordinator-active-execution-lifecycle.v1",
+      state: "active",
+      scope: "database-derived-lightning-bit-settlements-only-no-network-job-intake",
+      workSource: "original-coordinator-store-nonterminal-settlements",
+      networkListener: false,
+      startedAt: new Date(startedAt * 1_000).toISOString(),
+      lastAttemptAt: observed,
+      lastSuccessAt: observed,
+      consecutiveFailures: 0,
+      releaseRecordDigest: releaseVerification.recordDigest,
+      policySetDigest: `0x${"9".repeat(64)}`,
+      policyCount: 1,
+      counts: {
+        discovered: 0,
+        eligible: 0,
+        attempted: 0,
+        advanced: 0,
+        waiting: 0,
+        gateClosed: 0,
+        done: 0,
+        halted: 0,
+        backlog: 0,
+      },
+      cycleDigest: `0x${"a".repeat(64)}`,
+      cursorDigest: null,
+      authorizations: {
+        funding: true,
+        lightningDispatch: true,
+        newExposure: true,
+      },
+    },
+  });
+}
+
+test("supervision status is healthy only for one current durably recorded active run", async (t) => {
+  const paths = await fixture(t);
+  const activeEnvironment = environment(paths);
+  const now = Math.floor(Date.now() / 1_000);
+  const store = await CoordinatorStore.open(paths.databasePath);
+  const run = store.beginServiceRun({
+    mode: "active-execution-only",
+    startedAt: now,
+    failureWindowSeconds: 300,
+    maximumFailures: 3,
+  });
+  store.recordServiceRunStatus({
+    handle: run.handle,
+    observedAt: now,
+    status: aggregateActiveServiceStatus(store, now, now),
+  });
+  const healthy = spawnSync(process.execPath, ["infra/coordinator/supervision-status.mjs"], {
+    cwd: process.cwd(),
+    env: { ...process.env, ...activeEnvironment },
+    encoding: "utf8",
+    timeout: 30_000,
+  });
+  assert.equal(healthy.status, 0, healthy.stderr);
+  assert.equal(JSON.parse(healthy.stdout).lastStatusHealthy, true);
+  store.finishServiceRun({ handle: run.handle, finishedAt: now, reason: "requested" });
+  store.close();
+  const stopped = spawnSync(process.execPath, ["infra/coordinator/supervision-status.mjs"], {
+    cwd: process.cwd(),
+    env: { ...process.env, ...activeEnvironment },
+    encoding: "utf8",
+    timeout: 30_000,
+  });
+  assert.equal(stopped.status, 1);
+  assert.equal(JSON.parse(stopped.stdout).state, "STOPPED");
+});
+
 test("active bootstrap stays unhealthy and revokes verification while aborting policy preparation", async (t) => {
   const paths = await fixture(t);
   const config = normalizeCoordinatorServiceConfig(environment(paths));
@@ -119,6 +202,7 @@ test("active bootstrap stays unhealthy and revokes verification while aborting p
         }, { once: true });
       });
     },
+    recordStatus: async () => {},
     recoveredInterruptedActions: 0,
     releaseRefreshSeconds: 5,
     releaseSupervisor,
@@ -168,6 +252,43 @@ test("packaged active service releases its lease when release evidence is unavai
   assert.equal(preparationCalled, false);
   assert.equal((await lstat(paths.databasePath)).mode & 0o777, 0o600);
   assert.equal((await lstat(paths.runtimeDirectory)).mode & 0o777, 0o700);
+  await assert.rejects(lstat(join(paths.runtimeDirectory, "coordinator.lease")), { code: "ENOENT" });
+  const failedStore = await CoordinatorStore.open(paths.databasePath);
+  assert.equal(failedStore.serviceRunStatus().state, "FAILED");
+  assert.equal(failedStore.serviceRunStatus().outcome, "startup-failure");
+  assert.equal(failedStore.serviceRunStatus().failureCount, 1);
+  assert.equal(failedStore.serviceRunStatus().fundingAuthorization, false);
+  failedStore.close();
+});
+
+test("packaged active service opens its durable crash-loop breaker before another release attempt", async (t) => {
+  const paths = await fixture(t);
+  const activeEnvironment = environment(paths, {
+    COORDINATOR_ACTIVE_FAILURE_WINDOW_SECONDS: "300",
+    COORDINATOR_ACTIVE_MAXIMUM_FAILURES: "2",
+  });
+  let policyPreparations = 0;
+  const start = () => startCoordinatorActiveExecutionService({
+    environment: activeEnvironment,
+    fetchImpl: async () => { throw new Error("network must not be reached"); },
+    prepareExecutionPolicySet: async () => {
+      policyPreparations += 1;
+      throw new Error("must not prepare without a verified release");
+    },
+    signal: null,
+  });
+  await assert.rejects(start(), /verification is inactive/);
+  await assert.rejects(start(), /verification is inactive/);
+  await assert.rejects(start(), /crash-loop breaker is open/);
+  assert.equal(policyPreparations, 0);
+  const store = await CoordinatorStore.open(paths.databasePath);
+  const status = store.serviceRunStatus();
+  assert.equal(status.state, "BLOCKED");
+  assert.equal(status.failureCount, 2);
+  assert.equal(status.maximumFailures, 2);
+  assert.equal(status.crashLoopOpen, true);
+  assert.equal(status.fundingAuthorization, false);
+  store.close();
   await assert.rejects(lstat(join(paths.runtimeDirectory, "coordinator.lease")), { code: "ENOENT" });
 });
 

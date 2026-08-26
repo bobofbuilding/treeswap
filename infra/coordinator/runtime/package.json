@@ -4,6 +4,7 @@
   "private": true,
   "type": "module",
   "dependencies": {
+    "@noble/curves": "1.2.0",
     "ethers": "6.17.0"
   }
 }

@@ -1,11 +1,23 @@
 import assert from "node:assert/strict";
-import { generateKeyPairSync, sign } from "node:crypto";
-import { mkdtemp, rm } from "node:fs/promises";
+import { createHash, generateKeyPairSync, sign } from "node:crypto";
+import { chmod, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
-import { id, Wallet } from "ethers";
+import {
+  id,
+  Interface,
+  Signature,
+  TypedDataEncoder,
+  Wallet,
+} from "ethers";
+import {
+  createClientSafeBlindQuoteSession,
+  createTestClientSafeBlindQuoteSession,
+  isClientSafeBlindQuoteSession,
+  isProductionClientSafeBlindQuoteSession,
+} from "../lib/blind-quote-preview.mjs";
 import {
   BLIND_RFQ_OFFER_TYPES,
   USER_EXECUTION_AUTHORIZATION_TYPES,
@@ -23,10 +35,15 @@ import {
   selectBlindQuote,
   validateBlindSolverOffer,
   verifyBlindQuoteSelectionAuthorization,
+  verifiedBlindQuoteBook,
   verifiedFinalizedExecutableQuote,
 } from "../lib/blind-rfq.mjs";
 import { CoordinatorStore } from "../lib/coordinator-store.mjs";
 import { invoiceDigest } from "../lib/lnd-rest-client.mjs";
+import {
+  buildExecutableVenuePriceSignal,
+  executableVenueObservationTypedData,
+} from "../lib/executable-venue-price-signal.mjs";
 import { buildBlindPricingRequest } from "../lib/privacy.mjs";
 import {
   EXECUTABLE_RFQ_OFFER_TYPES,
@@ -38,12 +55,125 @@ import {
 } from "../lib/rfq.mjs";
 import {
   RfqDeliveryError,
+  buildRfqDeliveryRequest,
   buildSignedRfqDeliveryResponse,
+  collectTestVerifiedRfqDeliveries,
   collectVerifiedRfqDeliveries,
+  createRfqDeliveryClient,
+  createTestRfqDeliveryClient,
+  isProductionRfqDeliveryClient,
+  isRfqDeliveryClient,
+  queryTestVerifiedRfqDelivery,
+  queryVerifiedRfqDelivery,
+  rfqDeliveryClientLifecycleState,
+  rfqDeliveryClientTransportMode,
   rfqDeliveryPayloadDigest,
   rfqDeliveryResponseDigest,
   verifiedRfqDeliveryCollection,
 } from "../lib/rfq-delivery.mjs";
+import {
+  RFQ_QUOTE_AUTHORIZATION_TYPES,
+  buildRfqQuoteAuthorization,
+  createRfqQuoteIngressReader,
+  createRfqQuoteIngressRoute,
+  createRfqSelectionReservationService,
+  createTestRfqQuoteIngressReader,
+  createTestRfqQuoteIngressServiceReader,
+  createTestRfqQuoteIngressRoute,
+  createTestRfqSelectionReservationService,
+  isRfqQuoteIngressRoute,
+  rfqQuoteIngressPolicyDigest,
+} from "../lib/rfq-quote-ingress.mjs";
+import {
+  authorizeFinalizedContractIntent,
+  persistAuthorizedContractIntent,
+  prepareFinalizedContractIntent,
+  verifiedAuthorizedContractIntent,
+} from "../lib/rfq-contract-intent.mjs";
+import {
+  observeContractIntentWalletReceipt,
+  prepareContractIntentWalletPreflight,
+  recordContractIntentWalletOutcome,
+  verifyContractIntentWalletContext,
+  verifyContractIntentWalletReceiptQuorum,
+  verifyReplacementContractIntentWalletTransaction,
+  verifyReportedContractIntentWalletTransaction,
+} from "../lib/contract-intent-wallet.mjs";
+import { ContractIntentWalletStore } from "../lib/contract-intent-wallet-store.mjs";
+import { createContractIntentWalletDispatcherForTests } from "../lib/contract-intent-wallet-dispatcher.mjs";
+import {
+  createContractIntentWalletBrowserAdapterForTests,
+  createContractIntentWalletBrowserTombstoneConsumerForTests,
+  verifyContractIntentWalletBrowserClaim,
+} from "../lib/contract-intent-wallet-browser.mjs";
+import {
+  buildContractIntentWalletGatewayClaimRequest,
+  buildContractIntentWalletGatewayOutcomeRequest,
+  createContractIntentWalletGatewayForTests,
+  verifiedContractIntentWalletGatewayClaimResponse,
+  verifiedContractIntentWalletGatewayOutcomeResponse,
+  verifyContractIntentWalletGatewayClaimResponse,
+  verifyContractIntentWalletGatewayOutcomeResponse,
+} from "../lib/contract-intent-wallet-gateway.mjs";
+import {
+  createContractIntentWalletOwnershipServiceForTests,
+} from "../lib/contract-intent-wallet-ownership.mjs";
+import {
+  ContractIntentWalletAbuseStore,
+} from "../lib/contract-intent-wallet-abuse-store.mjs";
+import {
+  createContractIntentWalletSiweEdgeForTests,
+} from "../lib/contract-intent-wallet-siwe-edge.mjs";
+import {
+  CONTRACT_INTENT_WALLET_SESSION_QUERY,
+  createContractIntentWalletSessionProviderForTests,
+  createContractIntentWalletSessionReaderForTests,
+} from "../lib/contract-intent-wallet-session-reader.mjs";
+import {
+  acquireContractIntentWalletEdgeReplicaFenceForTests,
+  createContractIntentWalletEdgePerimeter,
+  createContractIntentWalletEdgePerimeterForTests,
+} from "../lib/contract-intent-wallet-edge-perimeter.mjs";
+import {
+  SolverContractSigningProviderStore,
+  createSolverContractSigningProviderRoute,
+  createTestSolverContractSigner,
+  loadSolverContractSigner,
+} from "../lib/solver-contract-signing-provider.mjs";
+import {
+  SolverContractSigningError,
+  authorizeContractIntentWithSolverSignature,
+  createTestSolverContractSigningClient,
+} from "../lib/solver-contract-signing-transport.mjs";
+import { RfqQuoteIngressStore } from "../lib/rfq-quote-ingress-store.mjs";
+import {
+  claimRfqSelectedSolverFinalizationOwnership,
+  claimRfqSelectionReservationOwnership,
+} from "../lib/rfq-selection-reservation.mjs";
+import {
+  buildSignedSelectedSolverFinalizationResponse,
+  createTestSelectedSolverFinalizationClient,
+  verifySelectedSolverFinalizationRequest,
+} from "../lib/selected-solver-finalization-transport.mjs";
+import {
+  createRfqExecutionCeremonyRoute,
+  createRfqPrivateCeremonyRoute,
+  createTestRfqExecutionCeremonyRoute,
+  createTestRfqPrivateCeremonyRoute,
+  isRfqExecutionCeremonyRoute,
+  isRfqPrivateCeremonyRoute,
+} from "../lib/rfq-private-ceremony.mjs";
+import {
+  isProductionRfqDeliveryService,
+  isRfqDeliveryService,
+  startRfqDeliveryService,
+  startTestRfqDeliveryService,
+} from "../lib/rfq-delivery-service.mjs";
+import {
+  bitRiskPolicyDigest,
+  buildBitRiskAttestation,
+  evaluateBitRisk,
+} from "../lib/risk-policy.mjs";
 import {
   SOLVER_CAPABILITY_TYPES,
   solverCapabilityClaimsDigest,
@@ -53,9 +183,12 @@ import {
   solverEndpointPublicKeyDigest,
   solverLightningNodePubkeyDigest,
   verifiedSolverCapacityRecord,
+  verifiedSolverEndpointTransportBinding,
   verifiedSolverQuoteBinding,
   verifySolverCapability,
 } from "../lib/solver-capability.mjs";
+import { TREE_SWAP_SETTLEMENT_POLICY_V1 } from "../lib/settlement-policy.mjs";
+import { createBolt11Invoice, testBolt11Payee } from "./bolt11-fixture.mjs";
 
 const NOW = 2_000_000_000;
 const BIT = 10n ** 18n;
@@ -63,9 +196,123 @@ const LIGHTNING_TO_BIT = "0x1111111111111111111111111111111111111111";
 const BIT_TO_LIGHTNING = "0x2222222222222222222222222222222222222222";
 const LIGHTNING_TO_BIT_CODE_HASH = id("delivery-lightning-to-bit-runtime");
 const BIT_TO_LIGHTNING_CODE_HASH = id("delivery-bit-to-lightning-runtime");
-const solvers = [new Wallet(`0x${"31".repeat(32)}`), new Wallet(`0x${"32".repeat(32)}`)];
+const QUOTE_API_ORIGIN = "https://quotes.treeswap.example";
+const QUOTE_CLIENT_ORIGIN = "https://app.treeswap.example";
+const BIT_VAULT_WALLET_EVENTS = new Interface([
+  "event Reserved(bytes32 indexed quoteId,bytes32 indexed paymentHash,address indexed solver,address user,address beneficiary,uint256 amount,uint256 fee,uint256 lightningAmountSats,bytes32 invoiceDigest,uint256 nonce,uint256 quoteExpiresAt,uint256 lastSafeClaimAt,uint256 refundAfter)",
+]);
+const USER_ESCROW_WALLET_EVENTS = new Interface([
+  "event Opened(bytes32 indexed quoteId,bytes32 indexed paymentHash,address indexed user,address solver,address solverBeneficiary,uint256 amount,uint256 fee,uint256 lightningAmountSats,bytes32 invoiceDigest,uint256 solverNonce,uint256 quoteExpiresAt,uint256 lastSafeClaimAt,uint256 refundAfter)",
+]);
+const CEREMONY_API_ORIGIN = "https://authorize.treeswap.example";
+const privateCeremonyPolicy = Object.freeze({
+  apiOrigin: CEREMONY_API_ORIGIN,
+  clientOrigin: QUOTE_CLIENT_ORIGIN,
+  maximumInFlightRequests: 16,
+  maximumProcessingMilliseconds: 5_000,
+  maximumRequestBytes: 32_768,
+  maximumResponseBytes: 262_144,
+});
+const invoicePolicy = Object.freeze({
+  allowHashedDescriptions: false,
+  maxExpirySeconds: 86_400,
+  maxInvoiceLength: 4_096,
+  maxRouteHints: 20,
+  maximumFinalCltvDelta: 288,
+  minimumFinalCltvDelta: 80,
+  minimumRemainingSeconds: 900,
+});
+const lightningNodePrivateKeys = [
+  `0x${"51".repeat(32)}`,
+  `0x${"52".repeat(32)}`,
+  `0x${"53".repeat(32)}`,
+];
+const solvers = [
+  new Wallet(`0x${"31".repeat(32)}`),
+  new Wallet(`0x${"32".repeat(32)}`),
+  new Wallet(`0x${"34".repeat(32)}`),
+];
 const user = new Wallet(`0x${"33".repeat(32)}`);
-const endpointKeys = [generateKeyPairSync("ed25519"), generateKeyPairSync("ed25519")];
+const quoteIngressPolicy = Object.freeze({
+  apiOrigin: QUOTE_API_ORIGIN,
+  bitToLightningContract: BIT_TO_LIGHTNING,
+  chainId: 1,
+  clientOrigin: QUOTE_CLIENT_ORIGIN,
+  lightningToBitContract: LIGHTNING_TO_BIT,
+  maximumActiveSessionsPerIdentity: 2,
+  maximumAuthorizationTtlSeconds: 60,
+  maximumExactBitOutputWei: String(1_000n * BIT),
+  maximumExactLightningOutputSats: "1000000",
+  maximumFeeBps: 300,
+  maximumLiveRequests: 16,
+  maximumProcessingMilliseconds: 250,
+  maximumRequestBytes: 16_384,
+  maximumRequestLifetimeSeconds: 120,
+  maximumResponseBytes: 262_144,
+  maximumRequestsPerIdentityWindow: 4,
+  maximumRequestsPerWindowGlobal: 16,
+  maximumRoutingFeeSats: "1000",
+  minimumExactBitOutputWei: String(BIT / 100n),
+  minimumExactLightningOutputSats: "1",
+  quotaWindowSeconds: 600,
+});
+const marketSigners = [
+  new Wallet(`0x${"41".repeat(32)}`),
+  new Wallet(`0x${"42".repeat(32)}`),
+  new Wallet(`0x${"43".repeat(32)}`),
+];
+const marketSourcePolicies = marketSigners.map((signer, index) => Object.freeze({
+  chainId: 1,
+  verifyingContract: "0x57A447E4d5e18A9423408C365963A73F08B9d18C",
+  source: `rfq-market-${index + 1}`,
+  venueId: id(`rfq-market-venue-${index + 1}`).toLowerCase(),
+  controlDomain: id(`rfq-market-control-${index + 1}`).toLowerCase(),
+  operatorOrganization: id(`rfq-market-operator-${index + 1}`).toLowerCase(),
+  signer: signer.address,
+  maximumValiditySeconds: 120,
+}));
+const marketRiskPolicy = Object.freeze({
+  chainId: 1,
+  proxyAddress: "0x57A447E4d5e18A9423408C365963A73F08B9d18C",
+  expectedImplementation: "0x1111111111111111111111111111111111111111",
+  expectedProxyCodeHash: `0x${"aa".repeat(32)}`,
+  expectedImplementationCodeHash: `0x${"bb".repeat(32)}`,
+  decimals: 18,
+  referenceSatsPerBit: 100,
+  maxSnapshotAgeSeconds: 120,
+  maxFinalityLagBlocks: 80,
+  maxPriceAgeSeconds: 120,
+  minPriceSources: 3,
+  maxSignalSpreadBps: 100,
+  maxMarketDeviationBps: 500,
+  maxSwapBitWei: 10_000n * BIT,
+  maxEpochBitWei: 100_000n * BIT,
+  baseFeeBpsLightningToBit: 18,
+  baseFeeBpsBitToLightning: 72,
+  maxFeeBps: 300,
+  reserveFloorBps: 2_500,
+  scarcityStartsBps: 6_000,
+  allowedPriceSourcePolicyDigests: marketSourcePolicies.map((sourcePolicy) => (
+    executableVenueObservationTypedData({
+      sourcePolicy,
+      observation: {
+        source: sourcePolicy.source,
+        direction: "lightning-to-bit",
+        observedAt: NOW,
+        validUntil: NOW + 90,
+        priceMsatPerBit: 100_000n,
+        executableDepthSats: 1_000_000n,
+        executableDepthBitWei: 10_000n * BIT,
+        quoteCommitment: id(`risk-policy-source:${sourcePolicy.source}`).toLowerCase(),
+      },
+    }).value.sourcePolicyDigest
+  )),
+});
+const endpointKeys = [
+  generateKeyPairSync("ed25519"),
+  generateKeyPairSync("ed25519"),
+  generateKeyPairSync("ed25519"),
+];
 const relayKeys = [generateKeyPairSync("ed25519"), generateKeyPairSync("ed25519"), generateKeyPairSync("ed25519")];
 const privateRequest = {
   requestId: id("private-settlement-request"),
@@ -88,7 +335,12 @@ const pricing = buildBlindPricingRequest({
   pricingId: id("unlinkable-public-pricing-request"),
   capacityEpoch: 1,
 });
-const userInvoice = "lnbc250u1treeswapprivate";
+const userInvoice = createBolt11Invoice({
+  amountSats: 25_000n,
+  paymentHash: id("private-bit-to-lightning-payment").toLowerCase(),
+  paymentSecret: id("private-bit-to-lightning-secret").toLowerCase(),
+  timestamp: NOW - 30,
+});
 const bitToLightningRequest = {
   requestId: id("private-bit-to-lightning-request"),
   direction: "bit-to-lightning",
@@ -123,6 +375,7 @@ const blindPolicy = {
   bitToLightningContract: BIT_TO_LIGHTNING,
   lightningToBitContractCodeHash: LIGHTNING_TO_BIT_CODE_HASH,
   bitToLightningContractCodeHash: BIT_TO_LIGHTNING_CODE_HASH,
+  marketRiskPolicyDigest: bitRiskPolicyDigest(marketRiskPolicy),
   maxClockSkewSeconds: 5,
   maxOffersPerRequest: 16,
   maxQuoteTtlSeconds: 120,
@@ -174,7 +427,7 @@ async function capability(index, { direction = "lightning-to-bit" } = {}) {
   const verifyingContract = lightningToBit ? LIGHTNING_TO_BIT : BIT_TO_LIGHTNING;
   const origin = `https://direct-${index + 1}.example`;
   const endpointPublicKey = pem(endpointKeys[index]);
-  const nodePubkey = `02${String(index + 1).padStart(2, "0").repeat(32)}`;
+  const nodePubkey = testBolt11Payee(lightningNodePrivateKeys[index]);
   const claims = {
     capabilityId: id(`delivery-capability-${direction}-${index}`),
     direction: id(direction),
@@ -310,7 +563,97 @@ async function executableEnvelope(blind, index, { request = privateRequest } = {
   };
 }
 
-function pathPlan(verifications, { includeThirdRelay = false } = {}) {
+function marketSignal(index, direction, offerId, validUntil = NOW + 90) {
+  const sourcePolicy = marketSourcePolicies[index];
+  const observation = {
+    source: sourcePolicy.source,
+    direction,
+    observedAt: NOW,
+    validUntil,
+    priceMsatPerBit: 100_000n,
+    executableDepthSats: 1_000_000n,
+    executableDepthBitWei: 10_000n * BIT,
+    quoteCommitment: id(`rfq-market-quote:${offerId}:${index}`).toLowerCase(),
+  };
+  const typedData = executableVenueObservationTypedData({ sourcePolicy, observation });
+  return buildExecutableVenuePriceSignal({
+    sourcePolicy,
+    observation: {
+      ...observation,
+      signature: marketSigners[index].signingKey.sign(
+        TypedDataEncoder.hash(typedData.domain, typedData.types, typedData.value),
+      ).serialized,
+    },
+  });
+}
+
+function currentMarketRiskSnapshot(policy = marketRiskPolicy) {
+  return {
+    chainId: 1,
+    observedAt: NOW,
+    proxyAddress: policy.proxyAddress,
+    implementation: policy.expectedImplementation,
+    proxyCodeHash: policy.expectedProxyCodeHash,
+    implementationCodeHash: policy.expectedImplementationCodeHash,
+    decimals: 18,
+    paused: false,
+    latestBlock: 1_000,
+    finalizedBlock: 970,
+    epochBitVolumeWei: 0n,
+    availableBitWei: 100_000n * BIT,
+    bitCapacityWei: 100_000n * BIT,
+    availableLightningSats: 10_000_000n,
+    lightningCapacitySats: 10_000_000n,
+  };
+}
+
+function marketRiskAttestationForOffer(rawOffer, {
+  validUntil = NOW + 90,
+  policyOverrides = {},
+} = {}) {
+  const direction = rawOffer?.direction === id("lightning-to-bit")
+    ? "lightning-to-bit"
+    : rawOffer?.direction === id("bit-to-lightning")
+      ? "bit-to-lightning"
+      : null;
+  if (!direction) return null;
+  const grossBitAmount = BigInt(rawOffer.grossBitAmount);
+  const feeBitAmount = BigInt(rawOffer.feeBitAmount);
+  const lightningAmountSats = BigInt(rawOffer.lightningAmountSats);
+  if (grossBitAmount <= feeBitAmount || lightningAmountSats <= 0n) return null;
+  const priceSignals = marketSigners.map(
+    (_signer, index) => marketSignal(index, direction, rawOffer.offerId, validUntil),
+  );
+  const policy = { ...marketRiskPolicy, ...policyOverrides };
+  const snapshot = currentMarketRiskSnapshot(policy);
+  const request = {
+    now: NOW,
+    direction,
+    bitWei: grossBitAmount - feeBitAmount,
+    lightningSats: lightningAmountSats,
+  };
+  const evaluation = evaluateBitRisk({ policy, snapshot, priceSignals, request });
+  if (!evaluation.enabled) return null;
+  return buildBitRiskAttestation({ policy, snapshot, request, evaluation });
+}
+
+function marketRiskAttestationsForCollection(collection) {
+  const verified = verifiedRfqDeliveryCollection(collection);
+  const attestations = new Map();
+  for (const delivery of verified.deliveries) {
+    for (const envelope of delivery.envelopes) {
+      try {
+        const attestation = marketRiskAttestationForOffer(envelope.offer);
+        if (attestation && !attestations.has(attestation.requestDigest)) {
+          attestations.set(attestation.requestDigest, attestation);
+        }
+      } catch {}
+    }
+  }
+  return [...attestations.values()];
+}
+
+function pathPlan(verifications, { includeThirdRelay = false, includeThirdSolver = false } = {}) {
   const paths = [
     {
       kind: "relay",
@@ -352,6 +695,15 @@ function pathPlan(verifications, { includeThirdRelay = false } = {}) {
     publicKey: pem(relayKeys[2]),
     operatorCommitment: id("relay-operator-c"),
   });
+  if (includeThirdSolver) paths.push({
+    kind: "direct-solver",
+    pathId: "direct-c",
+    endpointOrigin: "https://direct-3.example",
+    publicKey: pem(endpointKeys[2]),
+    operatorCommitment: id("solver-operator-c"),
+    solverId: solvers[2].address,
+    capabilityVerification: verifications[2],
+  });
   return paths;
 }
 
@@ -361,24 +713,45 @@ function responseKey(pathId) {
   if (pathId === "relay-c") return relayKeys[2].privateKey;
   if (pathId === "direct-a") return endpointKeys[0].privateKey;
   if (pathId === "direct-b") return endpointKeys[1].privateKey;
+  if (pathId === "direct-c") return endpointKeys[2].privateKey;
   throw new Error("unknown test path");
 }
 
 function jsonResponse(value, options = {}) {
   return new Response(typeof value === "string" ? value : JSON.stringify(value), {
     status: options.status ?? 200,
-    headers: { "content-type": options.contentType ?? "application/json", ...options.headers },
+    headers: {
+      "cache-control": "no-store",
+      "content-type": options.contentType ?? "application/json",
+      ...options.headers,
+    },
   });
 }
 
-async function fixture({ includeThirdRelay = false } = {}) {
-  const offers = [await blindEnvelope(0, 10_000), await blindEnvelope(1, 10_100)];
+async function fixture({ includeThirdRelay = false, pricingRequest = pricing } = {}) {
+  const offers = pricingRequest.direction === "lightning-to-bit"
+    ? [
+      await blindEnvelope(0, 10_000, { pricingRequest }),
+      await blindEnvelope(1, 10_100, { pricingRequest }),
+    ]
+    : [
+      await blindEnvelope(0, Number(pricingRequest.exactOutput), {
+        pricingRequest,
+        grossBitAmount: 252n * BIT + BIT / 2n,
+        feeBitAmount: 2n * BIT + BIT / 2n,
+      }),
+      await blindEnvelope(1, Number(pricingRequest.exactOutput), {
+        pricingRequest,
+        grossBitAmount: 253n * BIT,
+        feeBitAmount: 2n * BIT + BIT / 2n,
+      }),
+    ];
   const verifications = offers.map((item) => item.verification);
   const paths = pathPlan(verifications, { includeThirdRelay });
   const responder = async (_url, options, pathId) => {
     const wireRequest = JSON.parse(options.body);
-    assert.deepEqual(wireRequest.rfq, pricing);
-    assert.equal(wireRequest.requestDigest, rfqDeliveryPayloadDigest(pricing));
+    assert.deepEqual(wireRequest.rfq, pricingRequest);
+    assert.equal(wireRequest.requestDigest, rfqDeliveryPayloadDigest(pricingRequest));
     const delivered = pathId === "direct-a" ? [offers[0].envelope]
       : pathId === "direct-b" ? [offers[1].envelope]
         : offers.map((item) => item.envelope);
@@ -399,22 +772,269 @@ async function fixture({ includeThirdRelay = false } = {}) {
     ]) assert.doesNotMatch(publicWire, new RegExp(secret.slice(2).toLowerCase()));
     return jsonResponse(response);
   };
-  return { offers, verifications, paths, responder };
+  return { offers, pricingRequest, verifications, paths, responder };
 }
 
 async function collect(options = {}) {
   const data = await fixture(options);
-  const collection = await collectVerifiedRfqDeliveries({
+  const collection = await collectTestVerifiedRfqDeliveries({
     paths: data.paths,
-    requestId: pricing.pricingId,
-    requestDigest: rfqDeliveryPayloadDigest(pricing),
-    rfq: pricing,
+    requestId: data.pricingRequest.pricingId,
+    requestDigest: rfqDeliveryPayloadDigest(data.pricingRequest),
+    rfq: data.pricingRequest,
     policy: deliveryPolicy,
     requestImpl: data.responder,
     nowSeconds: () => NOW,
     randomBytesImpl: () => Buffer.alloc(32, 7),
   });
   return { ...data, collection };
+}
+
+async function collectedBlindBook(options = {}) {
+  const data = await collect(options);
+  return {
+    ...data,
+    book: buildMultipathBlindQuoteBook({
+      pricing: data.pricingRequest,
+      collection: data.collection,
+      capabilityVerifications: data.verifications,
+      marketRiskAttestations: marketRiskAttestationsForCollection(data.collection),
+      now: NOW,
+      policy: blindPolicy,
+    }),
+  };
+}
+
+async function quoteIngressStore(policy = quoteIngressPolicy) {
+  return RfqQuoteIngressStore.open({
+    allowMemory: true,
+    identityKey: Buffer.alloc(32, 91),
+    initialize: true,
+    maximumActiveSessionsPerIdentity: policy.maximumActiveSessionsPerIdentity,
+    maximumLiveRequests: policy.maximumLiveRequests,
+    maximumRequestLifetimeSeconds: policy.maximumRequestLifetimeSeconds,
+    maximumRequestsPerIdentityWindow: policy.maximumRequestsPerIdentityWindow,
+    maximumRequestsPerWindowGlobal: policy.maximumRequestsPerWindowGlobal,
+    path: ":memory:",
+    policyDigest: rfqQuoteIngressPolicyDigest(policy),
+    quotaWindowSeconds: policy.quotaWindowSeconds,
+  });
+}
+
+async function signedQuoteIngressBody({
+  policy = quoteIngressPolicy,
+  publicPricing = pricing,
+  requestNonce = "17",
+  authorizationExpiresAt = NOW + 30,
+} = {}) {
+  const material = buildRfqQuoteAuthorization({
+    authorizationExpiresAt,
+    policy,
+    pricing: publicPricing,
+    requestNonce,
+    user: user.address,
+  });
+  return {
+    pricing: publicPricing,
+    authorization: material.message,
+    signature: await user.signTypedData(material.domain, RFQ_QUOTE_AUTHORIZATION_TYPES, material.message),
+  };
+}
+
+function quoteIngressRequest(path, value, overrides = {}) {
+  const body = Buffer.isBuffer(value) || value instanceof Uint8Array
+    ? Buffer.from(value)
+    : Buffer.from(typeof value === "string" ? value : JSON.stringify(value), "utf8");
+  const headers = new Headers({
+    "cache-control": "no-store",
+    "content-length": String(body.length),
+    "content-type": "application/json",
+    origin: QUOTE_CLIENT_ORIGIN,
+    ...overrides.headers,
+  });
+  if (overrides.omitContentLength) headers.delete("content-length");
+  return new Request(`${overrides.origin ?? QUOTE_API_ORIGIN}${path}`, {
+    method: overrides.method ?? "POST",
+    headers,
+    body: overrides.method === "GET" ? undefined : body,
+    signal: overrides.signal,
+  });
+}
+
+function privateCeremonyRequest(path, value, overrides = {}) {
+  const body = Buffer.isBuffer(value) || value instanceof Uint8Array
+    ? Buffer.from(value)
+    : Buffer.from(typeof value === "string"
+      ? value
+      : JSON.stringify(value, (_key, item) => typeof item === "bigint" ? item.toString() : item), "utf8");
+  const headers = new Headers({
+    "cache-control": "no-store",
+    "content-length": String(body.length),
+    "content-type": "application/json",
+    origin: QUOTE_CLIENT_ORIGIN,
+    ...overrides.headers,
+  });
+  if (overrides.omitContentLength) headers.delete("content-length");
+  return new Request(`${overrides.origin ?? CEREMONY_API_ORIGIN}${path}`, {
+    method: overrides.method ?? "POST",
+    headers,
+    body: overrides.method === "GET" || overrides.method === "OPTIONS" ? undefined : body,
+    signal: overrides.signal,
+  });
+}
+
+function walletGatewayRequest(path, value, overrides = {}) {
+  const body = Buffer.isBuffer(value) || value instanceof Uint8Array
+    ? Buffer.from(value)
+    : Buffer.from(typeof value === "string" ? value : JSON.stringify(value), "utf8");
+  const headers = new Headers({
+    "cache-control": "no-store",
+    "content-length": String(body.length),
+    "content-type": "application/json",
+    ...overrides.headers,
+  });
+  if (overrides.omitContentLength) headers.delete("content-length");
+  return new Request(`${overrides.origin ?? "https://wallet-gateway.internal"}${path}`, {
+    method: overrides.method ?? "POST",
+    headers,
+    body: overrides.method === "GET" ? undefined : body,
+    signal: overrides.signal,
+  });
+}
+
+function walletEdgeRequest(path, value, overrides = {}) {
+  const body = Buffer.isBuffer(value) || value instanceof Uint8Array
+    ? Buffer.from(value)
+    : Buffer.from(typeof value === "string" ? value : JSON.stringify(value), "utf8");
+  const origin = overrides.origin ?? "https://treeswap.vercel.app";
+  const headers = new Headers({
+    "cache-control": "no-store",
+    "content-length": String(body.length),
+    "content-type": "application/json",
+    cookie: overrides.cookie ?? `__Host-treeswap_session=${"cd".repeat(32)}`,
+    origin,
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin",
+    ...overrides.headers,
+  });
+  if (overrides.omitContentLength) headers.delete("content-length");
+  return new Request(`${overrides.requestOrigin ?? origin}${path}`, {
+    method: overrides.method ?? "POST",
+    headers,
+    body: overrides.method === "GET" ? undefined : body,
+  });
+}
+
+function walletEdgeSessionDatabase({
+  chainId = 1,
+  createdAt = NOW - 10,
+  expiresAt = NOW + 600,
+  sessionToken = "cd".repeat(32),
+  wallet = user.address.toLowerCase(),
+} = {}) {
+  const expectedHash = createHash("sha256").update(sessionToken, "utf8").digest("hex");
+  const observed = { binds: [], queries: 0 };
+  const state = {
+    chainId,
+    createdAt,
+    duplicate: false,
+    expiresAt,
+    wallet,
+  };
+  return {
+    observed,
+    state,
+    prepare(sql) {
+      assert.equal(sql, CONTRACT_INTENT_WALLET_SESSION_QUERY);
+      observed.queries += 1;
+      return {
+        bind(tokenHash, observedAt) {
+          observed.binds.push([tokenHash, observedAt]);
+          return {
+            async all() {
+              const active = tokenHash === expectedHash
+                && Date.parse(observedAt) < state.expiresAt * 1_000;
+              const row = {
+                tokenHash: expectedHash,
+                walletAddress: state.wallet,
+                chainId: state.chainId,
+                createdAt: new Date(state.createdAt * 1_000).toISOString(),
+                expiresAt: new Date(state.expiresAt * 1_000).toISOString(),
+              };
+              return {
+                results: active ? (state.duplicate ? [row, { ...row }] : [row]) : [],
+              };
+            },
+          };
+        },
+      };
+    },
+  };
+}
+
+async function quoteIngressFixture(t, {
+  nowSeconds = () => NOW,
+  policy = quoteIngressPolicy,
+  read = null,
+  randomBytesImpl = null,
+} = {}) {
+  const { book, verifications } = await collectedBlindBook();
+  const store = await quoteIngressStore(policy);
+  const coordinatorStore = await CoordinatorStore.open(":memory:", { allowMemory: true });
+  const deployment = new AbortController();
+  let previewEntropy = 40;
+  let reads = 0;
+  let lastReaderPricing = null;
+  const reader = createTestRfqQuoteIngressReader({
+    read: read ?? (async (publicPricing, { signal }) => {
+      reads += 1;
+      lastReaderPricing = publicPricing;
+      assert.equal(signal.aborted, false);
+      return createTestClientSafeBlindQuoteSession({
+        book,
+        nowSeconds,
+        randomBytesImpl: () => Buffer.alloc(32, ++previewEntropy),
+      });
+    }),
+  });
+  let reservationEntropy = 110;
+  const selectionReservation = createTestRfqSelectionReservationService({
+    admissionPolicy,
+    capabilityVerifications: verifications,
+    coordinatorStore,
+    invoicePolicy,
+    maximumPendingSelections: policy.maximumLiveRequests,
+    nowSeconds,
+    randomBytesImpl: () => Buffer.alloc(32, ++reservationEntropy),
+    signal: deployment.signal,
+  });
+  let routeEntropy = 70;
+  const route = createTestRfqQuoteIngressRoute({
+    nowSeconds,
+    policy,
+    quoteReader: reader,
+    randomBytesImpl: randomBytesImpl ?? (() => Buffer.alloc(32, ++routeEntropy)),
+    replayStore: store,
+    selectionReservation,
+    signal: deployment.signal,
+  });
+  t.after(() => {
+    try { route.stop(); } catch {}
+    try { store.close(); } catch {}
+    try { coordinatorStore.close(); } catch {}
+  });
+  return {
+    book,
+    coordinatorStore,
+    deployment,
+    lastReaderPricing: () => lastReaderPricing,
+    reader,
+    reads: () => reads,
+    route,
+    selectionReservation,
+    store,
+  };
 }
 
 async function preparedDurableStore(t, {
@@ -508,16 +1128,4920 @@ async function durableReservation(t, {
   return { ...prepared, reservation, userAuthorization };
 }
 
+async function authorizedContractFixture(t, direction) {
+  const request = direction === "lightning-to-bit" ? privateRequest : bitToLightningRequest;
+  const pricingRequest = direction === "lightning-to-bit" ? pricing : bitToLightningPricing;
+  const data = await collectedBlindBook({ pricingRequest });
+  const selection = selectBlindQuote(data.book, data.book.offers[0].offer.offerId);
+  const { reservation } = await durableReservation(t, {
+    selection,
+    verification: data.verifications[0],
+    privateSettlementRequest: request,
+  });
+  const invoice = direction === "lightning-to-bit"
+    ? createBolt11Invoice({
+        amountSats: BigInt(selection.selected.offer.lightningAmountSats),
+        paymentHash: id("contract-intent-lightning-to-bit-payment").toLowerCase(),
+        paymentSecret: id("contract-intent-lightning-to-bit-secret").toLowerCase(),
+        privateKey: lightningNodePrivateKeys[0],
+        timestamp: NOW - 30,
+      })
+    : userInvoice;
+  const base = await executableEnvelope(selection.selected.offer, 0, { request });
+  const offer = direction === "lightning-to-bit"
+    ? {
+        ...base.offer,
+        paymentHash: id("contract-intent-lightning-to-bit-payment").toLowerCase(),
+        invoiceDigest: invoiceDigest(invoice),
+      }
+    : base.offer;
+  const envelope = {
+    offer,
+    signature: await solvers[0].signTypedData(
+      rfqDomain(request),
+      EXECUTABLE_RFQ_OFFER_TYPES,
+      offer,
+    ),
+  };
+  const finalized = finalizeSelectedBlindQuote({
+    request,
+    reservation,
+    envelope,
+    capabilityVerification: data.verifications[0],
+    now: NOW,
+    quotePolicy,
+  });
+  const authorized = await executionAuthorization(request, finalized);
+  return {
+    authorized,
+    capabilityVerification: data.verifications[0],
+    invoice,
+    request,
+    selection,
+  };
+}
+
+test("turns an authorized Lightning-to-BIT RFQ into the exact dual-signed vault intent", async (t) => {
+  const fixture = await authorizedContractFixture(t, "lightning-to-bit");
+  const prepared = prepareFinalizedContractIntent({
+    bitcoinHeight: 900_000,
+    finalization: fixture.authorized,
+    invoice: fixture.invoice,
+    invoicePolicy,
+    now: NOW,
+    settlementPolicy: TREE_SWAP_SETTLEMENT_POLICY_V1,
+  });
+  assert.equal(prepared.schema, "treeswap.prepared-contract-intent.v1");
+  assert.equal(prepared.primaryType, "SelectedQuote");
+  assert.equal(prepared.domain.name, "TreeSwap BIT Vault");
+  assert.equal(prepared.domain.verifyingContract, LIGHTNING_TO_BIT);
+  assert.equal(prepared.message.user, user.address);
+  assert.equal(prepared.message.solver, solvers[0].address);
+  assert.equal(prepared.message.beneficiary, privateRequest.beneficiary);
+  assert.equal(prepared.message.nonce, privateRequest.nonce);
+  assert.equal(prepared.message.amount - prepared.message.fee, privateRequest.exactBitOutputWei);
+  assert.equal(prepared.digest, TypedDataEncoder.hash(prepared.domain, prepared.types, prepared.message));
+  assert.ok(prepared.message.quoteExpiresAt < prepared.message.lastSafeClaimAt);
+  assert.ok(prepared.message.lastSafeClaimAt < prepared.message.refundAfter);
+  assert.equal(prepared.movesFundsImmediately, false);
+  assert.equal(prepared.walletDispatchAuthority, false);
+  assert.equal(prepared.lightningDispatchAuthority, false);
+
+  const solverSignature = await solvers[0].signTypedData(
+    prepared.domain,
+    prepared.types,
+    prepared.message,
+  );
+  const userSignature = await user.signTypedData(prepared.domain, prepared.types, prepared.message);
+  assert.throws(() => authorizeFinalizedContractIntent({
+    now: NOW,
+    prepared,
+    solverSignature: userSignature,
+    userSignature,
+  }), /solver contract intent signature belongs to another account/);
+  assert.throws(() => authorizeFinalizedContractIntent({
+    now: NOW,
+    prepared: { ...prepared },
+    solverSignature,
+    userSignature,
+  }), /original prepared RFQ artifact/);
+  assert.throws(() => authorizeFinalizedContractIntent({
+    now: NOW,
+    prepared,
+    solverSignature: Signature.from(solverSignature).compactSerialized,
+    userSignature,
+  }), /canonical 65-byte ECDSA signature/);
+  let signatureCoercionInvoked = false;
+  assert.throws(() => authorizeFinalizedContractIntent({
+    now: NOW,
+    prepared,
+    solverSignature: {
+      toString() {
+        signatureCoercionInvoked = true;
+        return solverSignature;
+      },
+    },
+    userSignature,
+  }), /canonical 65-byte ECDSA signature/);
+  assert.equal(signatureCoercionInvoked, false);
+  const authorized = authorizeFinalizedContractIntent({
+    now: NOW,
+    prepared,
+    solverSignature,
+    userSignature,
+  });
+  assert.equal(authorized.schema, "treeswap.authorized-contract-intent.v1");
+  assert.equal(authorized.contractIntentDigest, prepared.digest);
+  assert.equal(authorized.userAuthorizationDigest, fixture.authorized.userAuthorizationDigest);
+  assert.equal(authorized.transaction.from, user.address);
+  assert.equal(authorized.transaction.to, LIGHTNING_TO_BIT);
+  assert.equal(authorized.transaction.value, "0x0");
+  assert.equal(authorized.transaction.data.slice(0, 10), "0x688ff634");
+  assert.equal(authorized.walletDispatchAuthority, false);
+  assert.equal(authorized.lightningDispatchAuthority, false);
+  const persisted = persistAuthorizedContractIntent(authorized, { now: NOW + 1 });
+  assert.equal(persisted.state, "CONTRACT_INTENT_BOUND");
+  assert.equal(persisted.intentDigest, authorized.userAuthorizationDigest);
+  assert.equal(persisted.contractIntentDigest, authorized.contractIntentDigest);
+  assert.equal(persisted.contractQuoteId, authorized.quoteId);
+  assert.equal(persisted.contractCalldata, authorized.transaction.data);
+  assert.equal(persisted.contractCalldataDigest, authorized.transaction.dataDigest);
+  assert.equal(persisted.contractToAddress, LIGHTNING_TO_BIT.toLowerCase());
+  assert.equal(persisted.contractUserSignature, authorized.userSignature.toLowerCase());
+  assert.equal(
+    persistAuthorizedContractIntent(authorized, { now: NOW + 2 }).contractIntentRecordDigest,
+    persisted.contractIntentRecordDigest,
+  );
+  assert.throws(
+    () => persistAuthorizedContractIntent({ ...authorized }, { now: NOW + 2 }),
+    /lacks verified RFQ and signature provenance/,
+  );
+  assert.equal(verifiedAuthorizedContractIntent(authorized, { now: NOW + 1 }), authorized);
+  assert.throws(
+    () => verifiedAuthorizedContractIntent({ ...authorized }, { now: NOW + 1 }),
+    /lacks verified RFQ and signature provenance/,
+  );
+});
+
+test("turns an authorized BIT-to-Lightning RFQ into a solver-signed user escrow intent", async (t) => {
+  const fixture = await authorizedContractFixture(t, "bit-to-lightning");
+  const prepared = prepareFinalizedContractIntent({
+    bitcoinHeight: 900_000,
+    finalization: fixture.authorized,
+    invoice: `lightning:${fixture.invoice.toUpperCase()}`,
+    invoicePolicy,
+    now: NOW,
+    settlementPolicy: TREE_SWAP_SETTLEMENT_POLICY_V1,
+  });
+  assert.equal(prepared.primaryType, "BitToLightningQuote");
+  assert.equal(prepared.domain.name, "TreeSwap User BIT Escrow");
+  assert.equal(prepared.domain.verifyingContract, BIT_TO_LIGHTNING);
+  assert.equal(prepared.message.user, user.address);
+  assert.equal(prepared.message.solver, solvers[0].address);
+  assert.equal(prepared.message.solverBeneficiary, solvers[0].address);
+  assert.equal(prepared.message.solverNonce, fixture.authorized.envelope.offer.offerNonce);
+  assert.equal(prepared.message.lightningAmountSats, bitToLightningRequest.exactLightningOutputSats);
+  const solverSignature = await solvers[0].signTypedData(
+    prepared.domain,
+    prepared.types,
+    prepared.message,
+  );
+  const unnecessaryUserSignature = await user.signTypedData(
+    prepared.domain,
+    prepared.types,
+    prepared.message,
+  );
+  assert.throws(() => authorizeFinalizedContractIntent({
+    now: NOW,
+    prepared,
+    solverSignature,
+    userSignature: unnecessaryUserSignature,
+  }), /must not carry a user contract signature/);
+  const authorized = authorizeFinalizedContractIntent({
+    now: NOW,
+    prepared,
+    solverSignature,
+    userSignature: null,
+  });
+  assert.equal(authorized.userSignature, null);
+  assert.equal(authorized.transaction.from, user.address);
+  assert.equal(authorized.transaction.to, BIT_TO_LIGHTNING);
+  assert.equal(authorized.transaction.data.slice(0, 10), "0xcd83331b");
+  assert.equal(authorized.walletDispatchAuthority, false);
+  const persisted = persistAuthorizedContractIntent(authorized, { now: NOW + 1 });
+  assert.equal(persisted.state, "CONTRACT_INTENT_BOUND");
+  assert.equal(persisted.contractIntentDigest, authorized.contractIntentDigest);
+  assert.equal(persisted.contractQuoteId, authorized.quoteId);
+  assert.equal(persisted.contractToAddress, BIT_TO_LIGHTNING.toLowerCase());
+  assert.equal(persisted.contractUserSignature, null);
+  assert.throws(() => prepareFinalizedContractIntent({
+    bitcoinHeight: 900_000,
+    finalization: fixture.authorized,
+    invoice: `${fixture.invoice}changed`,
+    invoicePolicy,
+    now: NOW,
+    settlementPolicy: TREE_SWAP_SETTLEMENT_POLICY_V1,
+  }), /invoice validation failed/);
+  assert.throws(() => prepareFinalizedContractIntent({
+    bitcoinHeight: 900_000,
+    finalization: fixture.authorized,
+    invoice: fixture.invoice,
+    invoicePolicy,
+    now: NOW + 31,
+    settlementPolicy: TREE_SWAP_SETTLEMENT_POLICY_V1,
+  }), /required wallet submission window/);
+});
+
+for (const direction of ["lightning-to-bit", "bit-to-lightning"]) {
+  test(`obtains and replays an independent ${direction} solver contract signature`, async (t) => {
+    const fixture = await authorizedContractFixture(t, direction);
+    const prepared = prepareFinalizedContractIntent({
+      bitcoinHeight: 900_000,
+      finalization: fixture.authorized,
+      invoice: fixture.invoice,
+      invoicePolicy,
+      now: NOW,
+      settlementPolicy: TREE_SWAP_SETTLEMENT_POLICY_V1,
+    });
+    const binding = verifiedSolverEndpointTransportBinding(fixture.capabilityVerification);
+    const requesterKeys = generateKeyPairSync("ed25519");
+    assert.throws(() => createTestSolverContractSigner({
+      expectedSolver: user.address,
+      privateKey: solvers[0].privateKey,
+    }), /does not match expected solver/);
+    const signer = createTestSolverContractSigner({
+      expectedSolver: binding.solverId,
+      privateKey: solvers[0].privateKey,
+    });
+    const directory = await mkdtemp(join(tmpdir(), "treeswap-solver-signing-"));
+    const databasePath = join(directory, "signing.sqlite");
+    let store = await SolverContractSigningProviderStore.open({
+      allowMemory: false,
+      initialize: true,
+      maximumLiveRequests: 8,
+      path: databasePath,
+    });
+    const providerInput = () => ({
+      capability: fixture.capabilityVerification,
+      endpointPrivateKey: endpointKeys[0].privateKey,
+      maximumInFlightRequests: 8,
+      maximumRequestBytes: 32_768,
+      nowSeconds: () => NOW,
+      requesterPublicKey: requesterKeys.publicKey,
+      requestTimeoutMs: 1_000,
+      signer,
+      store,
+    });
+    let route = createSolverContractSigningProviderRoute(providerInput());
+    let requests = 0;
+    let phase = "mutate";
+    const deployment = new AbortController();
+    const client = createTestSolverContractSigningClient({
+      nowSeconds: () => NOW,
+      requesterPrivateKey: requesterKeys.privateKey,
+      requestImpl: async (url, options) => {
+        requests += 1;
+        const requestOptions = phase === "mutate"
+          ? {
+              ...options,
+              body: JSON.stringify({
+                ...JSON.parse(options.body),
+                contractIntentDigest: `0x${"ff".repeat(32)}`,
+              }),
+            }
+          : options;
+        const response = await route.handle(new Request(url, requestOptions));
+        if (phase === "mutate") {
+          phase = "lose-after-commit";
+          return response;
+        }
+        if (phase === "lose-after-commit") {
+          phase = "replay";
+          await response.arrayBuffer();
+          throw new Error("response lost after provider commit");
+        }
+        return response;
+      },
+      signal: deployment.signal,
+    });
+    t.after(async () => {
+      deployment.abort();
+      try { store.close(); } catch {}
+      await rm(directory, { recursive: true, force: true });
+    });
+
+    await assert.rejects(
+      () => client.sign({ capability: fixture.capabilityVerification, prepared: { ...prepared } }),
+      /original prepared RFQ provenance/,
+    );
+    await assert.rejects(
+      () => client.sign({ capability: fixture.capabilityVerification, prepared }),
+      (error) => error instanceof SolverContractSigningError
+        && error.code === "HTTP_REJECTED" && error.ambiguous === false,
+    );
+    assert.equal(store.status().readyRequests, 0);
+    await assert.rejects(
+      () => client.sign({ capability: fixture.capabilityVerification, prepared }),
+      (error) => error instanceof SolverContractSigningError
+        && error.code === "TRANSPORT_AMBIGUOUS" && error.ambiguous === true,
+    );
+    assert.deepEqual(store.status(), {
+      schema: "treeswap.solver-contract-signing-provider-store-status.v1",
+      state: "open",
+      durable: true,
+      clockHighWater: NOW,
+      claimedRequests: 0,
+      readyRequests: 1,
+      privateKeyPersisted: false,
+      fundingAuthorization: false,
+    });
+
+    store.close();
+    store = await SolverContractSigningProviderStore.open({
+      allowMemory: false,
+      initialize: false,
+      maximumLiveRequests: 8,
+      path: databasePath,
+    });
+    route = createSolverContractSigningProviderRoute(providerInput());
+    const solverResult = await client.sign({
+      capability: fixture.capabilityVerification,
+      prepared,
+    });
+    assert.equal(requests, 3);
+    assert.equal(solverResult.contractIntentDigest, prepared.digest);
+    assert.equal(solverResult.solver, solvers[0].address.toLowerCase());
+    assert.equal(solverResult.fundingAuthorization, false);
+    assert.equal(signer.status().exportsPrivateKey, false);
+    const userSignature = direction === "lightning-to-bit"
+      ? await user.signTypedData(prepared.domain, prepared.types, prepared.message)
+      : null;
+    const authorized = authorizeContractIntentWithSolverSignature({
+      now: NOW,
+      prepared,
+      solverResult,
+      userSignature,
+    });
+    assert.equal(authorized.contractIntentDigest, prepared.digest);
+    assert.equal(authorized.solverSignature, solverResult.solverSignature);
+    assert.equal(authorized.walletDispatchAuthority, false);
+
+    const preflight = prepareContractIntentWalletPreflight({ authorizedIntent: authorized, now: NOW });
+    assert.deepEqual(preflight.request, {
+      method: "eth_sendTransaction",
+      params: [{
+        data: authorized.transaction.data.toLowerCase(),
+        from: authorized.transaction.from.toLowerCase(),
+        to: authorized.transaction.to.toLowerCase(),
+        value: "0x0",
+      }],
+    });
+    assert.equal(preflight.requestsWalletConnection, false);
+    assert.equal(preflight.requestsChainSwitch, false);
+    assert.equal(preflight.walletDispatchAuthority, false);
+    assert.throws(() => verifyContractIntentWalletContext({
+      accounts: [user.address],
+      chainId: "0x1",
+      now: NOW,
+      preflight: { ...preflight },
+    }), /original contract-intent preflight/);
+    assert.throws(() => verifyContractIntentWalletContext({
+      accounts: [solvers[0].address],
+      chainId: "0x1",
+      now: NOW,
+      preflight,
+    }), /exact contract-intent wallet/);
+    assert.throws(() => verifyContractIntentWalletContext({
+      accounts: [user.address],
+      chainId: "0x2",
+      now: NOW,
+      preflight,
+    }), /chain does not match/);
+    let accountAccessorReads = 0;
+    const accessorAccounts = [user.address];
+    Object.defineProperty(accessorAccounts, "0", {
+      enumerable: true,
+      get() {
+        accountAccessorReads += 1;
+        return user.address;
+      },
+    });
+    assert.throws(() => verifyContractIntentWalletContext({
+      accounts: accessorAccounts,
+      chainId: "0x1",
+      now: NOW,
+      preflight,
+    }), /data properties/);
+    assert.equal(accountAccessorReads, 0);
+    const walletContext = verifyContractIntentWalletContext({
+      accounts: [user.address],
+      chainId: "0x1",
+      now: NOW,
+      preflight,
+    });
+    const reportedHash = id(`wallet-reported:${direction}`).toLowerCase();
+    const submission = recordContractIntentWalletOutcome({
+      accounts: [user.address],
+      chainId: "0x1",
+      context: walletContext,
+      now: NOW,
+      outcome: {
+        errorCode: null,
+        status: "reported",
+        transactionHash: reportedHash,
+      },
+    });
+    assert.equal(submission.state, "SUBMISSION_REPORTED");
+    assert.equal(submission.retryAuthorized, false);
+    const changedContextSubmission = recordContractIntentWalletOutcome({
+      accounts: [],
+      chainId: "0x2",
+      context: walletContext,
+      now: NOW,
+      outcome: {
+        errorCode: null,
+        status: "reported",
+        transactionHash: reportedHash,
+      },
+    });
+    assert.equal(changedContextSubmission.state, "SUBMISSION_REPORTED_CONTEXT_CHANGED");
+    assert.equal(changedContextSubmission.transactionHash, reportedHash);
+    assert.equal(changedContextSubmission.requiresIndependentReconciliation, true);
+    const rejection = recordContractIntentWalletOutcome({
+      accounts: [user.address],
+      chainId: "0x1",
+      context: walletContext,
+      now: NOW,
+      outcome: { errorCode: 4001, status: "rejected", transactionHash: null },
+    });
+    assert.equal(rejection.state, "USER_REJECTED");
+    assert.equal(rejection.requiresIndependentReconciliation, false);
+    const ambiguous = recordContractIntentWalletOutcome({
+      accounts: [user.address],
+      chainId: "0x1",
+      context: walletContext,
+      now: NOW,
+      outcome: { errorCode: null, status: "ambiguous", transactionHash: null },
+    });
+    assert.equal(ambiguous.state, "SUBMISSION_UNKNOWN");
+    assert.equal(ambiguous.retryAuthorized, false);
+    assert.throws(() => recordContractIntentWalletOutcome({
+      accounts: [user.address],
+      chainId: "0x1",
+      context: walletContext,
+      now: NOW,
+      outcome: { errorCode: -32603, status: "rejected", transactionHash: null },
+    }), /exact EIP-1193 code 4001/);
+    const pendingRpcTransaction = {
+      blockHash: null,
+      blockNumber: null,
+      chainId: "0x1",
+      from: user.address,
+      hash: reportedHash,
+      input: preflight.calldata,
+      nonce: "0x7",
+      to: preflight.to,
+      type: "0x2",
+      value: "0x0",
+    };
+    const verifiedPending = verifyReportedContractIntentWalletTransaction({
+      submission,
+      transaction: pendingRpcTransaction,
+    });
+    assert.equal(verifiedPending.state, "PENDING");
+    assert.equal(verifyReportedContractIntentWalletTransaction({
+      submission: changedContextSubmission,
+      transaction: pendingRpcTransaction,
+    }).transactionHash, reportedHash);
+
+    const replacementHash = id(`wallet-replacement:${direction}`).toLowerCase();
+    const inclusionBlockHash = id(`wallet-inclusion-block:${direction}`).toLowerCase();
+    const includedReplacement = verifyReplacementContractIntentWalletTransaction({
+      previous: verifiedPending,
+      transaction: {
+        ...pendingRpcTransaction,
+        blockHash: inclusionBlockHash,
+        blockNumber: "0x64",
+        hash: replacementHash,
+      },
+    });
+    assert.equal(includedReplacement.state, "INCLUDED");
+    assert.equal(includedReplacement.replacementOf, reportedHash);
+    const forkedReplacement = verifyReplacementContractIntentWalletTransaction({
+      previous: verifiedPending,
+      transaction: {
+        ...pendingRpcTransaction,
+        hash: id(`wallet-forked-replacement:${direction}`).toLowerCase(),
+      },
+    });
+    assert.throws(() => verifyReplacementContractIntentWalletTransaction({
+      previous: verifiedPending,
+      transaction: {
+        ...pendingRpcTransaction,
+        hash: replacementHash,
+        input: `${preflight.calldata.slice(0, -1)}${preflight.calldata.endsWith("0") ? "1" : "0"}`,
+      },
+    }), /changed the nonce or exact contract intent/);
+    assert.throws(() => verifyReplacementContractIntentWalletTransaction({
+      previous: verifiedPending,
+      transaction: { ...pendingRpcTransaction, hash: replacementHash, nonce: "0x8" },
+    }), /changed the nonce or exact contract intent/);
+
+    const quote = preflight.quote;
+    const eventInterface = direction === "lightning-to-bit"
+      ? BIT_VAULT_WALLET_EVENTS
+      : USER_ESCROW_WALLET_EVENTS;
+    const eventName = direction === "lightning-to-bit" ? "Reserved" : "Opened";
+    const eventValues = direction === "lightning-to-bit"
+      ? [
+          quote.quoteId,
+          quote.paymentHash,
+          quote.solver,
+          quote.user,
+          quote.beneficiary,
+          quote.amount,
+          quote.fee,
+          quote.lightningAmountSats,
+          quote.invoiceDigest,
+          quote.nonce,
+          quote.quoteExpiresAt,
+          quote.lastSafeClaimAt,
+          quote.refundAfter,
+        ]
+      : [
+          quote.quoteId,
+          quote.paymentHash,
+          quote.user,
+          quote.solver,
+          quote.beneficiary,
+          quote.amount,
+          quote.fee,
+          quote.lightningAmountSats,
+          quote.invoiceDigest,
+          quote.nonce,
+          quote.quoteExpiresAt,
+          quote.lastSafeClaimAt,
+          quote.refundAfter,
+        ];
+    const encodedEvent = eventInterface.encodeEventLog(eventInterface.getEvent(eventName), eventValues);
+    const receipt = {
+      blockHash: inclusionBlockHash,
+      blockNumber: "0x64",
+      from: preflight.from,
+      logs: [{
+        address: preflight.to,
+        blockHash: inclusionBlockHash,
+        data: encodedEvent.data.toLowerCase(),
+        logIndex: "0x0",
+        removed: false,
+        topics: encodedEvent.topics.map((topic) => topic.toLowerCase()),
+        transactionHash: replacementHash,
+      }],
+      status: "0x1",
+      to: preflight.to,
+      transactionHash: replacementHash,
+    };
+    const receiptInput = {
+      canonicalBlock: { hash: inclusionBlockHash, number: "0x64" },
+      contractCodeHash: preflight.contractCodeHash,
+      finalizedBlock: {
+        hash: id(`wallet-finalized-block:${direction}`).toLowerCase(),
+        number: "0x65",
+      },
+      observedAt: NOW + 1,
+      receipt,
+      transaction: includedReplacement,
+    };
+    const firstObservation = observeContractIntentWalletReceipt({
+      ...receiptInput,
+      providerIdentity: id(`wallet-provider-a:${direction}`).toLowerCase(),
+    });
+    const secondObservation = observeContractIntentWalletReceipt({
+      ...receiptInput,
+      providerIdentity: id(`wallet-provider-b:${direction}`).toLowerCase(),
+    });
+    assert.equal(firstObservation.state, "FINALIZED");
+    const receiptQuorum = verifyContractIntentWalletReceiptQuorum({
+      observations: [firstObservation, secondObservation],
+    });
+    assert.equal(receiptQuorum.state, "REPOSITORY_CORE_VERIFIED");
+    assert.equal(receiptQuorum.canonicalFinalizedReservation, false);
+    assert.equal(receiptQuorum.independentProviderOperationVerified, false);
+    assert.equal(receiptQuorum.fundingAuthorization, false);
+    assert.throws(() => verifyContractIntentWalletReceiptQuorum({
+      observations: [firstObservation, { ...secondObservation }],
+    }), /original distinct-provider provenance/);
+    const disagreeingObservation = observeContractIntentWalletReceipt({
+      ...receiptInput,
+      finalizedBlock: {
+        hash: id(`wallet-other-finalized-block:${direction}`).toLowerCase(),
+        number: "0x66",
+      },
+      providerIdentity: id(`wallet-provider-c:${direction}`).toLowerCase(),
+    });
+    assert.throws(() => verifyContractIntentWalletReceiptQuorum({
+      observations: [firstObservation, disagreeingObservation],
+    }), /do not agree/);
+    assert.throws(() => observeContractIntentWalletReceipt({
+      ...receiptInput,
+      contractCodeHash: id(`wallet-wrong-code:${direction}`).toLowerCase(),
+      providerIdentity: id(`wallet-provider-wrong-code:${direction}`).toLowerCase(),
+    }), /unreviewed contract code/);
+    const mismatch = observeContractIntentWalletReceipt({
+      ...receiptInput,
+      providerIdentity: id(`wallet-provider-mismatch:${direction}`).toLowerCase(),
+      receipt: { ...receipt, logs: [] },
+    });
+    assert.equal(mismatch.state, "MISMATCH");
+    const reorged = observeContractIntentWalletReceipt({
+      canonicalBlock: null,
+      contractCodeHash: preflight.contractCodeHash,
+      finalizedBlock: null,
+      observedAt: NOW + 1,
+      providerIdentity: id(`wallet-provider-reorg:${direction}`).toLowerCase(),
+      receipt: null,
+      transaction: includedReplacement,
+    });
+    assert.equal(reorged.state, "REORGED");
+
+    const walletDatabasePath = join(directory, `wallet-${direction}.sqlite`);
+    let walletStore = await ContractIntentWalletStore.open({
+      allowMemory: false,
+      initialize: true,
+      maximumIntents: 8,
+      path: walletDatabasePath,
+    });
+    const claim = walletStore.claim(preflight, { now: NOW });
+    assert.equal(claim.status, "CLAIMED");
+    assert.equal(claim.state, "WALLET_REQUEST_CLAIMED");
+    assert.equal(claim.retryAuthorized, false);
+    assert.equal(walletStore.claim(preflight, { now: NOW }).status, "EXISTS");
+    assert.throws(
+      () => walletStore.record({ ...submission }, { now: NOW }),
+      /original contract-intent wallet provenance/,
+    );
+    assert.equal(walletStore.record(submission, { now: NOW }).state, "SUBMISSION_REPORTED");
+    assert.equal(walletStore.record(verifiedPending, { now: NOW }).state, "PENDING");
+    assert.equal(walletStore.record(includedReplacement, { now: NOW }).state, "INCLUDED");
+    assert.throws(
+      () => walletStore.record(forkedReplacement, { now: NOW }),
+      /forked the durable replacement chain/,
+    );
+    assert.throws(
+      () => walletStore.record(firstObservation, { now: NOW }),
+      /cannot be persisted before observation/,
+    );
+    assert.equal(walletStore.record(firstObservation, { now: NOW + 1 }).state, "FINALITY_QUORUM_PENDING");
+    assert.throws(
+      () => walletStore.record(receiptQuorum, { now: NOW + 1 }),
+      /lacks both durable provider observations/,
+    );
+    assert.equal(walletStore.record(secondObservation, { now: NOW + 1 }).state, "FINALITY_QUORUM_PENDING");
+    assert.equal(walletStore.record(receiptQuorum, { now: NOW + 1 }).state, "FINALIZED_CORE");
+    assert.deepEqual(walletStore.status(), {
+      schema: "treeswap.contract-intent-wallet-store-status.v1",
+      state: "open",
+      durable: true,
+      clockHighWater: NOW + 1,
+      totalIntents: 1,
+      unresolvedAttempts: 1,
+      repositoryFinalized: 1,
+      retryAuthorizationCount: 0,
+      walletDispatchAuthority: false,
+      lightningDispatchAuthority: false,
+      fundingAuthorization: false,
+    });
+    walletStore.close();
+    walletStore = await ContractIntentWalletStore.open({
+      allowMemory: false,
+      initialize: false,
+      maximumIntents: 8,
+      path: walletDatabasePath,
+    });
+    const recovered = walletStore.recover({ limit: 8, now: NOW + 2 });
+    assert.equal(recovered.length, 1);
+    assert.equal(recovered[0].state, "FINALIZED_CORE");
+    assert.equal(recovered[0].transactionHash, replacementHash);
+    assert.equal(recovered[0].replacementCount, 1);
+    assert.equal(recovered[0].action, "REQUIRE_DEPLOYED_FINALITY_PROOF_NO_LIGHTNING");
+    assert.equal(recovered[0].canonicalFinalizedReservation, false);
+    assert.equal(recovered[0].retryAuthorized, false);
+    assert.equal(recovered[0].fundingAuthorization, false);
+    assert.throws(
+      () => walletStore.recover({ limit: 8, now: NOW + 1 }),
+      /clock regressed/,
+    );
+    assert.equal(walletStore.record(receiptQuorum, { now: NOW + 2 }).status, "EXISTS");
+    assert.equal(walletStore.record(reorged, { now: NOW + 2 }).state, "REORGED");
+    const recoveredReorg = walletStore.recover({ limit: 8, now: NOW + 3 });
+    assert.equal(recoveredReorg[0].state, "REORGED");
+    assert.equal(recoveredReorg[0].action, "HALT_AND_RECONCILE_NO_RESEND");
+    assert.equal(recoveredReorg[0].transactionHash, replacementHash);
+    assert.equal(recoveredReorg[0].retryAuthorized, false);
+    walletStore.close();
+    const walletDatabaseBytes = await readFile(walletDatabasePath);
+    assert.equal(walletDatabaseBytes.includes(Buffer.from(fixture.invoice, "utf8")), false);
+    assert.equal(walletDatabaseBytes.includes(Buffer.from(solvers[0].privateKey.slice(2), "utf8")), false);
+
+    const ambiguousWalletDatabasePath = join(directory, `wallet-ambiguous-${direction}.sqlite`);
+    let ambiguousWalletStore = await ContractIntentWalletStore.open({
+      allowMemory: false,
+      initialize: true,
+      maximumIntents: 8,
+      path: ambiguousWalletDatabasePath,
+    });
+    ambiguousWalletStore.claim(preflight, { now: NOW });
+    ambiguousWalletStore.record(ambiguous, { now: NOW });
+    ambiguousWalletStore.close();
+    ambiguousWalletStore = await ContractIntentWalletStore.open({
+      allowMemory: false,
+      initialize: false,
+      maximumIntents: 8,
+      path: ambiguousWalletDatabasePath,
+    });
+    const ambiguousRecovery = ambiguousWalletStore.recover({ limit: 8, now: NOW + 2 });
+    assert.equal(ambiguousRecovery[0].state, "SUBMISSION_UNKNOWN");
+    assert.equal(ambiguousRecovery[0].action, "SEARCH_QUOTE_NO_RESEND");
+    assert.equal(ambiguousRecovery[0].transactionHash, null);
+    assert.equal(ambiguousRecovery[0].retryAuthorized, false);
+    assert.throws(
+      () => ambiguousWalletStore.record(verifiedPending, { now: NOW + 2 }),
+      /transaction transition is invalid/,
+    );
+    ambiguousWalletStore.close();
+
+    const dispatcherDatabasePath = join(directory, `wallet-dispatch-${direction}.sqlite`);
+    let dispatcherStore = await ContractIntentWalletStore.open({
+      allowMemory: false,
+      initialize: true,
+      maximumIntents: 8,
+      path: dispatcherDatabasePath,
+    });
+    let walletSendCalls = 0;
+    let confirmationCalls = 0;
+    const dispatchedHash = id(`wallet-dispatched:${direction}`).toLowerCase();
+    const providerRequests = [];
+    const dispatcherProvider = {
+      async request(request) {
+        providerRequests.push(request);
+        if (request.method === "eth_chainId") return "0x1";
+        if (request.method === "eth_accounts") return [user.address];
+        if (request.method === "eth_sendTransaction") {
+          walletSendCalls += 1;
+          assert.equal(request, preflight.request);
+          return dispatchedHash;
+        }
+        throw new Error("unexpected wallet method");
+      },
+    };
+    const dispatcher = createContractIntentWalletDispatcherForTests({
+      clock: () => NOW,
+      provider: dispatcherProvider,
+      requestExplicitConfirmation: async (prompt) => {
+        confirmationCalls += 1;
+        assert.equal(prompt.request, preflight.request);
+        assert.equal(prompt.requestDigest, preflight.requestDigest);
+        assert.equal(prompt.walletDispatchAuthority, false);
+        return { confirmed: true, requestDigest: prompt.requestDigest };
+      },
+      store: dispatcherStore,
+      walletResponseTimeoutMs: 100,
+    });
+    assert.deepEqual(dispatcher.status(), {
+      schema: "treeswap.contract-intent-wallet-dispatcher-status.v1",
+      state: "ready",
+      automaticRetry: false,
+      requestsWalletConnection: false,
+      requestsChainSwitch: false,
+      walletDispatchAuthority: false,
+      lightningDispatchAuthority: false,
+      fundingAuthorization: false,
+    });
+    const extractedDispatch = dispatcher.dispatch;
+    await assert.rejects(
+      () => extractedDispatch(preflight),
+      /original fixed dispatcher/,
+    );
+    await assert.rejects(
+      () => dispatcher.dispatch.call({ ...dispatcher }, preflight),
+      /original fixed dispatcher/,
+    );
+    assert.equal(walletSendCalls, 0);
+    const dispatchResult = await dispatcher.dispatch(preflight);
+    assert.equal(dispatchResult.state, "SUBMISSION_REPORTED");
+    assert.equal(dispatchResult.transactionHash, dispatchedHash);
+    assert.equal(dispatchResult.retryAuthorized, false);
+    assert.equal(dispatchResult.postContextUnavailable, false);
+    assert.equal(walletSendCalls, 1);
+    assert.equal(confirmationCalls, 1);
+    assert.deepEqual(providerRequests.map((request) => request.method), [
+      "eth_chainId",
+      "eth_accounts",
+      "eth_sendTransaction",
+      "eth_chainId",
+      "eth_accounts",
+    ]);
+    await assert.rejects(
+      () => dispatcher.dispatch(preflight),
+      (error) => error.code === "DURABLE_CLAIM_UNAVAILABLE"
+        && error.requestMayHaveBeenSent === false
+        && error.retryAuthorized === false,
+    );
+    assert.equal(walletSendCalls, 1);
+    dispatcherStore.close();
+    dispatcherStore = await ContractIntentWalletStore.open({
+      allowMemory: false,
+      initialize: false,
+      maximumIntents: 8,
+      path: dispatcherDatabasePath,
+    });
+    const dispatchedRecovery = dispatcherStore.recover({ limit: 8, now: NOW + 1 });
+    assert.equal(dispatchedRecovery[0].state, "SUBMISSION_REPORTED");
+    assert.equal(dispatchedRecovery[0].transactionHash, dispatchedHash);
+    assert.equal(dispatchedRecovery[0].action, "RECONCILE_TRANSACTION_NO_RESEND");
+    assert.equal(dispatchedRecovery[0].retryAuthorized, false);
+    dispatcherStore.close();
+
+    const rejectedDispatcherPath = join(directory, `wallet-dispatch-rejected-${direction}.sqlite`);
+    const rejectedDispatcherStore = await ContractIntentWalletStore.open({
+      allowMemory: false,
+      initialize: true,
+      maximumIntents: 8,
+      path: rejectedDispatcherPath,
+    });
+    let rejectedSendCalls = 0;
+    const rejectedDispatcher = createContractIntentWalletDispatcherForTests({
+      clock: () => NOW,
+      provider: {
+        async request(request) {
+          if (request.method === "eth_chainId") return "0x1";
+          if (request.method === "eth_accounts") return [user.address];
+          rejectedSendCalls += 1;
+          const error = new Error("user rejected");
+          error.code = 4001;
+          throw error;
+        },
+      },
+      requestExplicitConfirmation: async (prompt) => ({
+        confirmed: true,
+        requestDigest: prompt.requestDigest,
+      }),
+      store: rejectedDispatcherStore,
+      walletResponseTimeoutMs: 100,
+    });
+    const rejectedDispatch = await rejectedDispatcher.dispatch(preflight);
+    assert.equal(rejectedDispatch.state, "USER_REJECTED");
+    assert.equal(rejectedDispatch.transactionHash, null);
+    assert.equal(rejectedSendCalls, 1);
+    assert.deepEqual(rejectedDispatcherStore.recover({ limit: 8, now: NOW + 1 }), []);
+    rejectedDispatcherStore.close();
+
+    const droppedDispatcherPath = join(directory, `wallet-dispatch-dropped-${direction}.sqlite`);
+    const droppedDispatcherStore = await ContractIntentWalletStore.open({
+      allowMemory: false,
+      initialize: true,
+      maximumIntents: 8,
+      path: droppedDispatcherPath,
+    });
+    let droppedSendCalls = 0;
+    const droppedDispatcher = createContractIntentWalletDispatcherForTests({
+      clock: () => NOW,
+      provider: {
+        async request(request) {
+          if (request.method === "eth_chainId") return "0x1";
+          if (request.method === "eth_accounts") return [user.address];
+          droppedSendCalls += 1;
+          return new Promise(() => {});
+        },
+      },
+      requestExplicitConfirmation: async (prompt) => ({
+        confirmed: true,
+        requestDigest: prompt.requestDigest,
+      }),
+      store: droppedDispatcherStore,
+      walletResponseTimeoutMs: 5,
+    });
+    const droppedDispatch = await droppedDispatcher.dispatch(preflight);
+    assert.equal(droppedDispatch.state, "SUBMISSION_UNKNOWN");
+    assert.equal(droppedDispatch.retryAuthorized, false);
+    assert.equal(droppedSendCalls, 1);
+    assert.equal(
+      droppedDispatcherStore.recover({ limit: 8, now: NOW + 1 })[0].action,
+      "SEARCH_QUOTE_NO_RESEND",
+    );
+    droppedDispatcherStore.close();
+
+    const missingPostContextPath = join(directory, `wallet-dispatch-post-context-${direction}.sqlite`);
+    const missingPostContextStore = await ContractIntentWalletStore.open({
+      allowMemory: false,
+      initialize: true,
+      maximumIntents: 8,
+      path: missingPostContextPath,
+    });
+    let transactionReturned = false;
+    const missingPostContextHash = id(`wallet-post-context:${direction}`).toLowerCase();
+    const missingPostContextDispatcher = createContractIntentWalletDispatcherForTests({
+      clock: () => NOW,
+      provider: {
+        async request(request) {
+          if (request.method === "eth_sendTransaction") {
+            transactionReturned = true;
+            return missingPostContextHash;
+          }
+          if (transactionReturned) throw new Error("wallet disconnected");
+          return request.method === "eth_chainId" ? "0x1" : [user.address];
+        },
+      },
+      requestExplicitConfirmation: async (prompt) => ({
+        confirmed: true,
+        requestDigest: prompt.requestDigest,
+      }),
+      store: missingPostContextStore,
+      walletResponseTimeoutMs: 100,
+    });
+    const missingPostContext = await missingPostContextDispatcher.dispatch(preflight);
+    assert.equal(missingPostContext.state, "SUBMISSION_REPORTED_CONTEXT_CHANGED");
+    assert.equal(missingPostContext.transactionHash, missingPostContextHash);
+    assert.equal(missingPostContext.postContextUnavailable, true);
+    assert.equal(
+      missingPostContextStore.recover({ limit: 8, now: NOW + 1 })[0].transactionHash,
+      missingPostContextHash,
+    );
+    missingPostContextStore.close();
+
+    const failedJournalPath = join(directory, `wallet-dispatch-journal-failure-${direction}.sqlite`);
+    let failedJournalStore = await ContractIntentWalletStore.open({
+      allowMemory: false,
+      initialize: true,
+      maximumIntents: 8,
+      path: failedJournalPath,
+    });
+    let failedJournalSendCalls = 0;
+    const failedJournalHash = id(`wallet-journal-failure:${direction}`).toLowerCase();
+    const failedJournalDispatcher = createContractIntentWalletDispatcherForTests({
+      clock: () => NOW,
+      provider: {
+        async request(request) {
+          if (request.method === "eth_chainId") return "0x1";
+          if (request.method === "eth_accounts") return [user.address];
+          failedJournalSendCalls += 1;
+          failedJournalStore.close();
+          return failedJournalHash;
+        },
+      },
+      requestExplicitConfirmation: async (prompt) => ({
+        confirmed: true,
+        requestDigest: prompt.requestDigest,
+      }),
+      store: failedJournalStore,
+      walletResponseTimeoutMs: 100,
+    });
+    await assert.rejects(
+      () => failedJournalDispatcher.dispatch(preflight),
+      (error) => error.code === "DURABLE_OUTCOME_UNAVAILABLE"
+        && error.transactionHash === failedJournalHash
+        && error.requestMayHaveBeenSent === true
+        && error.retryAuthorized === false,
+    );
+    assert.equal(failedJournalSendCalls, 1);
+    failedJournalStore = await ContractIntentWalletStore.open({
+      allowMemory: false,
+      initialize: false,
+      maximumIntents: 8,
+      path: failedJournalPath,
+    });
+    const failedJournalRecovery = failedJournalStore.recover({ limit: 8, now: NOW + 1 });
+    assert.equal(failedJournalRecovery[0].state, "WALLET_REQUEST_CLAIMED");
+    assert.equal(failedJournalRecovery[0].action, "SEARCH_QUOTE_NO_RESEND");
+    assert.equal(failedJournalRecovery[0].retryAuthorized, false);
+    failedJournalStore.close();
+
+    const wrongContextPath = join(directory, `wallet-dispatch-wrong-context-${direction}.sqlite`);
+    const wrongContextStore = await ContractIntentWalletStore.open({
+      allowMemory: false,
+      initialize: true,
+      maximumIntents: 8,
+      path: wrongContextPath,
+    });
+    let wrongContextSendCalls = 0;
+    const wrongContextDispatcher = createContractIntentWalletDispatcherForTests({
+      clock: () => NOW,
+      provider: {
+        async request(request) {
+          if (request.method === "eth_chainId") return "0x2";
+          if (request.method === "eth_accounts") return [user.address];
+          wrongContextSendCalls += 1;
+          return id("must-not-send").toLowerCase();
+        },
+      },
+      requestExplicitConfirmation: async (prompt) => ({
+        confirmed: true,
+        requestDigest: prompt.requestDigest,
+      }),
+      store: wrongContextStore,
+      walletResponseTimeoutMs: 100,
+    });
+    await assert.rejects(
+      () => wrongContextDispatcher.dispatch(preflight),
+      (error) => error.code === "CONTEXT_MISMATCH"
+        && error.durableAttemptCreated === true
+        && error.requestMayHaveBeenSent === false
+        && error.retryAuthorized === false,
+    );
+    assert.equal(wrongContextSendCalls, 0);
+    assert.equal(
+      wrongContextStore.recover({ limit: 8, now: NOW + 1 })[0].action,
+      "SEARCH_QUOTE_NO_RESEND",
+    );
+    wrongContextStore.close();
+
+    const declinedDispatcherPath = join(directory, `wallet-dispatch-declined-${direction}.sqlite`);
+    const declinedDispatcherStore = await ContractIntentWalletStore.open({
+      allowMemory: false,
+      initialize: true,
+      maximumIntents: 8,
+      path: declinedDispatcherPath,
+    });
+    let declinedProviderCalls = 0;
+    let declinedConfirmationCalls = 0;
+    const declinedDispatcher = createContractIntentWalletDispatcherForTests({
+      clock: () => NOW,
+      provider: {
+        async request() {
+          declinedProviderCalls += 1;
+          throw new Error("provider must not be contacted");
+        },
+      },
+      requestExplicitConfirmation: async (prompt) => {
+        declinedConfirmationCalls += 1;
+        return { confirmed: false, requestDigest: prompt.requestDigest };
+      },
+      store: declinedDispatcherStore,
+      walletResponseTimeoutMs: 100,
+    });
+    await assert.rejects(
+      () => declinedDispatcher.dispatch(preflight),
+      (error) => error.code === "CONFIRMATION_DECLINED"
+        && error.durableAttemptCreated === false
+        && error.requestMayHaveBeenSent === false,
+    );
+    assert.equal(declinedConfirmationCalls, 1);
+    assert.equal(declinedProviderCalls, 0);
+    assert.equal(declinedDispatcherStore.status().totalIntents, 0);
+    await assert.rejects(
+      () => declinedDispatcher.dispatch({ ...preflight }),
+      /original contract-intent wallet provenance/,
+    );
+    assert.equal(declinedConfirmationCalls, 1);
+    assert.equal(declinedProviderCalls, 0);
+    declinedDispatcherStore.close();
+
+    const gatewayRequesterKeys = generateKeyPairSync("ed25519");
+    const gatewayResponseKeys = generateKeyPairSync("ed25519");
+    const gatewayDatabasePath = join(directory, `wallet-gateway-${direction}.sqlite`);
+    let gatewayStore = await ContractIntentWalletStore.open({
+      allowMemory: false,
+      initialize: true,
+      maximumIntents: 8,
+      path: gatewayDatabasePath,
+    });
+    const gatewayDeployment = new AbortController();
+    let gatewayEntropy = direction === "lightning-to-bit" ? 31 : 61;
+    const gatewayOptions = (overrides = {}) => ({
+      apiOrigin: "https://wallet-gateway.internal",
+      clock: () => NOW,
+      maximumInFlightRequests: 8,
+      maximumProcessingMilliseconds: 1_000,
+      maximumRequestBytes: 65_536,
+      maximumResponseBytes: 524_288,
+      randomBytes: () => Buffer.alloc(32, ++gatewayEntropy),
+      requesterPublicKey: gatewayRequesterKeys.publicKey,
+      responsePrivateKey: gatewayResponseKeys.privateKey,
+      signal: gatewayDeployment.signal,
+      store: gatewayStore,
+      ...overrides,
+    });
+    assert.throws(
+      () => createContractIntentWalletGatewayForTests(gatewayOptions({
+        apiOrigin: "https://wallet-gateway.public.example",
+      })),
+      /private production HTTPS/,
+    );
+    assert.throws(
+      () => createContractIntentWalletGatewayForTests(gatewayOptions({
+        responsePrivateKey: gatewayRequesterKeys.privateKey,
+      })),
+      /keys must be separate/,
+    );
+    const gateway = createContractIntentWalletGatewayForTests(gatewayOptions());
+    const sessionDigest = id(`wallet-gateway-session:${direction}`).toLowerCase();
+    let ownershipEntropy = direction === "lightning-to-bit" ? 151 : 181;
+    const ownership = createContractIntentWalletOwnershipServiceForTests({
+      clock: () => NOW,
+      gateway,
+      randomBytes: () => Buffer.alloc(32, ++ownershipEntropy),
+      signal: gatewayDeployment.signal,
+    });
+    assert.throws(
+      () => createContractIntentWalletOwnershipServiceForTests({
+        clock: () => NOW,
+        gateway,
+        randomBytes: () => Buffer.alloc(32, 211),
+        signal: gatewayDeployment.signal,
+      }),
+      /already has an ownership boundary/,
+    );
+    assert.throws(
+      () => ownership.issue({
+        preflight: { ...preflight },
+        sessionDigest,
+        wallet: user.address,
+      }),
+      /original contract-intent wallet provenance/,
+    );
+    assert.throws(
+      () => ownership.issue({
+        preflight,
+        sessionDigest,
+        wallet: solvers[0].address,
+      }),
+      /does not match the contract intent/,
+    );
+    const ownershipHandle = ownership.issue({
+      preflight,
+      sessionDigest,
+      wallet: user.address,
+    });
+    assert.equal(ownershipHandle.singleUse, true);
+    assert.equal(ownershipHandle.expiresAt, Math.min(preflight.expiresAt, NOW + 60));
+    assert.equal(ownershipHandle.requestDigestDisclosed, false);
+    assert.equal(ownershipHandle.invoiceDisclosed, false);
+    assert.doesNotMatch(JSON.stringify(ownershipHandle), new RegExp(preflight.requestDigest.slice(2)));
+    assert.doesNotMatch(JSON.stringify(ownershipHandle), new RegExp(preflight.quoteId.slice(2)));
+    assert.doesNotMatch(JSON.stringify(ownershipHandle), new RegExp(sessionDigest.slice(2)));
+    assert.doesNotMatch(JSON.stringify(ownershipHandle), new RegExp(user.address.slice(2), "i"));
+    assert.throws(
+      () => ownership.claim({
+        ownershipHandle: ownershipHandle.ownershipHandle,
+        sessionDigest: id(`wrong-ownership-session:${direction}`).toLowerCase(),
+        wallet: user.address,
+      }),
+      /handle is unavailable/,
+    );
+    assert.throws(
+      () => ownership.claim({
+        ownershipHandle: ownershipHandle.ownershipHandle,
+        sessionDigest,
+        wallet: solvers[0].address,
+      }),
+      /handle is unavailable/,
+    );
+    let ownershipWalletAccessorReads = 0;
+    const accessorOwnershipClaim = {
+      ownershipHandle: ownershipHandle.ownershipHandle,
+      sessionDigest,
+      wallet: user.address,
+    };
+    Object.defineProperty(accessorOwnershipClaim, "wallet", {
+      enumerable: true,
+      get() {
+        ownershipWalletAccessorReads += 1;
+        return user.address;
+      },
+    });
+    assert.throws(
+      () => ownership.claim(accessorOwnershipClaim),
+      /enumerable data properties/,
+    );
+    assert.equal(ownershipWalletAccessorReads, 0);
+    const ownershipClaimResults = await Promise.allSettled([
+      Promise.resolve().then(() => ownership.claim({
+        ownershipHandle: ownershipHandle.ownershipHandle,
+        sessionDigest,
+        wallet: user.address,
+      })),
+      Promise.resolve().then(() => ownership.claim({
+        ownershipHandle: ownershipHandle.ownershipHandle,
+        sessionDigest,
+        wallet: user.address,
+      })),
+    ]);
+    const fulfilledOwnershipClaims = ownershipClaimResults
+      .filter((result) => result.status === "fulfilled");
+    const rejectedOwnershipClaims = ownershipClaimResults
+      .filter((result) => result.status === "rejected");
+    assert.equal(fulfilledOwnershipClaims.length, 1);
+    assert.equal(rejectedOwnershipClaims.length, 1);
+    assert.match(rejectedOwnershipClaims[0].reason.message, /handle is unavailable/);
+    const ownershipClaim = fulfilledOwnershipClaims[0].value;
+    assert.equal(ownershipClaim.ownershipHandleDisclosed, false);
+    assert.equal(ownershipClaim.requestDigestDisclosed, false);
+    assert.throws(
+      () => ownership.take({ ...ownershipClaim }),
+      /original unused claim/,
+    );
+    const ownershipHandoff = ownership.take(ownershipClaim);
+    assert.equal(ownershipHandoff.preflight, preflight);
+    assert.equal(ownershipHandoff.requestDigest, preflight.requestDigest);
+    assert.equal(ownershipHandoff.wallet, preflight.from);
+    assert.equal(ownershipHandoff.sessionDigest, sessionDigest);
+    assert.equal(ownershipHandoff.requestedAt, NOW);
+    assert.equal(ownershipHandoff.expiresAt, Math.min(preflight.expiresAt, NOW + 30));
+    assert.equal(ownershipHandoff.retryAuthorized, false);
+    assert.throws(
+      () => ownership.take(ownershipClaim),
+      /original unused claim/,
+    );
+    assert.deepEqual(gateway.status().stagedPreflights, 1);
+    const ownershipStatus = ownership.status();
+    assert.equal(ownershipStatus.liveHandles, 0);
+    assert.equal(ownershipStatus.consumedHandles, 1);
+    assert.equal(ownershipStatus.handlesIssued, 1);
+    assert.equal(ownershipStatus.handlesClaimed, 1);
+    assert.equal(ownershipStatus.claimsTaken, 1);
+    assert.equal(ownershipStatus.handleTokensInStatus, false);
+    assert.equal(ownershipStatus.walletsInStatus, false);
+    assert.equal(ownershipStatus.sessionDigestsInStatus, false);
+    assert.doesNotMatch(
+      JSON.stringify(ownershipStatus),
+      new RegExp(ownershipHandle.ownershipHandle),
+    );
+    assert.doesNotMatch(JSON.stringify(ownershipStatus), new RegExp(sessionDigest.slice(2)));
+    assert.doesNotMatch(JSON.stringify(ownershipStatus), new RegExp(user.address.slice(2), "i"));
+
+    let expiringOwnershipClock = NOW;
+    const expiringOwnershipStore = await ContractIntentWalletStore.open({
+      allowMemory: true,
+      initialize: true,
+      maximumIntents: 8,
+      path: ":memory:",
+    });
+    const expiringOwnershipDeployment = new AbortController();
+    const expiringOwnershipGateway = createContractIntentWalletGatewayForTests(gatewayOptions({
+      clock: () => expiringOwnershipClock,
+      randomBytes: () => Buffer.alloc(32, 221),
+      signal: expiringOwnershipDeployment.signal,
+      store: expiringOwnershipStore,
+    }));
+    const expiringOwnership = createContractIntentWalletOwnershipServiceForTests({
+      clock: () => expiringOwnershipClock,
+      gateway: expiringOwnershipGateway,
+      randomBytes: () => Buffer.alloc(32, 222),
+      signal: expiringOwnershipDeployment.signal,
+    });
+    const expiringOwnershipHandle = expiringOwnership.issue({
+      preflight,
+      sessionDigest,
+      wallet: user.address,
+    });
+    expiringOwnershipClock = expiringOwnershipHandle.expiresAt;
+    assert.throws(
+      () => expiringOwnership.claim({
+        ownershipHandle: expiringOwnershipHandle.ownershipHandle,
+        sessionDigest,
+        wallet: user.address,
+      }),
+      /handle is unavailable/,
+    );
+    assert.equal(expiringOwnership.status().liveHandles, 0);
+    assert.equal(expiringOwnershipGateway.status().stagedPreflights, 0);
+    expiringOwnershipDeployment.abort();
+    expiringOwnershipStore.close();
+
+    const restartOwnershipStore = await ContractIntentWalletStore.open({
+      allowMemory: true,
+      initialize: true,
+      maximumIntents: 8,
+      path: ":memory:",
+    });
+    const firstOwnershipDeployment = new AbortController();
+    const firstOwnershipGateway = createContractIntentWalletGatewayForTests(gatewayOptions({
+      randomBytes: () => Buffer.alloc(32, 223),
+      signal: firstOwnershipDeployment.signal,
+      store: restartOwnershipStore,
+    }));
+    const firstOwnership = createContractIntentWalletOwnershipServiceForTests({
+      clock: () => NOW,
+      gateway: firstOwnershipGateway,
+      randomBytes: () => Buffer.alloc(32, 224),
+      signal: firstOwnershipDeployment.signal,
+    });
+    const preRestartOwnershipHandle = firstOwnership.issue({
+      preflight,
+      sessionDigest,
+      wallet: user.address,
+    });
+    firstOwnershipDeployment.abort();
+    assert.equal(firstOwnership.status().state, "stopped");
+    const restartedOwnershipDeployment = new AbortController();
+    const restartedOwnershipGateway = createContractIntentWalletGatewayForTests(gatewayOptions({
+      randomBytes: () => Buffer.alloc(32, 225),
+      signal: restartedOwnershipDeployment.signal,
+      store: restartOwnershipStore,
+    }));
+    const restartedOwnership = createContractIntentWalletOwnershipServiceForTests({
+      clock: () => NOW,
+      gateway: restartedOwnershipGateway,
+      randomBytes: () => Buffer.alloc(32, 226),
+      signal: restartedOwnershipDeployment.signal,
+    });
+    assert.throws(
+      () => restartedOwnership.claim({
+        ownershipHandle: preRestartOwnershipHandle.ownershipHandle,
+        sessionDigest,
+        wallet: user.address,
+      }),
+      /handle is unavailable/,
+    );
+    assert.equal(restartedOwnershipGateway.status().stagedPreflights, 0);
+    restartedOwnershipDeployment.abort();
+    restartOwnershipStore.close();
+
+    const claimRequest = buildContractIntentWalletGatewayClaimRequest({
+      expiresAt: ownershipHandoff.expiresAt,
+      requestDigest: ownershipHandoff.requestDigest,
+      requestedAt: ownershipHandoff.requestedAt,
+      requesterPrivateKey: gatewayRequesterKeys.privateKey,
+      sessionDigest: ownershipHandoff.sessionDigest,
+      wallet: ownershipHandoff.wallet,
+    });
+    let walletAccessorReads = 0;
+    const accessorClaimInput = {
+      expiresAt: NOW + 10,
+      requestDigest: preflight.requestDigest,
+      requestedAt: NOW,
+      requesterPrivateKey: gatewayRequesterKeys.privateKey,
+      sessionDigest,
+      wallet: user.address,
+    };
+    Object.defineProperty(accessorClaimInput, "wallet", {
+      enumerable: true,
+      get() {
+        walletAccessorReads += 1;
+        return user.address;
+      },
+    });
+    assert.throws(
+      () => buildContractIntentWalletGatewayClaimRequest(accessorClaimInput),
+      /enumerable data properties/,
+    );
+    assert.equal(walletAccessorReads, 0);
+    const extractedGatewayStage = gateway.stage;
+    assert.throws(
+      () => extractedGatewayStage(preflight, { now: NOW }),
+      /original active gateway/,
+    );
+    await assert.rejects(
+      () => gateway.handle.call({ ...gateway }, walletGatewayRequest(
+        "/v1/wallet-intent/claim",
+        claimRequest,
+      )),
+      /original gateway/,
+    );
+    assert.equal((await gateway.handle(walletGatewayRequest(
+      "/v1/wallet-intent/claim",
+      claimRequest,
+      { omitContentLength: true },
+    ))).status, 400);
+    assert.equal((await gateway.handle(walletGatewayRequest(
+      "/v1/wallet-intent/claim",
+      claimRequest,
+      { headers: { origin: "https://app.treeswap.example" } },
+    ))).status, 400);
+    assert.equal((await gateway.handle(walletGatewayRequest(
+      "/v1/wallet-intent/claim",
+      claimRequest,
+      { headers: { cookie: "must-not-reach-private-gateway=1" } },
+    ))).status, 400);
+    assert.equal((await gateway.handle(walletGatewayRequest(
+      "/v1/wallet-intent/claim",
+      claimRequest,
+      { origin: "https://another-private-gateway.internal" },
+    ))).status, 400);
+    const otherRequesterKeys = generateKeyPairSync("ed25519");
+    const wrongKeyClaimRequest = buildContractIntentWalletGatewayClaimRequest({
+      expiresAt: NOW + 10,
+      requestDigest: preflight.requestDigest,
+      requestedAt: NOW,
+      requesterPrivateKey: otherRequesterKeys.privateKey,
+      sessionDigest,
+      wallet: user.address,
+    });
+    assert.equal((await gateway.handle(walletGatewayRequest(
+      "/v1/wallet-intent/claim",
+      wrongKeyClaimRequest,
+    ))).status, 400);
+    const wrongWalletClaimRequest = buildContractIntentWalletGatewayClaimRequest({
+      expiresAt: NOW + 10,
+      requestDigest: preflight.requestDigest,
+      requestedAt: NOW,
+      requesterPrivateKey: gatewayRequesterKeys.privateKey,
+      sessionDigest,
+      wallet: solvers[0].address,
+    });
+    assert.equal((await gateway.handle(walletGatewayRequest(
+      "/v1/wallet-intent/claim",
+      wrongWalletClaimRequest,
+    ))).status, 400);
+    const tamperedClaimRequest = {
+      ...claimRequest,
+      signature: `${claimRequest.signature[0] === "A" ? "B" : "A"}${claimRequest.signature.slice(1)}`,
+    };
+    assert.equal((await gateway.handle(walletGatewayRequest(
+      "/v1/wallet-intent/claim",
+      tamperedClaimRequest,
+    ))).status, 400);
+    const expiredClaimRequest = buildContractIntentWalletGatewayClaimRequest({
+      expiresAt: NOW - 10,
+      requestDigest: preflight.requestDigest,
+      requestedAt: NOW - 40,
+      requesterPrivateKey: gatewayRequesterKeys.privateKey,
+      sessionDigest,
+      wallet: user.address,
+    });
+    assert.equal((await gateway.handle(walletGatewayRequest(
+      "/v1/wallet-intent/claim",
+      expiredClaimRequest,
+    ))).status, 400);
+    const claimResponses = await Promise.all([
+      gateway.handle(walletGatewayRequest("/v1/wallet-intent/claim", claimRequest)),
+      gateway.handle(walletGatewayRequest("/v1/wallet-intent/claim", claimRequest)),
+    ]);
+    assert.deepEqual(claimResponses.map((response) => response.status).sort(), [200, 400]);
+    const claimResponse = await claimResponses.find((response) => response.status === 200).json();
+    const verifiedClaim = verifyContractIntentWalletGatewayClaimResponse({
+      now: NOW,
+      preflight,
+      request: claimRequest,
+      response: claimResponse,
+      responsePublicKey: gatewayResponseKeys.publicKey,
+    });
+    assert.equal(verifiedContractIntentWalletGatewayClaimResponse(verifiedClaim), verifiedClaim);
+    assert.throws(
+      () => verifiedContractIntentWalletGatewayClaimResponse({ ...verifiedClaim }),
+      /verified provenance/,
+    );
+    assert.throws(
+      () => verifyContractIntentWalletGatewayClaimResponse({
+        now: NOW,
+        preflight,
+        request: { ...claimRequest },
+        response: claimResponse,
+        responsePublicKey: gatewayResponseKeys.publicKey,
+      }),
+      /original locally built claim request/,
+    );
+    assert.throws(
+      () => verifyContractIntentWalletGatewayClaimResponse({
+        now: NOW,
+        preflight,
+        request: claimRequest,
+        response: { ...claimResponse, contractIntentDigest: id("substituted-contract-intent") },
+        responsePublicKey: gatewayResponseKeys.publicKey,
+      }),
+      /signature is invalid|changed the expected preflight/,
+    );
+    assert.equal(gateway.status().activeClaims, 1);
+    assert.equal(gateway.status().stagedPreflights, 0);
+    assert.equal(gateway.status().claimTokensInStatus, false);
+    assert.doesNotMatch(JSON.stringify(gateway.status()), new RegExp(verifiedClaim.claimToken));
+    assert.doesNotMatch(JSON.stringify(gateway.status()), new RegExp(sessionDigest.slice(2)));
+
+    const reportedGatewayHash = id(`wallet-gateway-reported:${direction}`).toLowerCase();
+    const responsePublicKeySpki = gatewayResponseKeys.publicKey
+      .export({ format: "der", type: "spki" })
+      .toString("base64");
+    const browserExpectation = {
+      calldataDigest: preflight.calldataDigest,
+      chainId: preflight.chainId,
+      contract: preflight.to,
+      contractIntentDigest: preflight.contractIntentDigest,
+      dispatchExpiresAt: preflight.expiresAt,
+      quoteId: preflight.quoteId,
+      requestDigest: preflight.requestDigest,
+      wallet: preflight.from,
+    };
+    const browserClaim = await verifyContractIntentWalletBrowserClaim({
+      expected: browserExpectation,
+      now: NOW,
+      response: claimResponse,
+      responsePublicKeySpki,
+    });
+    assert.equal(browserClaim.claimVerified, true);
+    assert.equal(browserClaim.durableNoResendTombstoneRequired, true);
+    assert.equal(browserClaim.persistentClaimToken, false);
+    assert.deepEqual(browserClaim.request, verifiedClaim.request);
+    await assert.rejects(
+      () => verifyContractIntentWalletBrowserClaim({
+        expected: browserExpectation,
+        now: NOW,
+        response: claimResponse,
+        responsePublicKeySpki,
+      }),
+      /already verified in this page/,
+    );
+    await assert.rejects(
+      () => verifyContractIntentWalletBrowserClaim({
+        expected: { ...browserExpectation, contract: solvers[0].address },
+        now: NOW,
+        response: claimResponse,
+        responsePublicKeySpki,
+      }),
+      /changed the expected contract intent/,
+    );
+    await assert.rejects(
+      () => verifyContractIntentWalletBrowserClaim({
+        expected: browserExpectation,
+        now: NOW,
+        response: {
+          ...claimResponse,
+          signature: `${claimResponse.signature[0] === "A" ? "B" : "A"}${claimResponse.signature.slice(1)}`,
+        },
+        responsePublicKeySpki,
+      }),
+      /signature is invalid/,
+    );
+    let browserUserActivation = false;
+    let browserWalletSendCalls = 0;
+    let failedTombstoneProviderCalls = 0;
+    const failedTombstoneAdapter = createContractIntentWalletBrowserAdapterForTests({
+      clock: () => NOW,
+      consumeClaimTombstone: async () => { throw new Error("storage unavailable"); },
+      provider: {
+        async request() {
+          failedTombstoneProviderCalls += 1;
+          throw new Error("provider must not be contacted");
+        },
+      },
+      readUserActivation: () => true,
+      walletResponseTimeoutMs: 100,
+    });
+    await assert.rejects(
+      () => failedTombstoneAdapter.dispatch({
+        claim: browserClaim,
+        confirmation: { confirmed: true, requestDigest: browserClaim.requestDigest },
+      }),
+      (error) => error.code === "DURABLE_TOMBSTONE_UNAVAILABLE"
+        && error.claimConsumed === false
+        && error.requestMayHaveBeenSent === false
+        && error.retryAuthorized === false,
+    );
+    assert.equal(failedTombstoneProviderCalls, 0);
+    const browserTombstoneStorage = new Map();
+    const browserTombstoneConsumer = createContractIntentWalletBrowserTombstoneConsumerForTests({
+      clock: () => NOW,
+      locks: {
+        async request(name, options, callback) {
+          assert.equal(name, "treeswap-wallet-intent-no-resend-v1");
+          assert.deepEqual(options, { mode: "exclusive" });
+          return callback();
+        },
+      },
+      storage: {
+        getItem(key) {
+          return browserTombstoneStorage.get(key) ?? null;
+        },
+        setItem(key, value) {
+          browserTombstoneStorage.set(key, value);
+        },
+      },
+    });
+    const browserProviderRequests = [];
+    const browserAdapter = createContractIntentWalletBrowserAdapterForTests({
+      clock: () => NOW,
+      consumeClaimTombstone: (claim) => browserTombstoneConsumer.consume(claim),
+      provider: {
+        async request(request) {
+          browserProviderRequests.push(request);
+          if (request.method === "eth_chainId") return "0x1";
+          if (request.method === "eth_accounts") return [user.address];
+          if (request.method === "eth_sendTransaction") {
+            browserWalletSendCalls += 1;
+            assert.equal(request, browserClaim.request);
+            return reportedGatewayHash;
+          }
+          throw new Error("unexpected browser wallet method");
+        },
+      },
+      readUserActivation: () => browserUserActivation,
+      walletResponseTimeoutMs: 100,
+    });
+    assert.deepEqual(browserAdapter.status(), {
+      schema: "treeswap.contract-intent-wallet-browser-status.v1",
+      state: "ready",
+      claimSignatureVerification: "Ed25519 Web Crypto",
+      requiresActiveUserInteraction: true,
+      automaticRetry: false,
+      durableNoResendTombstone: true,
+      persistentClaimToken: false,
+      requestsWalletConnection: false,
+      requestsChainSwitch: false,
+      walletDispatchAuthority: false,
+      lightningDispatchAuthority: false,
+      fundingAuthorization: false,
+    });
+    const browserConfirmation = {
+      confirmed: true,
+      requestDigest: browserClaim.requestDigest,
+    };
+    await assert.rejects(
+      () => browserAdapter.dispatch({ claim: browserClaim, confirmation: browserConfirmation }),
+      (error) => error.code === "USER_ACTIVATION_REQUIRED"
+        && error.claimConsumed === false
+        && error.requestMayHaveBeenSent === false
+        && error.retryAuthorized === false,
+    );
+    assert.equal(browserProviderRequests.length, 0);
+    browserUserActivation = true;
+    const extractedBrowserDispatch = browserAdapter.dispatch;
+    await assert.rejects(
+      () => extractedBrowserDispatch({ claim: browserClaim, confirmation: browserConfirmation }),
+      /original fixed adapter/,
+    );
+    await assert.rejects(
+      () => browserAdapter.dispatch({ claim: { ...browserClaim }, confirmation: browserConfirmation }),
+      /original verified claim/,
+    );
+    const concurrentBrowserResults = await Promise.allSettled([
+      browserAdapter.dispatch({ claim: browserClaim, confirmation: browserConfirmation }),
+      browserAdapter.dispatch({ claim: browserClaim, confirmation: browserConfirmation }),
+    ]);
+    const fulfilledBrowserResults = concurrentBrowserResults.filter((result) => result.status === "fulfilled");
+    const rejectedBrowserResults = concurrentBrowserResults.filter((result) => result.status === "rejected");
+    assert.equal(fulfilledBrowserResults.length, 1);
+    assert.equal(rejectedBrowserResults.length, 1);
+    assert.equal(rejectedBrowserResults[0].reason.code, "CLAIM_CONSUMED");
+    assert.equal(rejectedBrowserResults[0].reason.requestMayHaveBeenSent, false);
+    assert.equal(rejectedBrowserResults[0].reason.retryAuthorized, false);
+    const browserResult = fulfilledBrowserResults[0].value;
+    assert.equal(browserResult.state, "OUTCOME_READY");
+    assert.equal(browserResult.transactionHash, reportedGatewayHash);
+    assert.equal(browserResult.outcomeStatus, "reported");
+    assert.equal(browserResult.claimConsumed, true);
+    assert.equal(browserResult.requestMayHaveBeenSent, true);
+    assert.equal(browserResult.retryAuthorized, false);
+    assert.equal(browserResult.durableNoResendTombstone, true);
+    assert.equal(browserResult.persistentClaimToken, false);
+    assert.equal(browserResult.report.claimToken, verifiedClaim.claimToken);
+    assert.equal(browserResult.report.beforeAccounts[0], preflight.from);
+    assert.equal(browserResult.report.postAccounts[0], preflight.from);
+    assert.equal(browserTombstoneStorage.size, 1);
+    const browserTombstoneBytes = [...browserTombstoneStorage.values()][0];
+    assert.doesNotMatch(browserTombstoneBytes, new RegExp(browserClaim.claimToken));
+    assert.doesNotMatch(browserTombstoneBytes, new RegExp(preflight.from.slice(2)));
+    assert.doesNotMatch(browserTombstoneBytes, new RegExp(sessionDigest.slice(2)));
+    await assert.rejects(
+      () => browserTombstoneConsumer.consume(browserClaim),
+      /already has a durable no-resend tombstone/,
+    );
+    const browserTombstoneKey = [...browserTombstoneStorage.keys()][0];
+    const futureTombstoneRecord = JSON.parse(browserTombstoneBytes);
+    futureTombstoneRecord.clockHighWater = NOW + 1;
+    browserTombstoneStorage.set(browserTombstoneKey, JSON.stringify(futureTombstoneRecord));
+    await assert.rejects(
+      () => browserTombstoneConsumer.consume(browserClaim),
+      /tombstone clock regressed/,
+    );
+    browserTombstoneStorage.set(browserTombstoneKey, "{");
+    await assert.rejects(
+      () => browserTombstoneConsumer.consume(browserClaim),
+      /tombstones are malformed/,
+    );
+    assert.deepEqual(browserProviderRequests.map((request) => request.method), [
+      "eth_chainId",
+      "eth_accounts",
+      "eth_sendTransaction",
+      "eth_chainId",
+      "eth_accounts",
+    ]);
+    assert.equal(browserWalletSendCalls, 1);
+    await assert.rejects(
+      () => browserAdapter.dispatch({ claim: browserClaim, confirmation: browserConfirmation }),
+      (error) => error.code === "CLAIM_CONSUMED"
+        && error.claimConsumed === true
+        && error.requestMayHaveBeenSent === false
+        && error.retryAuthorized === false,
+    );
+    assert.equal(browserWalletSendCalls, 1);
+
+    const outcomeInput = {
+      beforeAccounts: browserResult.report.beforeAccounts,
+      beforeChainId: browserResult.report.beforeChainId,
+      claimToken: browserResult.report.claimToken,
+      contextObservedAt: browserResult.report.contextObservedAt,
+      expiresAt: NOW + 10,
+      outcome: browserResult.report.outcome,
+      outcomeObservedAt: browserResult.report.outcomeObservedAt,
+      postAccounts: browserResult.report.postAccounts,
+      postChainId: browserResult.report.postChainId,
+      requestDigest: preflight.requestDigest,
+      requestedAt: NOW,
+      requesterPrivateKey: gatewayRequesterKeys.privateKey,
+      sessionDigest,
+      wallet: user.address,
+    };
+    assert.throws(
+      () => buildContractIntentWalletGatewayOutcomeRequest({
+        ...outcomeInput,
+        beforeAccounts: new Array(1),
+      }),
+      /undecorated dense array/,
+    );
+    const outcomeRequest = buildContractIntentWalletGatewayOutcomeRequest(outcomeInput);
+    const wrongSessionOutcomeRequest = buildContractIntentWalletGatewayOutcomeRequest({
+      ...outcomeInput,
+      sessionDigest: id(`wrong-wallet-gateway-session:${direction}`).toLowerCase(),
+    });
+    assert.equal((await gateway.handle(walletGatewayRequest(
+      "/v1/wallet-intent/outcome",
+      wrongSessionOutcomeRequest,
+    ))).status, 400);
+    const wrongTokenOutcomeRequest = buildContractIntentWalletGatewayOutcomeRequest({
+      ...outcomeInput,
+      claimToken: "ab".repeat(32),
+    });
+    assert.equal((await gateway.handle(walletGatewayRequest(
+      "/v1/wallet-intent/outcome",
+      wrongTokenOutcomeRequest,
+    ))).status, 400);
+    const wrongContextOutcomeRequest = buildContractIntentWalletGatewayOutcomeRequest({
+      ...outcomeInput,
+      beforeChainId: "0x2",
+    });
+    assert.equal((await gateway.handle(walletGatewayRequest(
+      "/v1/wallet-intent/outcome",
+      wrongContextOutcomeRequest,
+    ))).status, 400);
+    const outcomeResponseHttp = await gateway.handle(walletGatewayRequest(
+      "/v1/wallet-intent/outcome",
+      outcomeRequest,
+    ));
+    assert.equal(outcomeResponseHttp.status, 200);
+    const outcomeResponse = await outcomeResponseHttp.json();
+    const verifiedOutcome = verifyContractIntentWalletGatewayOutcomeResponse({
+      claim: verifiedClaim,
+      request: outcomeRequest,
+      response: outcomeResponse,
+      responsePublicKey: gatewayResponseKeys.publicKey,
+    });
+    assert.equal(verifiedOutcome.state, "SUBMISSION_REPORTED");
+    assert.equal(verifiedOutcome.transactionHash, reportedGatewayHash);
+    assert.equal(verifiedOutcome.retryAuthorized, false);
+    assert.equal(verifiedContractIntentWalletGatewayOutcomeResponse(verifiedOutcome), verifiedOutcome);
+    assert.throws(
+      () => verifiedContractIntentWalletGatewayOutcomeResponse({ ...verifiedOutcome }),
+      /verified provenance/,
+    );
+    assert.throws(
+      () => verifyContractIntentWalletGatewayOutcomeResponse({
+        claim: { ...verifiedClaim },
+        request: outcomeRequest,
+        response: outcomeResponse,
+        responsePublicKey: gatewayResponseKeys.publicKey,
+      }),
+      /original verified claim response/,
+    );
+    assert.throws(
+      () => verifyContractIntentWalletGatewayOutcomeResponse({
+        claim: verifiedClaim,
+        request: { ...outcomeRequest },
+        response: outcomeResponse,
+        responsePublicKey: gatewayResponseKeys.publicKey,
+      }),
+      /original locally built outcome request/,
+    );
+    assert.throws(
+      () => verifyContractIntentWalletGatewayOutcomeResponse({
+        claim: verifiedClaim,
+        request: outcomeRequest,
+        response: { ...outcomeResponse, state: "SUBMISSION_UNKNOWN" },
+        responsePublicKey: gatewayResponseKeys.publicKey,
+      }),
+      /signature is invalid|changed the submitted outcome|authority or state is invalid/,
+    );
+    const replayedOutcomeResponse = await gateway.handle(walletGatewayRequest(
+      "/v1/wallet-intent/outcome",
+      outcomeRequest,
+    ));
+    assert.equal(replayedOutcomeResponse.status, 200);
+    assert.deepEqual(await replayedOutcomeResponse.json(), outcomeResponse);
+    const conflictingOutcomeRequest = buildContractIntentWalletGatewayOutcomeRequest({
+      ...outcomeInput,
+      outcome: { errorCode: null, status: "ambiguous", transactionHash: null },
+    });
+    assert.equal((await gateway.handle(walletGatewayRequest(
+      "/v1/wallet-intent/outcome",
+      conflictingOutcomeRequest,
+    ))).status, 400);
+    assert.equal(gateway.status().outcomesRecorded, 1);
+
+    const browserFailurePath = join(directory, `wallet-browser-failure-${direction}.sqlite`);
+    const browserFailureStore = await ContractIntentWalletStore.open({
+      allowMemory: false,
+      initialize: true,
+      maximumIntents: 8,
+      path: browserFailurePath,
+    });
+    const browserFailureDeployment = new AbortController();
+    const browserFailureGateway = createContractIntentWalletGatewayForTests({
+      ...gatewayOptions(),
+      randomBytes: () => Buffer.alloc(32, direction === "lightning-to-bit" ? 171 : 191),
+      signal: browserFailureDeployment.signal,
+      store: browserFailureStore,
+    });
+    browserFailureGateway.stage(preflight, { now: NOW });
+    const browserFailureSessionDigest = id(`wallet-browser-failure-session:${direction}`).toLowerCase();
+    const browserFailureClaimRequest = buildContractIntentWalletGatewayClaimRequest({
+      expiresAt: NOW + 10,
+      requestDigest: preflight.requestDigest,
+      requestedAt: NOW,
+      requesterPrivateKey: gatewayRequesterKeys.privateKey,
+      sessionDigest: browserFailureSessionDigest,
+      wallet: user.address,
+    });
+    const browserFailureClaimHttp = await browserFailureGateway.handle(walletGatewayRequest(
+      "/v1/wallet-intent/claim",
+      browserFailureClaimRequest,
+    ));
+    assert.equal(browserFailureClaimHttp.status, 200);
+    const browserFailureClaimResponse = await browserFailureClaimHttp.json();
+    const verifiedBrowserFailureGatewayClaim = verifyContractIntentWalletGatewayClaimResponse({
+      now: NOW,
+      preflight,
+      request: browserFailureClaimRequest,
+      response: browserFailureClaimResponse,
+      responsePublicKey: gatewayResponseKeys.publicKey,
+    });
+    const browserFailureClaim = await verifyContractIntentWalletBrowserClaim({
+      expected: browserExpectation,
+      now: NOW,
+      response: browserFailureClaimResponse,
+      responsePublicKeySpki,
+    });
+    const browserFailureTombstones = new Map();
+    const browserFailureTombstoneConsumer = createContractIntentWalletBrowserTombstoneConsumerForTests({
+      clock: () => NOW,
+      locks: {
+        async request(_name, _options, callback) { return callback(); },
+      },
+      storage: {
+        getItem(key) { return browserFailureTombstones.get(key) ?? null; },
+        setItem(key, value) { browserFailureTombstones.set(key, value); },
+      },
+    });
+    let browserFailureSendCalls = 0;
+    const browserFailureAdapter = createContractIntentWalletBrowserAdapterForTests({
+      clock: () => NOW,
+      consumeClaimTombstone: (claim) => browserFailureTombstoneConsumer.consume(claim),
+      provider: {
+        async request(request) {
+          if (request.method === "eth_chainId") return "0x1";
+          if (request.method === "eth_accounts") return [user.address];
+          browserFailureSendCalls += 1;
+          const error = new Error(direction === "lightning-to-bit" ? "wallet response lost" : "user rejected");
+          if (direction === "bit-to-lightning") error.code = 4001;
+          throw error;
+        },
+      },
+      readUserActivation: () => true,
+      walletResponseTimeoutMs: 100,
+    });
+    const browserFailureResult = await browserFailureAdapter.dispatch({
+      claim: browserFailureClaim,
+      confirmation: { confirmed: true, requestDigest: browserFailureClaim.requestDigest },
+    });
+    const expectedBrowserFailureStatus = direction === "lightning-to-bit" ? "ambiguous" : "rejected";
+    assert.equal(browserFailureResult.outcomeStatus, expectedBrowserFailureStatus);
+    assert.equal(browserFailureResult.transactionHash, null);
+    assert.equal(browserFailureResult.retryAuthorized, false);
+    assert.equal(browserFailureSendCalls, 1);
+    const browserFailureOutcomeRequest = buildContractIntentWalletGatewayOutcomeRequest({
+      beforeAccounts: browserFailureResult.report.beforeAccounts,
+      beforeChainId: browserFailureResult.report.beforeChainId,
+      claimToken: browserFailureResult.report.claimToken,
+      contextObservedAt: browserFailureResult.report.contextObservedAt,
+      expiresAt: NOW + 10,
+      outcome: browserFailureResult.report.outcome,
+      outcomeObservedAt: browserFailureResult.report.outcomeObservedAt,
+      postAccounts: browserFailureResult.report.postAccounts,
+      postChainId: browserFailureResult.report.postChainId,
+      requestDigest: preflight.requestDigest,
+      requestedAt: NOW,
+      requesterPrivateKey: gatewayRequesterKeys.privateKey,
+      sessionDigest: browserFailureSessionDigest,
+      wallet: user.address,
+    });
+    const browserFailureOutcomeHttp = await browserFailureGateway.handle(walletGatewayRequest(
+      "/v1/wallet-intent/outcome",
+      browserFailureOutcomeRequest,
+    ));
+    assert.equal(browserFailureOutcomeHttp.status, 200);
+    const verifiedBrowserFailureOutcome = verifyContractIntentWalletGatewayOutcomeResponse({
+      claim: verifiedBrowserFailureGatewayClaim,
+      request: browserFailureOutcomeRequest,
+      response: await browserFailureOutcomeHttp.json(),
+      responsePublicKey: gatewayResponseKeys.publicKey,
+    });
+    assert.equal(
+      verifiedBrowserFailureOutcome.state,
+      direction === "lightning-to-bit" ? "SUBMISSION_UNKNOWN" : "USER_REJECTED",
+    );
+    browserFailureDeployment.abort();
+    browserFailureStore.close();
+    const browserFailureDatabaseBytes = await readFile(browserFailurePath);
+    assert.equal(
+      browserFailureDatabaseBytes.includes(Buffer.from(browserFailureClaim.claimToken, "utf8")),
+      false,
+    );
+    assert.equal(
+      browserFailureDatabaseBytes.includes(Buffer.from(browserFailureSessionDigest, "utf8")),
+      false,
+    );
+
+    const edgeDatabasePath = join(directory, `wallet-siwe-edge-${direction}.sqlite`);
+    const edgeStore = await ContractIntentWalletStore.open({
+      allowMemory: false,
+      initialize: true,
+      maximumIntents: 8,
+      path: edgeDatabasePath,
+    });
+    const edgeDeployment = new AbortController();
+    const edgeGateway = createContractIntentWalletGatewayForTests(gatewayOptions({
+      randomBytes: () => Buffer.alloc(32, direction === "lightning-to-bit" ? 231 : 241),
+      signal: edgeDeployment.signal,
+      store: edgeStore,
+    }));
+    const edgeOwnership = createContractIntentWalletOwnershipServiceForTests({
+      clock: () => NOW,
+      gateway: edgeGateway,
+      randomBytes: () => Buffer.alloc(32, direction === "lightning-to-bit" ? 232 : 242),
+      signal: edgeDeployment.signal,
+    });
+    const edgeSessionToken = direction === "lightning-to-bit" ? "cd".repeat(32) : "de".repeat(32);
+    const edgeDatabase = walletEdgeSessionDatabase({ sessionToken: edgeSessionToken });
+    const edgeSessionRequesterKeys = generateKeyPairSync("ed25519");
+    const edgeSessionResponseKeys = generateKeyPairSync("ed25519");
+    let edgeClock = NOW;
+    const edgeSessionProvider = createContractIntentWalletSessionProviderForTests({
+      apiOrigin: "https://wallet-session.example",
+      clock: () => edgeClock,
+      database: edgeDatabase,
+      maximumProcessingMilliseconds: 50,
+      requesterPublicKey: edgeSessionRequesterKeys.publicKey,
+      responsePrivateKey: edgeSessionResponseKeys.privateKey,
+      signal: edgeDeployment.signal,
+    });
+    const edgeSessionReader = createContractIntentWalletSessionReaderForTests({
+      apiOrigin: "https://wallet-session.example",
+      clock: () => edgeClock,
+      maximumProcessingMilliseconds: 50,
+      randomBytes: () => Buffer.alloc(32, direction === "lightning-to-bit" ? 245 : 246),
+      requesterPrivateKey: edgeSessionRequesterKeys.privateKey,
+      responsePublicKey: edgeSessionResponseKeys.publicKey,
+      signal: edgeDeployment.signal,
+      transport: (url, options) => edgeSessionProvider.handle(new Request(url, options)),
+    });
+    const collidingEdgeSessionReader = createContractIntentWalletSessionReaderForTests({
+      apiOrigin: "https://wallet-session.example",
+      clock: () => edgeClock,
+      maximumProcessingMilliseconds: 50,
+      randomBytes: () => Buffer.alloc(32, direction === "lightning-to-bit" ? 247 : 248),
+      requesterPrivateKey: gatewayRequesterKeys.privateKey,
+      responsePublicKey: edgeSessionResponseKeys.publicKey,
+      signal: edgeDeployment.signal,
+      transport: (url, options) => edgeSessionProvider.handle(new Request(url, options)),
+    });
+    const edgeAbusePath = join(directory, `wallet-siwe-edge-abuse-${direction}.sqlite`);
+    const edgeAbuseStore = await ContractIntentWalletAbuseStore.open({
+      allowMemory: false,
+      initialize: true,
+      path: edgeAbusePath,
+    });
+    assert.throws(
+      () => createContractIntentWalletSiweEdgeForTests({
+        abuseStore: edgeAbuseStore,
+        clientOrigin: "https://treeswap.vercel.app",
+        clock: () => edgeClock,
+        gateway: edgeGateway,
+        maximumBodyReadMilliseconds: 50,
+        ownership: edgeOwnership,
+        requesterPrivateKey: gatewayRequesterKeys.privateKey,
+        responsePublicKey: gatewayResponseKeys.publicKey,
+        sessionReader: collidingEdgeSessionReader,
+        signal: edgeDeployment.signal,
+      }),
+      /session-reader keys must be separate from gateway keys/,
+    );
+    assert.throws(
+      () => createContractIntentWalletSiweEdgeForTests({
+        abuseStore: edgeAbuseStore,
+        clientOrigin: "https://treeswap.vercel.app",
+        clock: () => edgeClock,
+        gateway: edgeGateway,
+        maximumBodyReadMilliseconds: 50,
+        ownership: edgeOwnership,
+        requesterPrivateKey: gatewayRequesterKeys.publicKey,
+        responsePublicKey: gatewayResponseKeys.publicKey,
+        sessionReader: edgeSessionReader,
+        signal: edgeDeployment.signal,
+      }),
+      /requester private key and response public key/,
+    );
+    assert.throws(
+      () => createContractIntentWalletSiweEdgeForTests({
+        abuseStore: edgeAbuseStore,
+        clientOrigin: "https://treeswap.vercel.app",
+        clock: () => edgeClock,
+        gateway: edgeGateway,
+        maximumBodyReadMilliseconds: 50,
+        ownership: edgeOwnership,
+        requesterPrivateKey: gatewayRequesterKeys.privateKey,
+        responsePublicKey: gatewayResponseKeys.privateKey,
+        sessionReader: edgeSessionReader,
+        signal: edgeDeployment.signal,
+      }),
+      /requester private key and response public key/,
+    );
+    const edgeCore = createContractIntentWalletSiweEdgeForTests({
+      abuseStore: edgeAbuseStore,
+      clientOrigin: "https://treeswap.vercel.app",
+      clock: () => edgeClock,
+      gateway: edgeGateway,
+      maximumBodyReadMilliseconds: 50,
+      ownership: edgeOwnership,
+      requesterPrivateKey: gatewayRequesterKeys.privateKey,
+      responsePublicKey: gatewayResponseKeys.publicKey,
+      sessionReader: edgeSessionReader,
+      signal: edgeDeployment.signal,
+    });
+    const edgeFenceDirectoryAlias = await mkdtemp(join(
+      directory,
+      `wallet-siwe-edge-fence-${direction}-`,
+    ));
+    await chmod(edgeFenceDirectoryAlias, 0o700);
+    const edgeFenceDirectory = await realpath(edgeFenceDirectoryAlias);
+    const edgeFence = await acquireContractIntentWalletEdgeReplicaFenceForTests({
+      clock: () => NOW * 1_000,
+      randomBytes: () => Buffer.alloc(32, direction === "lightning-to-bit" ? 233 : 243),
+      runtimeDirectory: edgeFenceDirectory,
+      signal: edgeDeployment.signal,
+    });
+    await assert.rejects(
+      acquireContractIntentWalletEdgeReplicaFenceForTests({
+        clock: () => NOW * 1_000,
+        randomBytes: () => Buffer.alloc(32, direction === "lightning-to-bit" ? 234 : 244),
+        runtimeDirectory: edgeFenceDirectory,
+        signal: edgeDeployment.signal,
+      }),
+      /another wallet edge replica or an unreconciled crash holds the fence/,
+    );
+    await assert.rejects(
+      createContractIntentWalletEdgePerimeter({
+        edge: edgeCore,
+        fence: edgeFence,
+        signal: edgeDeployment.signal,
+      }),
+      /perimeter and SIWE edge modes must match/,
+    );
+    const edge = await createContractIntentWalletEdgePerimeterForTests({
+      clock: () => edgeClock,
+      edge: edgeCore,
+      fence: edgeFence,
+      maximumConcurrentRequests: 2,
+      maximumRequestsPerWindow: 32,
+      signal: edgeDeployment.signal,
+      windowSeconds: 1,
+    });
+    assert.throws(() => edgeCore.status(), /requires the original service/);
+    await assert.rejects(
+      createContractIntentWalletEdgePerimeterForTests({
+        clock: () => edgeClock,
+        edge: edgeCore,
+        fence: edgeFence,
+        maximumConcurrentRequests: 2,
+        maximumRequestsPerWindow: 32,
+        signal: edgeDeployment.signal,
+        windowSeconds: 1,
+      }),
+      /already belongs to a perimeter|active SIWE edge lifecycle/,
+    );
+    const edgeCookie = `__Host-treeswap_session=${edgeSessionToken}`;
+    let stalledBodyCanceled = false;
+    const sessionQueriesBeforeStalledBody = edgeDatabase.observed.queries;
+    const stalledRequest = new Request(
+      "https://treeswap.vercel.app/v1/wallet-intent/prepare",
+      {
+        body: new ReadableStream({
+          cancel() { stalledBodyCanceled = true; },
+        }),
+        duplex: "half",
+        headers: {
+          "cache-control": "no-store",
+          "content-type": "application/json",
+          cookie: edgeCookie,
+          origin: "https://treeswap.vercel.app",
+          "sec-fetch-dest": "empty",
+          "sec-fetch-mode": "cors",
+          "sec-fetch-site": "same-origin",
+        },
+        method: "POST",
+      },
+    );
+    assert.equal((await edge.issue(preflight, stalledRequest)).status, 400);
+    assert.equal(stalledBodyCanceled, true);
+    assert.equal(edgeDatabase.observed.queries, sessionQueriesBeforeStalledBody);
+    let concurrentBodyCancellations = 0;
+    const concurrentStall = () => new Request(
+      "https://treeswap.vercel.app/v1/wallet-intent/prepare",
+      {
+        body: new ReadableStream({
+          cancel() { concurrentBodyCancellations += 1; },
+        }),
+        duplex: "half",
+        headers: {
+          "cache-control": "no-store",
+          "content-length": "2",
+          "content-type": "application/json",
+          cookie: edgeCookie,
+          origin: "https://treeswap.vercel.app",
+          "sec-fetch-dest": "empty",
+          "sec-fetch-mode": "cors",
+          "sec-fetch-site": "same-origin",
+        },
+        method: "POST",
+      },
+    );
+    const firstConcurrentStall = edge.issue(preflight, concurrentStall());
+    const secondConcurrentStall = edge.issue(preflight, concurrentStall());
+    await new Promise((resolve) => setImmediate(resolve));
+    const queriesBeforeConcurrentRejection = edgeDatabase.observed.queries;
+    assert.equal((await edge.issue(preflight, walletEdgeRequest(
+      "/v1/wallet-intent/prepare",
+      {},
+      { cookie: edgeCookie },
+    ))).status, 429);
+    assert.equal(edgeDatabase.observed.queries, queriesBeforeConcurrentRejection);
+    assert.deepEqual(
+      (await Promise.all([firstConcurrentStall, secondConcurrentStall]))
+        .map((response) => response.status),
+      [400, 400],
+    );
+    assert.equal(concurrentBodyCancellations, 2);
+    assert.equal((await edge.issue(preflight, walletEdgeRequest(
+        "/v1/wallet-intent/prepare",
+        {},
+        { cookie: `${edgeCookie}; ${edgeCookie}` },
+      ))).status, 401);
+    assert.equal((await edge.issue(preflight, walletEdgeRequest(
+        "/v1/wallet-intent/prepare",
+        {},
+        { cookie: edgeCookie, headers: { "sec-fetch-site": "cross-site" } },
+      ))).status, 400);
+    assert.equal((await edge.issue(preflight, walletEdgeRequest(
+        "/v1/wallet-intent/prepare",
+        { requestDigest: preflight.requestDigest },
+        { cookie: edgeCookie },
+      ))).status, 400);
+    const edgePreparationResponse = await edge.issue(preflight, walletEdgeRequest(
+      "/v1/wallet-intent/prepare",
+      {},
+      { cookie: edgeCookie },
+    ));
+    assert.equal(edgePreparationResponse.status, 200);
+    assert.match(edgePreparationResponse.headers.get("cache-control"), /no-store/);
+    assert.equal(edgePreparationResponse.headers.has("set-cookie"), false);
+    const edgePreparation = await edgePreparationResponse.json();
+    assert.equal(edgePreparation.schema, "treeswap.contract-intent-wallet-siwe-edge-prepare.v1");
+    assert.equal(edgePreparation.singleUse, true);
+    assert.equal(edgePreparation.csrfExpiresAt, Math.min(preflight.expiresAt, NOW + 60));
+    assert.equal(edgePreparation.requestDigestDisclosed, false);
+    assert.equal(edgePreparation.walletDisclosed, false);
+    assert.equal(edgePreparation.sessionDigestDisclosed, false);
+    assert.doesNotMatch(JSON.stringify(edgePreparation), new RegExp(preflight.requestDigest.slice(2)));
+    assert.doesNotMatch(JSON.stringify(edgePreparation), new RegExp(preflight.quoteId.slice(2)));
+    assert.doesNotMatch(JSON.stringify(edgePreparation), new RegExp(user.address.slice(2), "i"));
+    assert.doesNotMatch(JSON.stringify(edgePreparation), new RegExp(edgeSessionToken));
+    assert.equal(
+      edgeDatabase.observed.binds.some((values) => JSON.stringify(values).includes(edgeSessionToken)),
+      false,
+    );
+    assert.throws(
+      () => edgeOwnership.issue({
+        preflight,
+        sessionDigest: id(`unbound-edge-session:${direction}`).toLowerCase(),
+        wallet: user.address,
+      }),
+      /belong to its claimed SIWE edge/,
+    );
+    assert.throws(
+      () => createContractIntentWalletSiweEdgeForTests({
+        abuseStore: edgeAbuseStore,
+        clientOrigin: "https://treeswap.vercel.app",
+        clock: () => NOW,
+        gateway: edgeGateway,
+        maximumBodyReadMilliseconds: 50,
+        ownership: edgeOwnership,
+        requesterPrivateKey: gatewayRequesterKeys.privateKey,
+        responsePublicKey: gatewayResponseKeys.publicKey,
+        sessionReader: edgeSessionReader,
+        signal: edgeDeployment.signal,
+      }),
+      /already belongs to a SIWE edge|unclaimed active store lifecycle/,
+    );
+    const edgeClaimBody = {
+      ownershipHandle: edgePreparation.ownershipHandle,
+      csrfToken: edgePreparation.csrfToken,
+      csrfExpiresAt: edgePreparation.csrfExpiresAt,
+    };
+    assert.equal((await edge.handle(walletEdgeRequest(
+      "/v1/wallet-intent/claim",
+      edgeClaimBody,
+      { cookie: edgeCookie, headers: { "sec-fetch-mode": "navigate" } },
+    ))).status, 400);
+    assert.equal((await edge.handle(walletEdgeRequest(
+      "/v1/wallet-intent/claim",
+      { ...edgeClaimBody, csrfToken: "ab".repeat(32) },
+      { cookie: edgeCookie },
+    ))).status, 401);
+    assert.equal((await edge.handle(walletEdgeRequest(
+      "/v1/wallet-intent/claim",
+      { ...edgeClaimBody, csrfExpiresAt: NOW + 61 },
+      { cookie: edgeCookie },
+    ))).status, 400);
+    assert.equal((await edge.handle(walletEdgeRequest(
+      "/v1/wallet-intent/claim",
+      edgeClaimBody,
+      { cookie: `__Host-treeswap_session=${"ef".repeat(32)}` },
+    ))).status, 401);
+    const edgeClaimResponses = await Promise.all([
+      edge.handle(walletEdgeRequest(
+        "/v1/wallet-intent/claim",
+        edgeClaimBody,
+        { cookie: edgeCookie },
+      )),
+      edge.handle(walletEdgeRequest(
+        "/v1/wallet-intent/claim",
+        edgeClaimBody,
+        { cookie: edgeCookie },
+      )),
+    ]);
+    assert.deepEqual(edgeClaimResponses.map((response) => response.status).sort(), [200, 400]);
+    const edgeClaimEnvelope = await edgeClaimResponses
+      .find((response) => response.status === 200).json();
+    assert.equal(edgeClaimEnvelope.retryAuthorized, false);
+    assert.equal(edgeClaimEnvelope.persistentClaimToken, false);
+    assert.equal(edgeClaimEnvelope.walletDispatchAuthority, false);
+    const edgeBrowserClaim = await verifyContractIntentWalletBrowserClaim({
+      expected: browserExpectation,
+      now: NOW,
+      response: edgeClaimEnvelope.claim,
+      responsePublicKeySpki,
+    });
+    const edgeTombstones = new Map();
+    const edgeTombstoneConsumer = createContractIntentWalletBrowserTombstoneConsumerForTests({
+      clock: () => NOW,
+      locks: {
+        async request(_name, _options, callback) { return callback(); },
+      },
+      storage: {
+        getItem(key) { return edgeTombstones.get(key) ?? null; },
+        setItem(key, value) { edgeTombstones.set(key, value); },
+      },
+    });
+    const edgeReportedHash = id(`wallet-siwe-edge-reported:${direction}`).toLowerCase();
+    const edgeBrowserAdapter = createContractIntentWalletBrowserAdapterForTests({
+      clock: () => NOW,
+      consumeClaimTombstone: (claim) => edgeTombstoneConsumer.consume(claim),
+      provider: {
+        async request(request) {
+          if (request.method === "eth_chainId") return "0x1";
+          if (request.method === "eth_accounts") return [user.address];
+          if (request.method === "eth_sendTransaction") {
+            assert.equal(request, edgeBrowserClaim.request);
+            return edgeReportedHash;
+          }
+          throw new Error("unexpected SIWE-edge browser provider method");
+        },
+      },
+      readUserActivation: () => true,
+      walletResponseTimeoutMs: 100,
+    });
+    const edgeBrowserResult = await edgeBrowserAdapter.dispatch({
+      claim: edgeBrowserClaim,
+      confirmation: { confirmed: true, requestDigest: edgeBrowserClaim.requestDigest },
+    });
+    assert.equal(edgeBrowserResult.transactionHash, edgeReportedHash);
+    const edgeOutcomeBody = {
+      report: edgeBrowserResult.report,
+      csrfToken: edgeClaimEnvelope.outcomeCsrfToken,
+      csrfExpiresAt: edgeClaimEnvelope.outcomeCsrfExpiresAt,
+    };
+    const edgeOutcomeResponse = await edge.handle(walletEdgeRequest(
+      "/v1/wallet-intent/outcome",
+      edgeOutcomeBody,
+      { cookie: edgeCookie },
+    ));
+    assert.equal(edgeOutcomeResponse.status, 200);
+    const edgeOutcomeEnvelope = await edgeOutcomeResponse.json();
+    assert.equal(edgeOutcomeEnvelope.outcome.state, "SUBMISSION_REPORTED");
+    assert.equal(edgeOutcomeEnvelope.outcome.transactionHash, edgeReportedHash);
+    assert.equal(edgeOutcomeEnvelope.retryAuthorized, false);
+    const replayedEdgeOutcome = await edge.handle(walletEdgeRequest(
+      "/v1/wallet-intent/outcome",
+      edgeOutcomeBody,
+      { cookie: edgeCookie },
+    ));
+    assert.equal(replayedEdgeOutcome.status, 200);
+    assert.deepEqual(await replayedEdgeOutcome.json(), edgeOutcomeEnvelope);
+    const conflictingEdgeOutcomeBody = {
+      ...edgeOutcomeBody,
+      report: {
+        ...edgeOutcomeBody.report,
+        outcome: { errorCode: null, status: "ambiguous", transactionHash: null },
+      },
+    };
+    assert.equal((await edge.handle(walletEdgeRequest(
+      "/v1/wallet-intent/outcome",
+      conflictingEdgeOutcomeBody,
+      { cookie: edgeCookie },
+    ))).status, 400);
+    assert.equal((await edge.handle(walletEdgeRequest(
+      "/v1/wallet-intent/claim",
+      edgeClaimBody,
+      { cookie: edgeCookie },
+    ))).status, 429);
+    while (edge.status().rateRejected === 1) {
+      await edge.handle(walletEdgeRequest(
+        "/v1/wallet-intent/claim",
+        edgeClaimBody,
+        { cookie: edgeCookie },
+      ));
+    }
+    const queriesBeforeGlobalRateRejection = edgeDatabase.observed.queries;
+    assert.equal((await edge.handle(walletEdgeRequest(
+      "/v1/wallet-intent/claim",
+      edgeClaimBody,
+      { cookie: edgeCookie },
+    ))).status, 429);
+    assert.equal(edgeDatabase.observed.queries, queriesBeforeGlobalRateRejection);
+    const edgeStatus = edge.status();
+    assert.equal(edgeStatus.edge.preparedHandles, 1);
+    assert.equal(edgeStatus.edge.claimsIssued, 1);
+    assert.equal(edgeStatus.edge.outcomeResponses, 1);
+    assert.equal(edgeStatus.edge.activeClaims, 1);
+    assert.equal(edgeStatus.edge.exactOriginRequired, true);
+    assert.equal(edgeStatus.edge.fetchMetadataRequired, true);
+    assert.equal(edgeStatus.edge.handleTokensInStatus, false);
+    assert.equal(edgeStatus.edge.csrfTokensInStatus, false);
+    assert.equal(edgeStatus.edge.gatewayClaimTokensInStatus, false);
+    assert.equal(edgeStatus.edge.durableAuthenticatedSessionRateLimit, true);
+    assert.equal(edgeStatus.edge.remoteAuthenticatedSessionReads, true);
+    assert.equal(edgeStatus.edge.rawSessionTokensSentToReader, false);
+    assert.equal(edgeStatus.edge.sessionReaderActiveReads >= 1, true);
+    assert.equal(edgeStatus.edge.sessionReaderInactiveReads >= 1, true);
+    assert.equal(edgeStatus.edge.sessionReaderFailedReads, 0);
+    assert.equal(edgeStatus.edge.durableRateAcceptedRequests, 8);
+    assert.equal(edgeStatus.edge.durableRateRejectedRequests >= 1, true);
+    assert.equal(edgeStatus.edge.haltedOnDurableAbuseStore, false);
+    assert.equal(edgeStatus.preSessionRejected >= 1, true);
+    assert.equal(edgeStatus.rateRejected >= 2, true);
+    assert.equal(edgeStatus.replicaPolicy, "single-active-replica-owner-controlled-shared-volume-fence");
+    assert.equal(edgeStatus.automaticStaleTakeover, false);
+    assert.equal(edgeStatus.requestBodyLogging, false);
+    const edgeStatusBytes = JSON.stringify(edgeStatus);
+    for (const secret of [
+      edgePreparation.ownershipHandle,
+      edgePreparation.csrfToken,
+      edgeClaimEnvelope.claim.claimToken,
+      edgeClaimEnvelope.outcomeCsrfToken,
+      edgeSessionToken,
+      user.address.slice(2),
+      preflight.requestDigest.slice(2),
+    ]) assert.doesNotMatch(edgeStatusBytes, new RegExp(secret, "i"));
+    if (direction === "lightning-to-bit") {
+      edgeClock = NOW - 1;
+      assert.throws(() => edge.status(), /clock regressed/);
+      assert.equal(edge.status().state, "halted");
+      assert.equal(edge.status().haltedOnClockRollback, true);
+    } else {
+      await writeFile(
+        join(edgeFenceDirectory, "wallet-intent-edge.fence", "owner.json"),
+        JSON.stringify({
+          schema: "treeswap.contract-intent-wallet-edge-replica-fence.v1",
+          startedAt: new Date(NOW * 1_000).toISOString(),
+          token: "aa".repeat(32),
+        }),
+        { mode: 0o600 },
+      );
+      assert.equal((await edge.handle(walletEdgeRequest(
+        "/v1/wallet-intent/claim",
+        edgeClaimBody,
+        { cookie: edgeCookie },
+      ))).status, 429);
+      edgeClock += 1;
+      assert.equal((await edge.handle(walletEdgeRequest(
+        "/v1/wallet-intent/claim",
+        edgeClaimBody,
+        { cookie: edgeCookie },
+      ))).status, 503);
+      assert.equal(edge.status().state, "halted");
+      assert.equal(edge.status().haltedOnFenceLoss, true);
+    }
+    edgeDeployment.abort();
+    assert.equal(edge.status().state, "stopped");
+    assert.equal(edgeSessionProvider.status().state, "stopped");
+    edgeAbuseStore.close();
+    const edgeAbuseBytes = await readFile(edgeAbusePath);
+    assert.equal(edgeAbuseBytes.includes(Buffer.from(edgeSessionToken, "utf8")), false);
+    assert.equal(edgeAbuseBytes.includes(Buffer.from(user.address.slice(2), "utf8")), false);
+    assert.equal(edgeAbuseBytes.includes(Buffer.from(preflight.requestDigest.slice(2), "utf8")), false);
+    if (direction === "lightning-to-bit") {
+      assert.equal(await edgeFence.release(), true);
+      const replacementDeployment = new AbortController();
+      const replacementFence = await acquireContractIntentWalletEdgeReplicaFenceForTests({
+        clock: () => (NOW + 1) * 1_000,
+        randomBytes: () => Buffer.alloc(32, 245),
+        runtimeDirectory: edgeFenceDirectory,
+        signal: replacementDeployment.signal,
+      });
+      assert.equal(replacementFence.status().automaticStaleTakeover, false);
+      assert.equal(await replacementFence.release(), true);
+      replacementDeployment.abort();
+    }
+    edgeStore.close();
+    const edgeDatabaseBytes = await readFile(edgeDatabasePath);
+    for (const secret of [
+      edgePreparation.ownershipHandle,
+      edgePreparation.csrfToken,
+      edgeClaimEnvelope.claim.claimToken,
+      edgeClaimEnvelope.outcomeCsrfToken,
+      edgeSessionToken,
+    ]) assert.equal(edgeDatabaseBytes.includes(Buffer.from(secret, "utf8")), false);
+
+    gatewayDeployment.abort();
+    assert.equal(gateway.status().state, "stopped");
+    gatewayStore.close();
+    const gatewayDatabaseBytes = await readFile(gatewayDatabasePath);
+    assert.equal(gatewayDatabaseBytes.includes(Buffer.from(verifiedClaim.claimToken, "utf8")), false);
+    assert.equal(
+      gatewayDatabaseBytes.includes(Buffer.from(ownershipHandle.ownershipHandle, "utf8")),
+      false,
+    );
+    assert.equal(gatewayDatabaseBytes.includes(Buffer.from(sessionDigest, "utf8")), false);
+    gatewayStore = await ContractIntentWalletStore.open({
+      allowMemory: false,
+      initialize: false,
+      maximumIntents: 8,
+      path: gatewayDatabasePath,
+    });
+    const gatewayRecovery = gatewayStore.recover({ limit: 8, now: NOW + 1 });
+    assert.equal(gatewayRecovery[0].state, "SUBMISSION_REPORTED");
+    assert.equal(gatewayRecovery[0].transactionHash, reportedGatewayHash);
+    assert.equal(gatewayRecovery[0].action, "RECONCILE_TRANSACTION_NO_RESEND");
+    assert.equal(gatewayRecovery[0].retryAuthorized, false);
+    gatewayStore.close();
+
+    const lostGatewayDatabasePath = join(directory, `wallet-gateway-lost-${direction}.sqlite`);
+    let lostGatewayStore = await ContractIntentWalletStore.open({
+      allowMemory: false,
+      initialize: true,
+      maximumIntents: 8,
+      path: lostGatewayDatabasePath,
+    });
+    const lostGatewayDeployment = new AbortController();
+    const lostGateway = createContractIntentWalletGatewayForTests({
+      ...gatewayOptions(),
+      randomBytes: () => Buffer.alloc(32, direction === "lightning-to-bit" ? 93 : 113),
+      signal: lostGatewayDeployment.signal,
+      store: lostGatewayStore,
+    });
+    lostGateway.stage(preflight, { now: NOW });
+    const lostSessionDigest = id(`lost-wallet-gateway-session:${direction}`).toLowerCase();
+    const lostClaimRequest = buildContractIntentWalletGatewayClaimRequest({
+      expiresAt: NOW + 10,
+      requestDigest: preflight.requestDigest,
+      requestedAt: NOW,
+      requesterPrivateKey: gatewayRequesterKeys.privateKey,
+      sessionDigest: lostSessionDigest,
+      wallet: user.address,
+    });
+    const lostClaimHttp = await lostGateway.handle(walletGatewayRequest(
+      "/v1/wallet-intent/claim",
+      lostClaimRequest,
+    ));
+    assert.equal(lostClaimHttp.status, 200);
+    const lostClaimBody = await lostClaimHttp.json();
+    assert.equal((await lostGateway.handle(walletGatewayRequest(
+      "/v1/wallet-intent/claim",
+      lostClaimRequest,
+    ))).status, 400);
+    assert.equal(lostGateway.status().activeClaims, 1);
+    lostGatewayDeployment.abort();
+    lostGatewayStore.close();
+    lostGatewayStore = await ContractIntentWalletStore.open({
+      allowMemory: false,
+      initialize: false,
+      maximumIntents: 8,
+      path: lostGatewayDatabasePath,
+    });
+    const restartedGatewayDeployment = new AbortController();
+    const restartedGateway = createContractIntentWalletGatewayForTests({
+      ...gatewayOptions(),
+      randomBytes: () => Buffer.alloc(32, direction === "lightning-to-bit" ? 123 : 143),
+      signal: restartedGatewayDeployment.signal,
+      store: lostGatewayStore,
+    });
+    const lostOutcomeRequest = buildContractIntentWalletGatewayOutcomeRequest({
+      ...outcomeInput,
+      claimToken: lostClaimBody.claimToken,
+      requestedAt: NOW + 1,
+      expiresAt: NOW + 11,
+      outcomeObservedAt: NOW + 1,
+      sessionDigest: lostSessionDigest,
+    });
+    assert.equal((await restartedGateway.handle(walletGatewayRequest(
+      "/v1/wallet-intent/outcome",
+      lostOutcomeRequest,
+    ))).status, 400);
+    const lostRecovery = lostGatewayStore.recover({ limit: 8, now: NOW + 2 });
+    assert.equal(lostRecovery.length, 1);
+    assert.equal(lostRecovery[0].state, "WALLET_REQUEST_CLAIMED");
+    assert.equal(lostRecovery[0].action, "SEARCH_QUOTE_NO_RESEND");
+    assert.equal(lostRecovery[0].transactionHash, null);
+    assert.equal(lostRecovery[0].retryAuthorized, false);
+    restartedGatewayDeployment.abort();
+    lostGatewayStore.close();
+    const lostGatewayDatabaseBytes = await readFile(lostGatewayDatabasePath);
+    assert.equal(lostGatewayDatabaseBytes.includes(Buffer.from(lostClaimBody.claimToken, "utf8")), false);
+    assert.equal(lostGatewayDatabaseBytes.includes(Buffer.from(lostSessionDigest, "utf8")), false);
+
+    const walletSymlinkPath = join(directory, `wallet-link-${direction}.sqlite`);
+    await symlink(ambiguousWalletDatabasePath, walletSymlinkPath);
+    await assert.rejects(
+      () => ContractIntentWalletStore.open({
+        allowMemory: false,
+        initialize: false,
+        maximumIntents: 8,
+        path: walletSymlinkPath,
+      }),
+      /private regular file/,
+    );
+    await chmod(ambiguousWalletDatabasePath, 0o644);
+    await assert.rejects(
+      () => ContractIntentWalletStore.open({
+        allowMemory: false,
+        initialize: false,
+        maximumIntents: 8,
+        path: ambiguousWalletDatabasePath,
+      }),
+      /private regular file/,
+    );
+    const corruptWalletDatabase = new DatabaseSync(walletDatabasePath);
+    corruptWalletDatabase.prepare(`
+      UPDATE contract_intent_wallet_intents SET state = 'PENDING'
+    `).run();
+    corruptWalletDatabase.close();
+    await assert.rejects(
+      () => ContractIntentWalletStore.open({
+        allowMemory: false,
+        initialize: false,
+        maximumIntents: 8,
+        path: walletDatabasePath,
+      }),
+      /durable record changed|artifact journal is inconsistent/,
+    );
+    store.close();
+    const databaseBytes = await readFile(databasePath);
+    assert.equal(databaseBytes.includes(Buffer.from(solvers[0].privateKey.slice(2), "utf8")), false);
+  });
+}
+
+test("loads the production solver signer only from private owner-controlled key material", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "treeswap-solver-key-"));
+  const keyPath = join(directory, "solver.key");
+  const permissivePath = join(directory, "permissive.key");
+  const symlinkPath = join(directory, "solver-link.key");
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  await writeFile(keyPath, `${solvers[0].privateKey}\n`, { mode: 0o600, flag: "wx" });
+  const signer = await loadSolverContractSigner({
+    expectedSolver: solvers[0].address,
+    path: keyPath,
+  });
+  assert.deepEqual(signer.status(), {
+    schema: "treeswap.solver-contract-signer-status.v1",
+    mode: "private-file",
+    solver: solvers[0].address.toLowerCase(),
+    exportsPrivateKey: false,
+    walletDispatchAuthority: false,
+    lightningDispatchAuthority: false,
+    fundingAuthorization: false,
+  });
+  await writeFile(permissivePath, solvers[0].privateKey, { mode: 0o600, flag: "wx" });
+  await chmod(permissivePath, 0o644);
+  await assert.rejects(
+    () => loadSolverContractSigner({ expectedSolver: solvers[0].address, path: permissivePath }),
+    /private bounded regular file/,
+  );
+  await symlink(keyPath, symlinkPath);
+  await assert.rejects(
+    () => loadSolverContractSigner({ expectedSolver: solvers[0].address, path: symlinkPath }),
+    /changed path|private bounded regular file/,
+  );
+  await assert.rejects(
+    () => loadSolverContractSigner({ expectedSolver: user.address, path: keyPath }),
+    /does not match expected solver/,
+  );
+});
+
+async function executionCeremonyFixture(t, {
+  onRequest = null,
+  pricingRequest = pricing,
+  privateSettlementRequest = privateRequest,
+  routePolicy = privateCeremonyPolicy,
+  solverInvoice = null,
+} = {}) {
+  const data = await collectedBlindBook({ pricingRequest });
+  const selection = selectBlindQuote(data.book, data.book.offers[0].offer.offerId);
+  const coordinatorStore = await CoordinatorStore.open(":memory:", { allowMemory: true });
+  const deployment = new AbortController();
+  const service = createTestRfqSelectionReservationService({
+    admissionPolicy,
+    capabilityVerifications: data.verifications,
+    coordinatorStore,
+    invoicePolicy,
+    maximumPendingSelections: 4,
+    nowSeconds: () => NOW,
+    randomBytesImpl: () => Buffer.alloc(32, 137),
+    signal: deployment.signal,
+  });
+  const selectionLease = claimRfqSelectionReservationOwnership(service, deployment.signal);
+  const handoff = selectionLease.accept({
+    expiresAt: NOW + 45,
+    identityCommitment: id(`execution-ceremony:${pricingRequest.direction}`).toLowerCase(),
+    requestNonce: "31",
+    selection,
+    user: user.address,
+  });
+  const firstPrompt = service.prepare({
+    authorizationExpiresAt: NOW + 40,
+    request: privateSettlementRequest,
+    reservationToken: handoff.reservationToken,
+  });
+  service.reserve({
+    authorization: firstPrompt.message,
+    request: privateSettlementRequest,
+    reservationToken: handoff.reservationToken,
+    signature: await user.signTypedData(firstPrompt.domain, firstPrompt.types, firstPrompt.message),
+  });
+
+  const requesterKeys = generateKeyPairSync("ed25519");
+  const requesterDigest = solverEndpointPublicKeyDigest(pem(requesterKeys));
+  const invoice = pricingRequest.direction === "lightning-to-bit"
+    ? solverInvoice ?? createBolt11Invoice({
+        amountSats: BigInt(selection.selected.offer.lightningAmountSats),
+        paymentHash: id("private-payment-0").toLowerCase(),
+        paymentSecret: id("private-payment-secret-0").toLowerCase(),
+        privateKey: lightningNodePrivateKeys[0],
+        timestamp: NOW - 30,
+      })
+    : userInvoice;
+  let requests = 0;
+  const defaultResponse = async (options) => {
+    const providerBinding = verifiedSolverQuoteBinding(data.verifications[0]);
+    const providerRequest = verifySelectedSolverFinalizationRequest({
+      request: JSON.parse(options.body),
+      authority: {
+        requesterPublicKeyDigest: requesterDigest,
+        capabilityDigest: providerBinding.capabilityDigest,
+        endpointPublicKeyDigest: providerBinding.endpointPublicKeyDigest,
+        solverId: providerBinding.solverId,
+        direction: providerBinding.direction,
+      },
+      now: NOW,
+    });
+    let envelope = await executableEnvelope(selection.selected.offer, 0, {
+      request: privateSettlementRequest,
+    });
+    if (pricingRequest.direction === "lightning-to-bit") {
+      const offer = { ...envelope.offer, invoiceDigest: invoiceDigest(invoice) };
+      envelope = {
+        offer,
+        signature: await solvers[0].signTypedData(
+          rfqDomain(privateSettlementRequest),
+          EXECUTABLE_RFQ_OFFER_TYPES,
+          offer,
+        ),
+      };
+    }
+    return jsonResponse(buildSignedSelectedSolverFinalizationResponse({
+      request: providerRequest,
+      invoice,
+      envelope,
+      servedAt: NOW,
+      expiresAt: NOW + 15,
+      endpointPrivateKey: endpointKeys[0].privateKey,
+    }));
+  };
+  const client = createTestSelectedSolverFinalizationClient({
+    requesterPrivateKey: requesterKeys.privateKey,
+    signal: deployment.signal,
+    nowSeconds: () => NOW,
+    requestImpl: async (_url, options) => {
+      requests += 1;
+      const buildDefaultResponse = () => defaultResponse(options);
+      return onRequest
+        ? onRequest(Object.freeze({ buildDefaultResponse, options, requestNumber: requests }))
+        : buildDefaultResponse();
+    },
+  });
+  const route = createTestRfqExecutionCeremonyRoute({
+    client,
+    policy: routePolicy,
+    quotePolicy,
+    selectionReservation: service,
+    signal: deployment.signal,
+  });
+  t.after(() => {
+    deployment.abort();
+    try { route.stop(); } catch {}
+    try { coordinatorStore.close(); } catch {}
+  });
+  return {
+    ...data,
+    client,
+    coordinatorStore,
+    deployment,
+    finalizeBody: {
+      invoice: pricingRequest.direction === "lightning-to-bit" ? "" : invoice,
+      request: privateSettlementRequest,
+      reservationToken: handoff.reservationToken,
+    },
+    handoff,
+    invoice,
+    requests: () => requests,
+    route,
+    selection,
+    service,
+  };
+}
+
+test("projects authenticated competition into an opaque client-safe quote set", async () => {
+  const { book } = await collectedBlindBook();
+  let entropy = 0;
+  const session = createTestClientSafeBlindQuoteSession({
+    book,
+    nowSeconds: () => NOW,
+    randomBytesImpl: () => Buffer.alloc(32, ++entropy),
+  });
+  assert.equal(isClientSafeBlindQuoteSession(session), true);
+  assert.equal(isProductionClientSafeBlindQuoteSession(session), false);
+  assert.equal(verifiedBlindQuoteBook(book), book);
+  assert.throws(() => verifiedBlindQuoteBook({ ...book }), /authenticated complete delivery collection/);
+
+  const preview = session.preview();
+  assert.deepEqual(Object.keys(preview).sort(), [
+    "direction", "exactOutput", "expiresAt", "marketRiskPolicyDigest", "offers", "outputUnit",
+    "pricingDigest", "pricingId", "quoteCount", "receivedSetDigest", "schema",
+  ].sort());
+  assert.equal(preview.schema, "treeswap.client-safe-blind-quote-set.v1");
+  assert.equal(preview.quoteCount, 2);
+  assert.equal(preview.offers.length, 2);
+  assert.deepEqual(Object.keys(preview.offers[0]).sort(), [
+    "choiceId", "expiresAt", "feeBitAmount", "grossBitAmount", "lightningAmountSats",
+    "maxRoutingFeeSats", "netBitAmount", "rank",
+  ].sort());
+  assert.match(preview.offers[0].choiceId, /^0x[0-9a-f]{64}$/);
+  assert.notEqual(preview.offers[0].choiceId, preview.offers[1].choiceId);
+  assert.equal(preview.offers[0].rank, 1);
+  assert.equal(preview.offers[0].netBitAmount, pricing.exactOutput);
+  assert.equal(preview.offers[0].lightningAmountSats, "10000");
+
+  const publicWire = JSON.stringify(preview).toLowerCase();
+  for (const envelope of book.offers) {
+    for (const secret of [
+      envelope.source,
+      envelope.offer.offerId,
+      envelope.offer.solver,
+      envelope.offer.capabilityDigest,
+      envelope.offer.capacitySnapshotDigest,
+      envelope.offer.endpointPublicKeyDigest,
+      envelope.offer.settlementContractCodeHash,
+      envelope.signature,
+    ]) {
+      assert.equal(publicWire.includes(String(secret).toLowerCase()), false);
+    }
+  }
+  for (const secret of ["relay-a", "relay-b", "direct-a", "direct-b", "availableBitWei", "availableLightningSats"]) {
+    assert.equal(publicWire.includes(secret.toLowerCase()), false);
+  }
+  assert.deepEqual(session.status(), {
+    schema: "treeswap.blind-quote-preview-status.v1",
+    state: "active",
+    mode: "injected-test",
+    quoteCount: 2,
+    fundingAuthorization: false,
+    settlementAuthorization: false,
+    networkListener: false,
+  });
+});
+
+test("selects one original blind quote through an opaque one-use choice", async () => {
+  const { book } = await collectedBlindBook();
+  let entropy = 8;
+  const session = createTestClientSafeBlindQuoteSession({
+    book,
+    nowSeconds: () => NOW,
+    randomBytesImpl: () => Buffer.alloc(32, ++entropy),
+  });
+  const preview = session.preview();
+  const copied = { ...session };
+  assert.throws(() => copied.preview(), /factory provenance/);
+  const extracted = session.select;
+  assert.throws(() => extracted({ choiceId: preview.offers[0].choiceId }), /factory provenance/);
+  assert.throws(
+    () => session.select({ choiceId: `0x${"ff".repeat(32)}` }),
+    /not in the client preview/,
+  );
+  const selection = session.select({ choiceId: preview.offers[0].choiceId });
+  assert.equal(selection.selected.offer.offerId, book.offers[0].offer.offerId);
+  assert.equal(selection.receivedSetDigest, preview.receivedSetDigest);
+  assert.equal(session.status().state, "selected");
+  assert.equal(session.status().quoteCount, 0);
+  assert.throws(
+    () => session.select({ choiceId: preview.offers[1].choiceId }),
+    /no longer active/,
+  );
+  assert.throws(
+    () => createTestClientSafeBlindQuoteSession({
+      book,
+      nowSeconds: () => NOW,
+      randomBytesImpl: () => Buffer.alloc(32, 22),
+    }),
+    /already has a client preview session/,
+  );
+});
+
+test("fails closed on expiry, entropy faults, decorated choices, and closed sessions", async () => {
+  const first = await collectedBlindBook();
+  assert.throws(
+    () => createTestClientSafeBlindQuoteSession({
+      book: first.book,
+      nowSeconds: () => Math.min(...first.book.offers.map(({ offer }) => offer.expiresAt)),
+      randomBytesImpl: () => Buffer.alloc(32, 1),
+    }),
+    /expired or empty/,
+  );
+
+  const second = await collectedBlindBook();
+  assert.throws(
+    () => createTestClientSafeBlindQuoteSession({
+      book: second.book,
+      nowSeconds: () => NOW,
+      randomBytesImpl: () => Buffer.alloc(31, 1),
+    }),
+    /exactly 32 bytes/,
+  );
+  assert.throws(
+    () => createTestClientSafeBlindQuoteSession({
+      book: second.book,
+      nowSeconds: () => NOW,
+      randomBytesImpl: () => Buffer.alloc(32, 2),
+    }),
+    /entropy collided/,
+  );
+
+  const third = await collectedBlindBook();
+  assert.throws(
+    () => createTestClientSafeBlindQuoteSession({
+      book: third.book,
+      nowSeconds: () => NOW,
+      randomBytesImpl: () => Buffer.alloc(32, 1),
+      authority: true,
+    }),
+    /fields are not exact/,
+  );
+  let entropy = 31;
+  let observedAt = NOW;
+  const session = createTestClientSafeBlindQuoteSession({
+    book: third.book,
+    nowSeconds: () => observedAt,
+    randomBytesImpl: () => Buffer.alloc(32, ++entropy),
+  });
+  const preview = session.preview();
+  const choice = { choiceId: preview.offers[0].choiceId };
+  Object.defineProperty(choice, "choiceId", {
+    enumerable: true,
+    get() {
+      throw new Error("choice accessor executed");
+    },
+  });
+  assert.throws(() => session.select(choice), /enumerable data properties/);
+  const symbolicChoice = { choiceId: preview.offers[0].choiceId };
+  symbolicChoice[Symbol("authority")] = true;
+  assert.throws(() => session.select(symbolicChoice), /not exact data properties/);
+  assert.throws(
+    () => session.select(Object.create({ choiceId: preview.offers[0].choiceId })),
+    /plain data object/,
+  );
+  observedAt = preview.expiresAt;
+  assert.equal(session.status().state, "expired");
+  assert.equal(session.status().quoteCount, 0);
+  assert.throws(() => session.preview(), /no longer active/);
+  assert.throws(
+    () => session.select({ choiceId: preview.offers[0].choiceId }),
+    /no longer active/,
+  );
+});
+
+test("production preview sessions use module-owned time and entropy", async () => {
+  const { book } = await collectedBlindBook();
+  const session = createClientSafeBlindQuoteSession(book);
+  assert.equal(isProductionClientSafeBlindQuoteSession(session), true);
+  assert.equal(session.status().mode, "system-entropy");
+  assert.match(session.preview().offers[0].choiceId, /^0x[0-9a-f]{64}$/);
+  assert.equal(session.close().state, "closed");
+});
+
+test("authenticates quote ingress, exposes only opaque competition, and consumes selection once", async (t) => {
+  const data = await quoteIngressFixture(t);
+  const body = await signedQuoteIngressBody();
+  const created = await data.route.handle(quoteIngressRequest("/v1/quotes", body));
+  assert.equal(created.status, 200);
+  assert.equal(created.headers.get("cache-control"), "no-store");
+  assert.equal(created.headers.get("content-type"), "application/json");
+  assert.equal(created.headers.get("x-content-type-options"), "nosniff");
+  assert.equal(created.headers.get("x-frame-options"), "DENY");
+  const payload = await created.json();
+  assert.deepEqual(Object.keys(payload).sort(), [
+    "fundingAuthorization", "preview", "schema", "sessionToken", "settlementAuthorization",
+  ].sort());
+  assert.equal(payload.schema, "treeswap.rfq-quote-ingress-response.v1");
+  assert.equal(payload.fundingAuthorization, false);
+  assert.equal(payload.settlementAuthorization, false);
+  assert.match(payload.sessionToken, /^0x[0-9a-f]{64}$/);
+  assert.deepEqual(data.lastReaderPricing(), pricing);
+  assert.equal(data.reads(), 1);
+
+  const publicWire = JSON.stringify(payload).toLowerCase();
+  for (const secret of [body.signature, body.authorization.user]) {
+    assert.equal(publicWire.includes(secret.toLowerCase()), false);
+  }
+  for (const envelope of data.book.offers) {
+    for (const secret of [
+      envelope.source,
+      envelope.offer.offerId,
+      envelope.offer.solver,
+      envelope.offer.capabilityDigest,
+      envelope.offer.endpointPublicKeyDigest,
+      envelope.signature,
+    ]) assert.equal(publicWire.includes(String(secret).toLowerCase()), false);
+  }
+
+  const selected = await data.route.handle(quoteIngressRequest("/v1/quotes/select", {
+    choiceId: payload.preview.offers[0].choiceId,
+    sessionToken: payload.sessionToken,
+  }));
+  assert.equal(selected.status, 200);
+  const selectionPayload = await selected.json();
+  assert.deepEqual(selectionPayload, {
+    schema: "treeswap.rfq-quote-selection-ack.v1",
+    status: "selected",
+    reservationToken: `0x${"6f".repeat(32)}`,
+    expiresAt: payload.preview.expiresAt,
+    privateSettlementRequired: true,
+    fundingAuthorization: false,
+    settlementAuthorization: false,
+  });
+  const signingPayload = data.selectionReservation.prepare({
+    authorizationExpiresAt: NOW + 30,
+    request: privateRequest,
+    reservationToken: selectionPayload.reservationToken,
+  });
+  assert.equal(signingPayload.schema, "treeswap.selection-reservation-signing-payload.v1");
+  assert.equal(signingPayload.primaryType, "UserSelectionAuthorization");
+  assert.equal(JSON.stringify(signingPayload).includes(data.book.offers[0].signature), false);
+  const selectionSignature = await user.signTypedData(
+    signingPayload.domain,
+    signingPayload.types,
+    signingPayload.message,
+  );
+  assert.deepEqual(data.selectionReservation.reserve({
+    authorization: signingPayload.message,
+    request: privateRequest,
+    reservationToken: selectionPayload.reservationToken,
+    signature: selectionSignature,
+  }), {
+    schema: "treeswap.selection-reservation-ack.v1",
+    status: "reserved",
+    expiresAt: NOW + 30,
+    privateExecutionRequired: true,
+    fundingAuthorization: false,
+    settlementAuthorization: false,
+  });
+  assert.equal(data.coordinatorStore.getFirmOffer(data.book.offers[0].offer.offerId).state, "ACTIVE");
+  assert.equal((await data.route.handle(quoteIngressRequest("/v1/quotes", body))).status, 400);
+  assert.equal((await data.route.handle(quoteIngressRequest("/v1/quotes/select", {
+    choiceId: payload.preview.offers[0].choiceId,
+    sessionToken: payload.sessionToken,
+  }))).status, 400);
+  assert.equal(data.reads(), 1);
+  assert.deepEqual(data.route.status(), {
+    schema: "treeswap.rfq-quote-ingress-status.v1",
+    state: "active",
+    mode: "injected-test",
+    requestsStarted: 4,
+    requestsAccepted: 1,
+    requestsRejected: 2,
+    requestsInFlight: 0,
+    selectionsCompleted: 1,
+    inMemoryReadySessions: 0,
+    inMemorySelectedSessions: 0,
+    durableLiveClaimedRequests: 0,
+    durableLiveReadySessions: 0,
+    fundingAuthorization: false,
+    settlementAuthorization: false,
+    signingAuthorization: false,
+    networkListener: false,
+  });
+  assert.deepEqual(data.selectionReservation.status(), {
+    schema: "treeswap.selection-reservation-status.v2",
+    state: "active",
+    mode: "injected-test",
+    selectionsAccepted: 1,
+    signingPayloadsPrepared: 1,
+    reservationsCompleted: 1,
+    requestsFailed: 0,
+    pendingSelected: 0,
+    pendingPrepared: 0,
+    inMemoryReservations: 1,
+    finalizationsInFlightOrRetryable: 0,
+    executableQuotesFinalized: 0,
+    executionAuthorizationsCompleted: 0,
+    terminalFinalizationFailures: 0,
+    fundingAuthorization: false,
+    settlementAuthorization: false,
+    signingAuthority: false,
+    networkListener: false,
+  });
+});
+
+test("serves the private selection ceremony without logging or inheriting reservation authority", async (t) => {
+  const data = await quoteIngressFixture(t);
+  const ceremony = createTestRfqPrivateCeremonyRoute({
+    policy: privateCeremonyPolicy,
+    selectionReservation: data.selectionReservation,
+    signal: data.deployment.signal,
+  });
+  t.after(() => { try { ceremony.stop(); } catch {} });
+  assert.equal(isRfqPrivateCeremonyRoute(ceremony), true);
+
+  const quoteResponse = await data.route.handle(quoteIngressRequest(
+    "/v1/quotes",
+    await signedQuoteIngressBody(),
+  ));
+  const quotePayload = await quoteResponse.json();
+  const selectionResponse = await data.route.handle(quoteIngressRequest("/v1/quotes/select", {
+    choiceId: quotePayload.preview.offers[0].choiceId,
+    sessionToken: quotePayload.sessionToken,
+  }));
+  const selection = await selectionResponse.json();
+  const preparationBody = {
+    authorizationExpiresAt: NOW + 30,
+    request: privateRequest,
+    reservationToken: selection.reservationToken,
+  };
+  assert.throws(
+    () => data.selectionReservation.prepare(preparationBody),
+    /ceremony is route-owned/,
+  );
+  assert.throws(
+    () => data.selectionReservation.stop(),
+    /lifecycle is route-owned/,
+  );
+
+  const preparedResponse = await ceremony.handle(privateCeremonyRequest(
+    "/v1/selection/prepare",
+    preparationBody,
+  ));
+  assert.equal(preparedResponse.status, 200);
+  assert.equal(preparedResponse.headers.get("cache-control"), "no-store, max-age=0");
+  assert.equal(preparedResponse.headers.get("pragma"), "no-cache");
+  assert.equal(preparedResponse.headers.get("referrer-policy"), "no-referrer");
+  assert.equal(preparedResponse.headers.get("access-control-allow-origin"), QUOTE_CLIENT_ORIGIN);
+  assert.equal(preparedResponse.headers.get("access-control-allow-credentials"), null);
+  const signingPayload = await preparedResponse.json();
+  assert.equal(signingPayload.schema, "treeswap.selection-reservation-signing-payload.v1");
+  assert.equal(signingPayload.message.selectedSolver, data.book.offers[0].offer.solver);
+  assert.equal(JSON.stringify(signingPayload).includes(data.book.offers[0].signature), false);
+
+  const wrongSignature = await Wallet.createRandom().signTypedData(
+    signingPayload.domain,
+    signingPayload.types,
+    signingPayload.message,
+  );
+  const wrongResponse = await ceremony.handle(privateCeremonyRequest(
+    "/v1/selection/reserve",
+    {
+      authorization: signingPayload.message,
+      request: privateRequest,
+      reservationToken: selection.reservationToken,
+      signature: wrongSignature,
+    },
+  ));
+  assert.equal(wrongResponse.status, 400);
+  const wrongWire = await wrongResponse.text();
+  assert.equal(wrongWire.includes(selection.reservationToken), false);
+  assert.equal(wrongWire.toLowerCase().includes(privateRequest.user.toLowerCase()), false);
+  assert.equal(data.coordinatorStore.getFirmOffer(data.book.offers[0].offer.offerId), null);
+
+  const signature = await user.signTypedData(
+    signingPayload.domain,
+    signingPayload.types,
+    signingPayload.message,
+  );
+  const confirmationBody = {
+    authorization: signingPayload.message,
+    request: privateRequest,
+    reservationToken: selection.reservationToken,
+    signature,
+  };
+  const confirmed = await ceremony.handle(privateCeremonyRequest(
+    "/v1/selection/reserve",
+    confirmationBody,
+  ));
+  assert.equal(confirmed.status, 200);
+  assert.deepEqual(await confirmed.json(), {
+    schema: "treeswap.selection-reservation-ack.v1",
+    status: "reserved",
+    expiresAt: NOW + 30,
+    privateExecutionRequired: true,
+    fundingAuthorization: false,
+    settlementAuthorization: false,
+  });
+  assert.equal(data.coordinatorStore.getFirmOffer(data.book.offers[0].offer.offerId).state, "ACTIVE");
+  const replay = await ceremony.handle(privateCeremonyRequest(
+    "/v1/selection/reserve",
+    confirmationBody,
+  ));
+  assert.equal(replay.status, 200);
+
+  const status = ceremony.status();
+  assert.deepEqual(status, {
+    schema: "treeswap.rfq-private-ceremony-status.v1",
+    state: "active",
+    mode: "injected-test",
+    requestsStarted: 4,
+    requestsCompleted: 3,
+    requestsRejected: 1,
+    requestsInFlight: 0,
+    signingPayloadsPrepared: 1,
+    reservationsCompleted: 2,
+    bearerTokensInStatus: false,
+    privateTermsInStatus: false,
+    networkListener: false,
+    signingAuthority: false,
+    fundingAuthorization: false,
+    settlementAuthorization: false,
+  });
+  const statusWire = JSON.stringify(status).toLowerCase();
+  for (const secret of [
+    selection.reservationToken,
+    privateRequest.requestId,
+    privateRequest.user,
+    privateRequest.beneficiary,
+    signingPayload.message.selectedSolver,
+    signature,
+  ]) assert.equal(statusWire.includes(secret.toLowerCase()), false);
+  assert.throws(() => createTestRfqPrivateCeremonyRoute({
+    policy: privateCeremonyPolicy,
+    selectionReservation: data.selectionReservation,
+    signal: data.deployment.signal,
+  }), /already route-bound/);
+  const copied = { ...ceremony };
+  await assert.rejects(
+    copied.handle(privateCeremonyRequest("/v1/selection/prepare", preparationBody)),
+    /factory provenance/,
+  );
+  const extracted = ceremony.handle;
+  await assert.rejects(
+    extracted(privateCeremonyRequest("/v1/selection/prepare", preparationBody)),
+    /factory provenance/,
+  );
+});
+
+test("fails the private ceremony closed on origins, headers, framing, fields, and preflight", async (t) => {
+  const data = await quoteIngressFixture(t);
+  const ceremony = createTestRfqPrivateCeremonyRoute({
+    policy: privateCeremonyPolicy,
+    selectionReservation: data.selectionReservation,
+    signal: data.deployment.signal,
+  });
+  t.after(() => { try { ceremony.stop(); } catch {} });
+  const preparation = {
+    authorizationExpiresAt: NOW + 30,
+    request: privateRequest,
+    reservationToken: id("unavailable-private-ceremony-token").toLowerCase(),
+  };
+
+  const preflight = await ceremony.handle(new Request(
+    `${CEREMONY_API_ORIGIN}/v1/selection/prepare`,
+    {
+      method: "OPTIONS",
+      headers: {
+        "access-control-request-headers": "Content-Type, Cache-Control",
+        "access-control-request-method": "POST",
+        origin: QUOTE_CLIENT_ORIGIN,
+      },
+    },
+  ));
+  assert.equal(preflight.status, 204);
+  assert.equal(preflight.headers.get("access-control-allow-headers"), "cache-control, content-type");
+  assert.equal(preflight.headers.get("access-control-max-age"), "0");
+
+  for (const request of [
+    privateCeremonyRequest("/v1/selection/prepare", preparation, {
+      origin: "https://other-api.treeswap.example",
+    }),
+    privateCeremonyRequest("/v1/selection/prepare?token=secret", preparation),
+    privateCeremonyRequest("/v1/selection/prepare", preparation, {
+      headers: { origin: "https://evil.example" },
+    }),
+    privateCeremonyRequest("/v1/selection/prepare", preparation, {
+      headers: { authorization: "Bearer leaked" },
+    }),
+    privateCeremonyRequest("/v1/selection/prepare", preparation, {
+      headers: { cookie: "reservation=leaked" },
+    }),
+    privateCeremonyRequest("/v1/selection/prepare", preparation, {
+      headers: { "cache-control": "" },
+    }),
+    privateCeremonyRequest("/v1/selection/prepare", { ...preparation, extra: true }),
+    privateCeremonyRequest("/v1/selection/prepare", Buffer.alloc(32_769, 1)),
+    privateCeremonyRequest("/v1/selection/prepare", preparation, { method: "GET" }),
+  ]) {
+    const response = await ceremony.handle(request);
+    assert.equal(response.status, 400);
+    const wire = await response.text();
+    assert.equal(wire.includes(preparation.reservationToken), false);
+    assert.equal(wire.includes("Bearer leaked"), false);
+  }
+
+  const invalidPreflight = await ceremony.handle(new Request(
+    `${CEREMONY_API_ORIGIN}/v1/selection/prepare`,
+    {
+      method: "OPTIONS",
+      headers: {
+        "access-control-request-headers": "Content-Type, Authorization",
+        "access-control-request-method": "POST",
+        origin: QUOTE_CLIENT_ORIGIN,
+      },
+    },
+  ));
+  assert.equal(invalidPreflight.status, 400);
+  assert.equal(invalidPreflight.headers.get("access-control-allow-credentials"), null);
+  const privateNetworkPreflight = await ceremony.handle(new Request(
+    `${CEREMONY_API_ORIGIN}/v1/selection/prepare`,
+    {
+      method: "OPTIONS",
+      headers: {
+        "access-control-request-headers": "Content-Type, Cache-Control",
+        "access-control-request-method": "POST",
+        "access-control-request-private-network": "true",
+        origin: QUOTE_CLIENT_ORIGIN,
+      },
+    },
+  ));
+  assert.equal(privateNetworkPreflight.status, 400);
+});
+
+test("bounds stalled private-ceremony bodies and shares deployment shutdown", async (t) => {
+  const data = await quoteIngressFixture(t);
+  const ceremony = createTestRfqPrivateCeremonyRoute({
+    policy: {
+      ...privateCeremonyPolicy,
+      maximumInFlightRequests: 1,
+      maximumProcessingMilliseconds: 250,
+    },
+    selectionReservation: data.selectionReservation,
+    signal: data.deployment.signal,
+  });
+  t.after(() => { try { ceremony.stop(); } catch {} });
+  let cancelled = false;
+  const neverEndingBody = new ReadableStream({
+    start() {},
+    cancel() { cancelled = true; },
+  });
+  const request = new Request(`${CEREMONY_API_ORIGIN}/v1/selection/prepare`, {
+    method: "POST",
+    headers: {
+      "cache-control": "no-store",
+      "content-length": "10",
+      "content-type": "application/json",
+      origin: QUOTE_CLIENT_ORIGIN,
+    },
+    body: neverEndingBody,
+    duplex: "half",
+  });
+  const startedAt = Date.now();
+  const stalled = ceremony.handle(request);
+  assert.equal((await ceremony.handle(privateCeremonyRequest(
+    "/v1/selection/prepare",
+    {
+      authorizationExpiresAt: NOW + 30,
+      request: privateRequest,
+      reservationToken: id("saturated-private-ceremony-token").toLowerCase(),
+    },
+  ))).status, 400);
+  assert.equal(cancelled, false);
+  assert.equal((await stalled).status, 400);
+  assert.ok(Date.now() - startedAt < 2_000);
+  assert.equal(cancelled, true);
+  assert.equal(ceremony.status().requestsInFlight, 0);
+  data.deployment.abort();
+  assert.equal(ceremony.status().state, "stopped");
+  assert.equal(data.selectionReservation.status().state, "stopped");
+  assert.equal((await ceremony.handle(privateCeremonyRequest(
+    "/v1/selection/prepare",
+    {
+      authorizationExpiresAt: NOW + 30,
+      request: privateRequest,
+      reservationToken: id("stopped-private-ceremony-token").toLowerCase(),
+    },
+  ))).status, 400);
+});
+
+test("keeps sibling ceremony leases active until the shared route lifecycle closes", async (t) => {
+  const data = await quoteIngressFixture(t);
+  const selectionCeremony = createTestRfqPrivateCeremonyRoute({
+    policy: privateCeremonyPolicy,
+    selectionReservation: data.selectionReservation,
+    signal: data.deployment.signal,
+  });
+  const requesterKeys = generateKeyPairSync("ed25519");
+  const client = createTestSelectedSolverFinalizationClient({
+    requesterPrivateKey: requesterKeys.privateKey,
+    signal: data.deployment.signal,
+    nowSeconds: () => NOW,
+    requestImpl: async () => { throw new Error("unreachable sibling route transport"); },
+  });
+  const executionCeremony = createTestRfqExecutionCeremonyRoute({
+    client,
+    policy: privateCeremonyPolicy,
+    quotePolicy,
+    selectionReservation: data.selectionReservation,
+    signal: data.deployment.signal,
+  });
+  t.after(() => {
+    try { executionCeremony.stop(); } catch {}
+    try { selectionCeremony.stop(); } catch {}
+  });
+
+  assert.equal(executionCeremony.stop().state, "stopped");
+  assert.equal(data.selectionReservation.status().state, "active");
+  assert.equal(selectionCeremony.stop().state, "stopped");
+  assert.equal(data.selectionReservation.status().state, "active");
+  assert.equal(data.route.stop().state, "stopped");
+  assert.equal(data.selectionReservation.status().state, "stopped");
+});
+
+test("hands one original selection into user-authorized durable reservation without bearer-token griefing", async (t) => {
+  const data = await collectedBlindBook();
+  const selection = selectBlindQuote(data.book, data.book.offers[0].offer.offerId);
+  const coordinatorStore = await CoordinatorStore.open(":memory:", { allowMemory: true });
+  const deployment = new AbortController();
+  assert.throws(() => createTestRfqSelectionReservationService({
+    admissionPolicy,
+    capabilityVerifications: [{ ...data.verifications[0] }, data.verifications[1]],
+    coordinatorStore,
+    invoicePolicy,
+    maximumPendingSelections: 4,
+    nowSeconds: () => NOW,
+    randomBytesImpl: () => Buffer.alloc(32, 130),
+    signal: deployment.signal,
+  }), /locally verified capability/);
+  let policyAccessorRead = false;
+  const accessorPolicy = { ...admissionPolicy };
+  Object.defineProperty(accessorPolicy, "minimumNotionalSats", {
+    enumerable: true,
+    get() {
+      policyAccessorRead = true;
+      throw new Error("admission policy accessor executed");
+    },
+  });
+  assert.throws(() => createTestRfqSelectionReservationService({
+    admissionPolicy: accessorPolicy,
+    capabilityVerifications: data.verifications,
+    coordinatorStore,
+    invoicePolicy,
+    maximumPendingSelections: 4,
+    nowSeconds: () => NOW,
+    randomBytesImpl: () => Buffer.alloc(32, 130),
+    signal: deployment.signal,
+  }), /enumerable data properties/);
+  assert.equal(policyAccessorRead, false);
+  const service = createTestRfqSelectionReservationService({
+    admissionPolicy,
+    capabilityVerifications: data.verifications,
+    coordinatorStore,
+    invoicePolicy,
+    maximumPendingSelections: 4,
+    nowSeconds: () => NOW,
+    randomBytesImpl: () => Buffer.alloc(32, 131),
+    signal: deployment.signal,
+  });
+  t.after(() => {
+    deployment.abort();
+    try { coordinatorStore.close(); } catch {}
+  });
+  const lease = claimRfqSelectionReservationOwnership(service, deployment.signal);
+  const copiedLease = { ...lease };
+  assert.throws(() => copiedLease.accept({}), /route lease lacks factory provenance/);
+  const extractedAccept = lease.accept;
+  assert.throws(() => extractedAccept({}), /route lease lacks factory provenance/);
+  assert.throws(() => lease.accept({
+    expiresAt: NOW + 60,
+    identityCommitment: id("selection-reservation-identity").toLowerCase(),
+    requestNonce: "17",
+    selection: { ...selection },
+    user: user.address,
+  }), /locally verified blind quote book/);
+  let accessorRead = false;
+  const accessorSelection = {};
+  Object.defineProperty(accessorSelection, "selected", {
+    enumerable: true,
+    get() {
+      accessorRead = true;
+      throw new Error("selection accessor executed");
+    },
+  });
+  assert.throws(() => lease.accept({
+    expiresAt: NOW + 60,
+    identityCommitment: id("selection-reservation-identity").toLowerCase(),
+    requestNonce: "17",
+    selection: accessorSelection,
+    user: user.address,
+  }), /locally verified blind quote book/);
+  assert.equal(accessorRead, false);
+
+  const handoff = lease.accept({
+    expiresAt: NOW + 40,
+    identityCommitment: id("selection-reservation-identity").toLowerCase(),
+    requestNonce: "17",
+    selection,
+    user: user.address,
+  });
+  assert.deepEqual(Object.keys(handoff).sort(), [
+    "expiresAt", "fundingAuthorization", "privateSettlementRequired", "reservationToken",
+    "settlementAuthorization",
+  ].sort());
+  assert.match(handoff.reservationToken, /^0x[0-9a-f]{64}$/);
+  const copiedService = { ...service };
+  assert.throws(() => copiedService.prepare({
+    authorizationExpiresAt: NOW + 30,
+    request: privateRequest,
+    reservationToken: handoff.reservationToken,
+  }), /factory provenance/);
+
+  const griefRequest = {
+    ...privateRequest,
+    beneficiary: "0x6666666666666666666666666666666666666666",
+  };
+  const griefPayload = service.prepare({
+    authorizationExpiresAt: NOW + 25,
+    request: griefRequest,
+    reservationToken: handoff.reservationToken,
+  });
+  const signingPayload = service.prepare({
+    authorizationExpiresAt: NOW + 30,
+    request: privateRequest,
+    reservationToken: handoff.reservationToken,
+  });
+  assert.notEqual(griefPayload.digest, signingPayload.digest);
+  assert.equal(coordinatorStore.getRfqRequest(selection.pricingId), null);
+
+  let requestAccessorRead = false;
+  const accessorRequest = { ...privateRequest };
+  Object.defineProperty(accessorRequest, "beneficiary", {
+    enumerable: true,
+    get() {
+      requestAccessorRead = true;
+      throw new Error("private request accessor executed");
+    },
+  });
+  assert.throws(() => service.prepare({
+    authorizationExpiresAt: NOW + 30,
+    request: accessorRequest,
+    reservationToken: handoff.reservationToken,
+  }), /enumerable data properties/);
+  assert.equal(requestAccessorRead, false);
+
+  const wrongSigner = Wallet.createRandom();
+  const wrongSignature = await wrongSigner.signTypedData(
+    signingPayload.domain,
+    signingPayload.types,
+    signingPayload.message,
+  );
+  assert.throws(() => service.reserve({
+    authorization: signingPayload.message,
+    request: privateRequest,
+    reservationToken: handoff.reservationToken,
+    signature: wrongSignature,
+  }), /signer does not match/);
+  assert.equal(coordinatorStore.getRfqRequest(selection.pricingId), null);
+  assert.equal(coordinatorStore.getSolverCapacity(selection.selected.offer.solver.toLowerCase()), null);
+
+  const extended = buildBlindQuoteSelectionAuthorization({
+    selection,
+    request: privateRequest,
+    authorizationExpiresAt: NOW + 50,
+  });
+  const extendedSignature = await user.signTypedData(
+    extended.domain,
+    extended.types,
+    extended.message,
+  );
+  assert.throws(() => service.reserve({
+    authorization: extended.message,
+    request: privateRequest,
+    reservationToken: handoff.reservationToken,
+    signature: extendedSignature,
+  }), /outlives the reservation ceremony/);
+  assert.equal(coordinatorStore.getRfqRequest(selection.pricingId), null);
+
+  const signature = await user.signTypedData(
+    signingPayload.domain,
+    signingPayload.types,
+    signingPayload.message,
+  );
+  const input = {
+    authorization: signingPayload.message,
+    request: privateRequest,
+    reservationToken: handoff.reservationToken,
+    signature,
+  };
+  const reserved = service.reserve(input);
+  assert.deepEqual(service.reserve(input), reserved);
+  assert.equal(reserved.expiresAt, NOW + 30);
+  assert.equal(coordinatorStore.getFirmOffer(selection.selected.offer.offerId).state, "ACTIVE");
+  assert.throws(() => service.prepare({
+    authorizationExpiresAt: NOW + 30,
+    request: privateRequest,
+    reservationToken: handoff.reservationToken,
+  }), /already durable/);
+  const status = service.status();
+  assert.equal(JSON.stringify(status).includes(handoff.reservationToken), false);
+  assert.equal(status.selectionsAccepted, 1);
+  assert.equal(status.signingPayloadsPrepared, 2);
+  assert.equal(status.reservationsCompleted, 1);
+  assert.equal(status.requestsFailed, 4);
+  assert.equal(status.inMemoryReservations, 1);
+  coordinatorStore.getFirmOffer = () => ({ state: "ACTIVE" });
+  assert.throws(() => service.reserve(input), /unmodified coordinator store methods/);
+  delete coordinatorStore.getFirmOffer;
+  assert.deepEqual(service.reserve(input), reserved);
+  deployment.abort();
+  assert.equal(service.status().state, "stopped");
+  assert.throws(() => service.reserve(input), /stopped/);
+});
+
+test("reserves BIT-to-Lightning output and routing headroom through the same selection handoff", async (t) => {
+  const data = await collectedBlindBook({ pricingRequest: bitToLightningPricing });
+  const selection = selectBlindQuote(data.book, data.book.offers[0].offer.offerId);
+  const coordinatorStore = await CoordinatorStore.open(":memory:", { allowMemory: true });
+  const deployment = new AbortController();
+  const service = createTestRfqSelectionReservationService({
+    admissionPolicy,
+    capabilityVerifications: data.verifications,
+    coordinatorStore,
+    invoicePolicy,
+    maximumPendingSelections: 4,
+    nowSeconds: () => NOW,
+    randomBytesImpl: () => Buffer.alloc(32, 132),
+    signal: deployment.signal,
+  });
+  t.after(() => {
+    deployment.abort();
+    try { coordinatorStore.close(); } catch {}
+  });
+  const lease = claimRfqSelectionReservationOwnership(service, deployment.signal);
+  const handoff = lease.accept({
+    expiresAt: NOW + 60,
+    identityCommitment: id("selection-reservation-bit-to-lightning-identity").toLowerCase(),
+    requestNonce: "19",
+    selection,
+    user: user.address,
+  });
+  const signingPayload = service.prepare({
+    authorizationExpiresAt: NOW + 30,
+    request: bitToLightningRequest,
+    reservationToken: handoff.reservationToken,
+  });
+  const signature = await user.signTypedData(
+    signingPayload.domain,
+    signingPayload.types,
+    signingPayload.message,
+  );
+  const ack = service.reserve({
+    authorization: signingPayload.message,
+    request: bitToLightningRequest,
+    reservationToken: handoff.reservationToken,
+    signature,
+  });
+  assert.equal(ack.status, "reserved");
+  const firm = coordinatorStore.getFirmOffer(selection.selected.offer.offerId);
+  assert.equal(firm.state, "ACTIVE");
+  assert.equal(
+    firm.lightningAmountSats,
+    String(selection.selected.offer.lightningAmountSats + selection.selected.offer.maxRoutingFeeSats),
+  );
+  assert.equal(firm.bitAmountWei, "0");
+});
+
+test("carries one durable reservation through authenticated solver finalization and exact second user authorization", async (t) => {
+  const data = await collectedBlindBook();
+  const selection = selectBlindQuote(data.book, data.book.offers[0].offer.offerId);
+  const coordinatorStore = await CoordinatorStore.open(":memory:", { allowMemory: true });
+  const deployment = new AbortController();
+  const service = createTestRfqSelectionReservationService({
+    admissionPolicy,
+    capabilityVerifications: data.verifications,
+    coordinatorStore,
+    invoicePolicy,
+    maximumPendingSelections: 4,
+    nowSeconds: () => NOW,
+    randomBytesImpl: () => Buffer.alloc(32, 133),
+    signal: deployment.signal,
+  });
+  const selectionLease = claimRfqSelectionReservationOwnership(service, deployment.signal);
+  const handoff = selectionLease.accept({
+    expiresAt: NOW + 45,
+    identityCommitment: id("selected-solver-finalization-identity").toLowerCase(),
+    requestNonce: "23",
+    selection,
+    user: user.address,
+  });
+  const firstPrompt = service.prepare({
+    authorizationExpiresAt: NOW + 40,
+    request: privateRequest,
+    reservationToken: handoff.reservationToken,
+  });
+  const firstSignature = await user.signTypedData(
+    firstPrompt.domain,
+    firstPrompt.types,
+    firstPrompt.message,
+  );
+  service.reserve({
+    authorization: firstPrompt.message,
+    request: privateRequest,
+    reservationToken: handoff.reservationToken,
+    signature: firstSignature,
+  });
+
+  const requesterKeys = generateKeyPairSync("ed25519");
+  const requesterDigest = solverEndpointPublicKeyDigest(pem(requesterKeys));
+  const solverInvoice = createBolt11Invoice({
+    amountSats: BigInt(selection.selected.offer.lightningAmountSats),
+    paymentHash: id("private-payment-0").toLowerCase(),
+    paymentSecret: id("private-payment-secret-durable-0").toLowerCase(),
+    privateKey: lightningNodePrivateKeys[0],
+    timestamp: NOW - 30,
+  });
+  let requests = 0;
+  let requestBody = null;
+  let providerFailure = null;
+  const client = createTestSelectedSolverFinalizationClient({
+    requesterPrivateKey: requesterKeys.privateKey,
+    signal: deployment.signal,
+    nowSeconds: () => NOW,
+    requestImpl: async (_url, options) => {
+      try {
+        requests += 1;
+        requestBody = requestBody ?? options.body;
+        assert.equal(options.body, requestBody);
+        const providerBinding = verifiedSolverQuoteBinding(data.verifications[0]);
+        const providerRequest = verifySelectedSolverFinalizationRequest({
+          request: JSON.parse(options.body),
+          authority: {
+            requesterPublicKeyDigest: requesterDigest,
+            capabilityDigest: providerBinding.capabilityDigest,
+            endpointPublicKeyDigest: providerBinding.endpointPublicKeyDigest,
+            solverId: providerBinding.solverId,
+            direction: providerBinding.direction,
+          },
+          now: NOW,
+        });
+        const offer = {
+          ...(await executableEnvelope(selection.selected.offer, 0)).offer,
+          invoiceDigest: invoiceDigest(solverInvoice),
+        };
+        const executable = {
+          offer,
+          signature: await solvers[0].signTypedData(
+            rfqDomain(privateRequest),
+            EXECUTABLE_RFQ_OFFER_TYPES,
+            offer,
+          ),
+        };
+        return jsonResponse(buildSignedSelectedSolverFinalizationResponse({
+          request: providerRequest,
+          invoice: solverInvoice,
+          envelope: executable,
+          servedAt: NOW,
+          expiresAt: NOW + 30,
+          endpointPrivateKey: endpointKeys[0].privateKey,
+        }));
+      } catch (error) {
+        providerFailure = error;
+        throw error;
+      }
+    },
+  });
+  const wrongLifecycle = new AbortController();
+  const wrongLifecycleClient = createTestSelectedSolverFinalizationClient({
+    requesterPrivateKey: requesterKeys.privateKey,
+    signal: wrongLifecycle.signal,
+    nowSeconds: () => NOW,
+    requestImpl: async () => { throw new Error("unreachable"); },
+  });
+  assert.throws(() => claimRfqSelectedSolverFinalizationOwnership(service, {
+    client: wrongLifecycleClient,
+    quotePolicy,
+    signal: deployment.signal,
+  }), /share one active deployment lifecycle/);
+  wrongLifecycle.abort();
+  const finalizationLease = claimRfqSelectedSolverFinalizationOwnership(service, {
+    client,
+    quotePolicy,
+    signal: deployment.signal,
+  });
+  t.after(() => {
+    deployment.abort();
+    try { coordinatorStore.close(); } catch {}
+  });
+
+  let secondPrompt;
+  try {
+    secondPrompt = await finalizationLease.finalize({
+      invoice: "",
+      request: privateRequest,
+      reservationToken: handoff.reservationToken,
+    });
+  } catch (error) {
+    throw providerFailure ?? error;
+  }
+  assert.equal(secondPrompt.primaryType, "UserExecutionAuthorization");
+  assert.equal(secondPrompt.invoice, solverInvoice);
+  assert.equal(secondPrompt.settlementAuthorization, true);
+  assert.equal(secondPrompt.movesFundsImmediately, false);
+  assert.equal(requests, 1);
+  assert.equal(service.status().executableQuotesFinalized, 1);
+  assert.equal(
+    coordinatorStore.getFirmOffer(selection.selected.offer.offerId).privateRequestDigest,
+    secondPrompt.message.requestDigest,
+  );
+
+  const secondSignature = await user.signTypedData(
+    secondPrompt.domain,
+    secondPrompt.types,
+    secondPrompt.message,
+  );
+  const ack = finalizationLease.authorize({
+    authorization: secondPrompt.message,
+    request: privateRequest,
+    reservationToken: handoff.reservationToken,
+    signature: secondSignature,
+  });
+  assert.equal(ack.schema, "treeswap.selected-solver-authorization-ack.v2");
+  assert.equal(ack.status, "authorized");
+  assert.equal(ack.settlementStatus, "accepted");
+  assert.equal(ack.settlementId, privateRequest.requestId);
+  assert.equal(ack.invoice, solverInvoice);
+  assert.equal(ack.paymentHash, id("private-payment-0"));
+  assert.equal(ack.evmReservationAuthority, false);
+  assert.equal(ack.lightningDispatchAuthority, false);
+  assert.equal(ack.settlementDispatchAuthority, false);
+  assert.equal(service.status().executionAuthorizationsCompleted, 1);
+  assert.equal(
+    coordinatorStore.getFirmOffer(selection.selected.offer.offerId).executionAuthorizationDigest,
+    secondPrompt.digest,
+  );
+  const settlement = coordinatorStore.getSettlement(privateRequest.requestId);
+  assert.equal(settlement.state, "INTENT_ACCEPTED");
+  assert.equal(settlement.pricingId, selection.pricingId);
+  assert.equal(settlement.nonceAuthorityDigest, firstPrompt.digest);
+  assert.equal(settlement.intentNonce, privateRequest.nonce.toString());
+  assert.equal(settlement.intentDigest, secondPrompt.digest);
+  assert.equal(settlement.paymentHash, id("private-payment-0"));
+  assert.equal(settlement.invoiceDigest, secondPrompt.message.invoiceDigest);
+  assert.equal(settlement.quoteReceiptDigest, selection.receivedSetDigest);
+  assert.equal(settlement.selectedSetDigest, selection.selectedBlindOfferDigest);
+  assert.equal(settlement.selectedOfferId, selection.selected.offer.offerId);
+  assert.equal(settlement.recordDigest, ack.settlementRecordDigest);
+  assert.equal(settlement.reservationId, null);
+  assert.deepEqual(coordinatorStore.listSettlementActions(settlement.settlementId), []);
+  const contractIntent = finalizationLease.prepareContractIntent({
+    bitcoinHeight: 900_000,
+    reservationToken: handoff.reservationToken,
+    settlementPolicy: TREE_SWAP_SETTLEMENT_POLICY_V1,
+  });
+  assert.equal(contractIntent.primaryType, "SelectedQuote");
+  assert.equal(contractIntent.userAuthorizationDigest, secondPrompt.digest);
+  assert.equal(contractIntent.walletDispatchAuthority, false);
+  assert.equal(finalizationLease.prepareContractIntent({
+    bitcoinHeight: 900_000,
+    reservationToken: handoff.reservationToken,
+    settlementPolicy: TREE_SWAP_SETTLEMENT_POLICY_V1,
+  }), contractIntent);
+  assert.throws(() => finalizationLease.prepareContractIntent({
+    bitcoinHeight: 900_001,
+    reservationToken: handoff.reservationToken,
+    settlementPolicy: TREE_SWAP_SETTLEMENT_POLICY_V1,
+  }), /Bitcoin height changed/);
+  assert.deepEqual(await finalizationLease.finalize({
+    invoice: "",
+    request: privateRequest,
+    reservationToken: handoff.reservationToken,
+  }), ack);
+  assert.equal(requests, 1);
+  const copied = { ...finalizationLease };
+  await assert.rejects(() => copied.finalize({}), /lease lacks factory provenance/);
+});
+
+test("keeps the user's BIT-to-Lightning invoice fixed through selected-solver finalization", async (t) => {
+  const data = await collectedBlindBook({ pricingRequest: bitToLightningPricing });
+  const selection = selectBlindQuote(data.book, data.book.offers[0].offer.offerId);
+  const coordinatorStore = await CoordinatorStore.open(":memory:", { allowMemory: true });
+  const deployment = new AbortController();
+  const service = createTestRfqSelectionReservationService({
+    admissionPolicy,
+    capabilityVerifications: data.verifications,
+    coordinatorStore,
+    invoicePolicy,
+    maximumPendingSelections: 4,
+    nowSeconds: () => NOW,
+    randomBytesImpl: () => Buffer.alloc(32, 134),
+    signal: deployment.signal,
+  });
+  const selectionLease = claimRfqSelectionReservationOwnership(service, deployment.signal);
+  const handoff = selectionLease.accept({
+    expiresAt: NOW + 45,
+    identityCommitment: id("selected-solver-bit-to-lightning-finalization").toLowerCase(),
+    requestNonce: "29",
+    selection,
+    user: user.address,
+  });
+  const firstPrompt = service.prepare({
+    authorizationExpiresAt: NOW + 40,
+    request: bitToLightningRequest,
+    reservationToken: handoff.reservationToken,
+  });
+  service.reserve({
+    authorization: firstPrompt.message,
+    request: bitToLightningRequest,
+    reservationToken: handoff.reservationToken,
+    signature: await user.signTypedData(firstPrompt.domain, firstPrompt.types, firstPrompt.message),
+  });
+
+  const requesterKeys = generateKeyPairSync("ed25519");
+  const requesterDigest = solverEndpointPublicKeyDigest(pem(requesterKeys));
+  const client = createTestSelectedSolverFinalizationClient({
+    requesterPrivateKey: requesterKeys.privateKey,
+    signal: deployment.signal,
+    nowSeconds: () => NOW,
+    requestImpl: async (_url, options) => {
+      const providerBinding = verifiedSolverQuoteBinding(data.verifications[0]);
+      const providerRequest = verifySelectedSolverFinalizationRequest({
+        request: JSON.parse(options.body),
+        authority: {
+          requesterPublicKeyDigest: requesterDigest,
+          capabilityDigest: providerBinding.capabilityDigest,
+          endpointPublicKeyDigest: providerBinding.endpointPublicKeyDigest,
+          solverId: providerBinding.solverId,
+          direction: providerBinding.direction,
+        },
+        now: NOW,
+      });
+      return jsonResponse(buildSignedSelectedSolverFinalizationResponse({
+        request: providerRequest,
+        invoice: userInvoice,
+        envelope: await executableEnvelope(selection.selected.offer, 0, { request: bitToLightningRequest }),
+        servedAt: NOW,
+        expiresAt: NOW + 15,
+        endpointPrivateKey: endpointKeys[0].privateKey,
+      }));
+    },
+  });
+  const finalizationLease = claimRfqSelectedSolverFinalizationOwnership(service, {
+    client,
+    quotePolicy,
+    signal: deployment.signal,
+  });
+  t.after(() => {
+    deployment.abort();
+    try { coordinatorStore.close(); } catch {}
+  });
+  const secondPrompt = await finalizationLease.finalize({
+    invoice: `lightning:${userInvoice.toUpperCase()}`,
+    request: bitToLightningRequest,
+    reservationToken: handoff.reservationToken,
+  });
+  assert.equal(secondPrompt.invoice, userInvoice);
+  assert.equal(secondPrompt.message.invoiceDigest, bitToLightningRequest.invoiceDigest);
+  assert.equal(secondPrompt.message.paymentHash, bitToLightningRequest.paymentHash);
+  const ack = finalizationLease.authorize({
+    authorization: secondPrompt.message,
+    request: bitToLightningRequest,
+    reservationToken: handoff.reservationToken,
+    signature: await user.signTypedData(secondPrompt.domain, secondPrompt.types, secondPrompt.message),
+  });
+  assert.equal(ack.direction, "bit-to-lightning");
+  assert.equal(ack.settlementStatus, "accepted");
+  assert.equal(ack.settlementId, bitToLightningRequest.requestId);
+  assert.equal(ack.invoice, userInvoice);
+  assert.equal(ack.invoiceDigest, bitToLightningRequest.invoiceDigest);
+  assert.equal(ack.paymentHash, bitToLightningRequest.paymentHash);
+  const settlement = coordinatorStore.getSettlement(bitToLightningRequest.requestId);
+  assert.equal(settlement.state, "INTENT_ACCEPTED");
+  assert.equal(settlement.amountSats, bitToLightningRequest.exactLightningOutputSats.toString());
+  assert.equal(settlement.quoteReceiptDigest, selection.receivedSetDigest);
+  assert.equal(settlement.selectedSetDigest, selection.selectedBlindOfferDigest);
+  assert.equal(settlement.reservationId, null);
+  assert.deepEqual(coordinatorStore.listSettlementActions(settlement.settlementId), []);
+});
+
+test("serves selected-solver finalization and exact second authorization through the private browser route", async (t) => {
+  const data = await executionCeremonyFixture(t);
+  assert.equal(isRfqExecutionCeremonyRoute(data.route), true);
+  assert.throws(() => data.service.stop(), /lifecycle is route-owned/);
+  assert.throws(() => createRfqExecutionCeremonyRoute({
+    client: data.client,
+    policy: privateCeremonyPolicy,
+    quotePolicy,
+    selectionReservation: data.service,
+    signal: data.deployment.signal,
+  }), /matching reservation service/);
+  assert.throws(() => createTestRfqExecutionCeremonyRoute({
+    client: data.client,
+    policy: privateCeremonyPolicy,
+    quotePolicy,
+    selectionReservation: data.service,
+    signal: data.deployment.signal,
+  }), /already route-bound/);
+
+  const finalized = await data.route.handle(privateCeremonyRequest(
+    "/v1/selection/finalize",
+    data.finalizeBody,
+  ));
+  assert.equal(finalized.status, 200);
+  assert.equal(finalized.headers.get("cache-control"), "no-store, max-age=0");
+  assert.equal(finalized.headers.get("access-control-allow-origin"), QUOTE_CLIENT_ORIGIN);
+  assert.equal(finalized.headers.get("access-control-allow-credentials"), null);
+  const prompt = await finalized.json();
+  assert.equal(prompt.schema, "treeswap.selected-solver-execution-signing-payload.v1");
+  assert.equal(prompt.invoice, data.invoice);
+  assert.equal(prompt.message.selectedSolver, data.selection.selected.offer.solver);
+  assert.equal(prompt.movesFundsImmediately, false);
+  assert.equal(prompt.requiresSeparateAssetAction, true);
+  assert.equal(data.requests(), 1);
+
+  const wrongSignature = await Wallet.createRandom().signTypedData(
+    prompt.domain,
+    prompt.types,
+    prompt.message,
+  );
+  const wrong = await data.route.handle(privateCeremonyRequest(
+    "/v1/selection/authorize",
+    {
+      authorization: prompt.message,
+      request: privateRequest,
+      reservationToken: data.handoff.reservationToken,
+      signature: wrongSignature,
+    },
+  ));
+  assert.equal(wrong.status, 400);
+  const wrongWire = await wrong.text();
+  assert.equal(wrongWire.includes(data.handoff.reservationToken), false);
+  assert.equal(wrongWire.toLowerCase().includes(privateRequest.user.toLowerCase()), false);
+
+  const signature = await user.signTypedData(prompt.domain, prompt.types, prompt.message);
+  const authorized = await data.route.handle(privateCeremonyRequest(
+    "/v1/selection/authorize",
+    {
+      authorization: prompt.message,
+      request: privateRequest,
+      reservationToken: data.handoff.reservationToken,
+      signature,
+    },
+  ));
+  assert.equal(authorized.status, 200);
+  const ack = await authorized.json();
+  assert.equal(ack.schema, "treeswap.selected-solver-authorization-ack.v2");
+  assert.equal(ack.status, "authorized");
+  assert.equal(ack.settlementStatus, "accepted");
+  assert.equal(ack.settlementId, privateRequest.requestId);
+  assert.equal(ack.invoice, data.invoice);
+  assert.equal(ack.evmReservationAuthority, false);
+  assert.equal(ack.lightningDispatchAuthority, false);
+  assert.equal(ack.settlementDispatchAuthority, false);
+  const acceptedSettlement = data.coordinatorStore.getSettlement(privateRequest.requestId);
+  assert.equal(acceptedSettlement.state, "INTENT_ACCEPTED");
+  assert.equal(acceptedSettlement.recordDigest, ack.settlementRecordDigest);
+  assert.equal(acceptedSettlement.reservationId, null);
+  assert.deepEqual(data.coordinatorStore.listSettlementActions(ack.settlementId), []);
+
+  const replay = await data.route.handle(privateCeremonyRequest(
+    "/v1/selection/finalize",
+    data.finalizeBody,
+  ));
+  assert.equal(replay.status, 200);
+  assert.deepEqual(await replay.json(), ack);
+  assert.equal(data.requests(), 1);
+  const status = data.route.status();
+  assert.deepEqual(status, {
+    schema: "treeswap.rfq-execution-ceremony-status.v1",
+    state: "active",
+    mode: "injected-test",
+    requestsStarted: 4,
+    requestsCompleted: 3,
+    requestsRejected: 1,
+    requestsPending: 0,
+    requestsInFlight: 0,
+    finalizationsInFlight: 0,
+    executionSigningPayloadsPrepared: 1,
+    executionAuthorizationsCompleted: 1,
+    bearerTokensInStatus: false,
+    privateTermsInStatus: false,
+    networkListener: false,
+    signingAuthority: false,
+    fundingAuthorization: false,
+    settlementDispatchAuthority: false,
+  });
+  const statusWire = JSON.stringify(status).toLowerCase();
+  for (const secret of [
+    data.handoff.reservationToken,
+    privateRequest.requestId,
+    privateRequest.user,
+    privateRequest.beneficiary,
+    prompt.message.selectedSolver,
+    data.invoice,
+    signature,
+  ]) assert.equal(statusWire.includes(secret.toLowerCase()), false);
+  const copied = { ...data.route };
+  await assert.rejects(
+    copied.handle(privateCeremonyRequest("/v1/selection/finalize", data.finalizeBody)),
+    /factory provenance/,
+  );
+});
+
+test("preserves the user invoice through the BIT-to-Lightning browser finalization route", async (t) => {
+  const data = await executionCeremonyFixture(t, {
+    pricingRequest: bitToLightningPricing,
+    privateSettlementRequest: bitToLightningRequest,
+  });
+  const finalized = await data.route.handle(privateCeremonyRequest(
+    "/v1/selection/finalize",
+    data.finalizeBody,
+  ));
+  assert.equal(finalized.status, 200);
+  const prompt = await finalized.json();
+  assert.equal(prompt.invoice, userInvoice);
+  assert.equal(prompt.message.invoiceDigest, bitToLightningRequest.invoiceDigest);
+  assert.equal(prompt.message.paymentHash, bitToLightningRequest.paymentHash);
+  const authorized = await data.route.handle(privateCeremonyRequest(
+    "/v1/selection/authorize",
+    {
+      authorization: prompt.message,
+      request: bitToLightningRequest,
+      reservationToken: data.handoff.reservationToken,
+      signature: await user.signTypedData(prompt.domain, prompt.types, prompt.message),
+    },
+  ));
+  assert.equal(authorized.status, 200);
+  const ack = await authorized.json();
+  assert.equal(ack.direction, "bit-to-lightning");
+  assert.equal(ack.settlementStatus, "accepted");
+  assert.equal(ack.settlementId, bitToLightningRequest.requestId);
+  assert.equal(ack.invoice, userInvoice);
+  assert.equal(ack.invoiceDigest, bitToLightningRequest.invoiceDigest);
+  assert.equal(ack.paymentHash, bitToLightningRequest.paymentHash);
+  assert.equal(data.coordinatorStore.getSettlement(ack.settlementId).state, "INTENT_ACCEPTED");
+  assert.equal(data.coordinatorStore.getSettlement(ack.settlementId).reservationId, null);
+});
+
+test("rejects an invalid user invoice before disclosing it to the selected solver", async (t) => {
+  const data = await executionCeremonyFixture(t, {
+    pricingRequest: bitToLightningPricing,
+    privateSettlementRequest: bitToLightningRequest,
+  });
+  const corrupted = `${userInvoice.slice(0, -1)}${userInvoice.endsWith("q") ? "p" : "q"}`;
+  const response = await data.route.handle(privateCeremonyRequest(
+    "/v1/selection/finalize",
+    { ...data.finalizeBody, invoice: corrupted },
+  ));
+  assert.equal(response.status, 400);
+  assert.equal(data.requests(), 0);
+  assert.equal(data.service.status().terminalFinalizationFailures, 1);
+  const wire = await response.text();
+  assert.equal(wire.includes(corrupted), false);
+  assert.equal(wire.includes(bitToLightningRequest.paymentHash), false);
+});
+
+test("rejects a solver-signed invoice unless every decoded field matches reviewed policy", async (t) => {
+  const base = {
+    amountSats: 10_000n,
+    paymentHash: id("private-payment-0").toLowerCase(),
+    paymentSecret: id("solver-policy-payment-secret").toLowerCase(),
+    privateKey: lightningNodePrivateKeys[0],
+    timestamp: NOW - 30,
+  };
+  const cases = [
+    ["malformed encoding", "lnbc1invalid"],
+    ["changed amount", createBolt11Invoice({ ...base, amountSats: 10_001n })],
+    ["changed payment hash", createBolt11Invoice({
+      ...base,
+      paymentHash: id("wrong-solver-payment-hash").toLowerCase(),
+    })],
+    ["wrong capability-bound payee", createBolt11Invoice({
+      ...base,
+      privateKey: lightningNodePrivateKeys[1],
+    })],
+    ["unknown required feature", createBolt11Invoice({
+      ...base,
+      featureBits: [2, 9, 15],
+    })],
+  ];
+  for (const [name, solverInvoice] of cases) {
+    await t.test(name, async (child) => {
+      const data = await executionCeremonyFixture(child, { solverInvoice });
+      const response = await data.route.handle(privateCeremonyRequest(
+        "/v1/selection/finalize",
+        data.finalizeBody,
+      ));
+      assert.equal(response.status, 400);
+      assert.equal(data.requests(), 1);
+      assert.equal(data.service.status().executableQuotesFinalized, 0);
+      assert.equal(data.service.status().terminalFinalizationFailures, 1);
+      const wire = await response.text();
+      assert.equal(wire.includes(solverInvoice), false);
+      assert.equal(wire.includes(id("private-payment-0")), false);
+    });
+  }
+});
+
+test("returns generic pending while browser finalization continues and replays one solver result", async (t) => {
+  let releaseResponse;
+  let buildResponse;
+  const transport = new Promise((resolve) => { releaseResponse = resolve; });
+  const data = await executionCeremonyFixture(t, {
+    routePolicy: {
+      ...privateCeremonyPolicy,
+      maximumProcessingMilliseconds: 250,
+    },
+    onRequest: ({ buildDefaultResponse }) => {
+      buildResponse = buildDefaultResponse;
+      return transport;
+    },
+  });
+  const first = await data.route.handle(privateCeremonyRequest(
+    "/v1/selection/finalize",
+    data.finalizeBody,
+  ));
+  assert.equal(first.status, 425);
+  assert.equal(first.headers.get("retry-after"), "1");
+  assert.deepEqual(await first.json(), {
+    schema: "treeswap.rfq-execution-ceremony-pending.v1",
+    status: "pending",
+    retryable: true,
+  });
+  assert.equal(data.route.status().finalizationsInFlight, 1);
+  assert.throws(() => data.route.stop(), /cannot stop while finalization is pending/);
+
+  const concurrent = await data.route.handle(privateCeremonyRequest(
+    "/v1/selection/finalize",
+    data.finalizeBody,
+  ));
+  assert.equal(concurrent.status, 425);
+  assert.equal(data.requests(), 1);
+  releaseResponse(await buildResponse());
+  for (let attempt = 0; attempt < 20 && data.route.status().finalizationsInFlight !== 0; attempt += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.equal(data.route.status().finalizationsInFlight, 0);
+  const recovered = await data.route.handle(privateCeremonyRequest(
+    "/v1/selection/finalize",
+    data.finalizeBody,
+  ));
+  assert.equal(recovered.status, 200);
+  const prompt = await recovered.json();
+  assert.equal(prompt.schema, "treeswap.selected-solver-execution-signing-payload.v1");
+  assert.equal(prompt.invoice, data.invoice);
+  assert.equal(data.requests(), 1);
+  const status = data.route.status();
+  assert.equal(status.requestsPending, 2);
+  assert.equal(status.executionSigningPayloadsPrepared, 1);
+  assert.equal(JSON.stringify(status).includes(data.handoff.reservationToken), false);
+});
+
+test("retries the same solver attempt after an authenticated provider-pending response", async (t) => {
+  const requestBodies = [];
+  const data = await executionCeremonyFixture(t, {
+    onRequest: ({ buildDefaultResponse, options, requestNumber }) => {
+      requestBodies.push(options.body);
+      if (requestNumber === 1) {
+        return new Response(JSON.stringify({ status: "pending" }), {
+          status: 425,
+          headers: { "cache-control": "no-store", "content-type": "application/json" },
+        });
+      }
+      return buildDefaultResponse();
+    },
+  });
+  const pending = await data.route.handle(privateCeremonyRequest(
+    "/v1/selection/finalize",
+    data.finalizeBody,
+  ));
+  assert.equal(pending.status, 425);
+  const recovered = await data.route.handle(privateCeremonyRequest(
+    "/v1/selection/finalize",
+    data.finalizeBody,
+  ));
+  assert.equal(recovered.status, 200);
+  assert.equal((await recovered.json()).invoice, data.invoice);
+  assert.equal(data.requests(), 2);
+  assert.equal(requestBodies[0], requestBodies[1]);
+});
+
+test("fails the execution ceremony closed on origin, framing, fields, and lifecycle", async (t) => {
+  const data = await executionCeremonyFixture(t);
+  const preflight = await data.route.handle(new Request(
+    `${CEREMONY_API_ORIGIN}/v1/selection/finalize`,
+    {
+      method: "OPTIONS",
+      headers: {
+        "access-control-request-headers": "Content-Type, Cache-Control",
+        "access-control-request-method": "POST",
+        origin: QUOTE_CLIENT_ORIGIN,
+      },
+    },
+  ));
+  assert.equal(preflight.status, 204);
+  assert.equal(preflight.headers.get("access-control-allow-credentials"), null);
+  for (const request of [
+    privateCeremonyRequest("/v1/selection/finalize?token=secret", data.finalizeBody),
+    privateCeremonyRequest("/v1/selection/finalize", data.finalizeBody, {
+      headers: { origin: "https://evil.example" },
+    }),
+    privateCeremonyRequest("/v1/selection/finalize", data.finalizeBody, {
+      headers: { authorization: "Bearer leaked" },
+    }),
+    privateCeremonyRequest("/v1/selection/finalize", data.finalizeBody, {
+      headers: { cookie: "reservation=leaked" },
+    }),
+    privateCeremonyRequest("/v1/selection/finalize", data.finalizeBody, {
+      headers: { "cache-control": "" },
+    }),
+    privateCeremonyRequest("/v1/selection/finalize", { ...data.finalizeBody, extra: true }),
+    privateCeremonyRequest("/v1/selection/finalize", Buffer.alloc(32_769, 1)),
+    privateCeremonyRequest("/v1/selection/finalize", data.finalizeBody, { method: "GET" }),
+  ]) {
+    const response = await data.route.handle(request);
+    assert.equal(response.status, 400);
+    const wire = await response.text();
+    assert.equal(wire.includes(data.handoff.reservationToken), false);
+    assert.equal(wire.includes("Bearer leaked"), false);
+  }
+  assert.equal(data.requests(), 0);
+  data.deployment.abort();
+  assert.equal(data.route.status().state, "stopped");
+  assert.equal(data.service.status().state, "stopped");
+  assert.equal((await data.route.handle(privateCeremonyRequest(
+    "/v1/selection/finalize",
+    data.finalizeBody,
+  ))).status, 400);
+});
+
+test("rejects a delayed solver result after execution-ceremony shutdown", async (t) => {
+  let releaseResponse;
+  let buildResponse;
+  const transport = new Promise((resolve) => { releaseResponse = resolve; });
+  const data = await executionCeremonyFixture(t, {
+    onRequest: ({ buildDefaultResponse }) => {
+      buildResponse = buildDefaultResponse;
+      return transport;
+    },
+  });
+  const pending = data.route.handle(privateCeremonyRequest(
+    "/v1/selection/finalize",
+    data.finalizeBody,
+  ));
+  for (let attempt = 0; attempt < 20 && data.requests() === 0; attempt += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.equal(data.requests(), 1);
+  data.deployment.abort();
+  assert.equal((await pending).status, 425);
+  releaseResponse(await buildResponse());
+  for (let attempt = 0; attempt < 20 && data.route.status().finalizationsInFlight !== 0; attempt += 1) {
+    await new Promise((resolve) => setImmediate(resolve));
+  }
+  assert.equal(data.route.status().finalizationsInFlight, 0);
+  assert.equal(data.route.status().state, "stopped");
+  const firm = data.coordinatorStore.getFirmOffer(data.selection.selected.offer.offerId);
+  assert.equal(firm.state, "ACTIVE");
+  assert.equal(firm.privateRequestDigest, null);
+  assert.equal(firm.executionAuthorizationDigest, null);
+});
+
+test("does not deserialize an expired browser bearer token after lifecycle replacement", async (t) => {
+  const data = await executionCeremonyFixture(t);
+  data.deployment.abort();
+  const replacementDeployment = new AbortController();
+  const replacementService = createTestRfqSelectionReservationService({
+    admissionPolicy,
+    capabilityVerifications: data.verifications,
+    coordinatorStore: data.coordinatorStore,
+    invoicePolicy,
+    maximumPendingSelections: 4,
+    nowSeconds: () => NOW,
+    randomBytesImpl: () => Buffer.alloc(32, 138),
+    signal: replacementDeployment.signal,
+  });
+  const replacementKeys = generateKeyPairSync("ed25519");
+  let solverRequests = 0;
+  const replacementClient = createTestSelectedSolverFinalizationClient({
+    requesterPrivateKey: replacementKeys.privateKey,
+    signal: replacementDeployment.signal,
+    nowSeconds: () => NOW,
+    requestImpl: async () => {
+      solverRequests += 1;
+      throw new Error("old browser authority reached the solver");
+    },
+  });
+  const replacementRoute = createTestRfqExecutionCeremonyRoute({
+    client: replacementClient,
+    policy: privateCeremonyPolicy,
+    quotePolicy,
+    selectionReservation: replacementService,
+    signal: replacementDeployment.signal,
+  });
+  t.after(() => {
+    replacementDeployment.abort();
+    try { replacementRoute.stop(); } catch {}
+  });
+  const response = await replacementRoute.handle(privateCeremonyRequest(
+    "/v1/selection/finalize",
+    data.finalizeBody,
+  ));
+  assert.equal(response.status, 400);
+  assert.equal(solverRequests, 0);
+  const firm = data.coordinatorStore.getFirmOffer(data.selection.selected.offer.offerId);
+  assert.equal(firm.state, "ACTIVE");
+  assert.equal(firm.privateRequestDigest, null);
+  assert.equal(firm.executionAuthorizationDigest, null);
+});
+
+test("composes quote ingress through the owned RFQ service and reviewed evidence", async (t) => {
+  const data = await fixture();
+  const deployment = new AbortController();
+  const client = createTestRfqDeliveryClient({
+    paths: data.paths,
+    policy: deliveryPolicy,
+    requestTtlSeconds: 15,
+    timeoutMs: 5_000,
+    maximumResponseBytes: 262_144,
+    requestImpl: data.responder,
+    nowSeconds: () => NOW,
+    randomBytesImpl: () => Buffer.alloc(32, 12),
+  });
+  const service = startTestRfqDeliveryService({ client, signal: deployment.signal });
+  let previewEntropy = 20;
+  const reader = createTestRfqQuoteIngressServiceReader({
+    blindPolicy,
+    capabilityVerifications: data.verifications,
+    deliveryService: service,
+    marketRiskPolicy,
+    marketRiskSnapshot: currentMarketRiskSnapshot(),
+    nowSeconds: () => NOW,
+    priceSignals: marketSigners.map((_signer, index) => (
+      marketSignal(index, "lightning-to-bit", id(`ingress-service-reader-${index}`))
+    )),
+    randomBytesImpl: () => Buffer.alloc(32, ++previewEntropy),
+    signal: deployment.signal,
+  });
+  t.after(() => deployment.abort());
+  const session = await reader.read({ pricing, signal: new AbortController().signal });
+  assert.equal(isClientSafeBlindQuoteSession(session), true);
+  assert.equal(isProductionClientSafeBlindQuoteSession(session), false);
+  assert.equal(session.preview().pricingId, pricing.pricingId);
+  assert.equal(session.preview().quoteCount, 2);
+  assert.equal(service.status().requestsCompleted, 1);
+  assert.deepEqual(reader.status(), {
+    schema: "treeswap.rfq-quote-ingress-reader-status.v1",
+    state: "active",
+    mode: "injected-test",
+    source: "delivery-service",
+    requestsStarted: 1,
+    requestsCompleted: 1,
+    requestsFailed: 0,
+    requestsInFlight: 0,
+    fundingAuthorization: false,
+    settlementAuthorization: false,
+    signingAuthorization: false,
+    networkListener: false,
+  });
+  session.close();
+  assert.throws(() => createTestRfqQuoteIngressServiceReader({
+    blindPolicy,
+    capabilityVerifications: data.verifications,
+    deliveryService: service,
+    marketRiskPolicy,
+    marketRiskSnapshot: currentMarketRiskSnapshot(),
+    nowSeconds: () => NOW,
+    priceSignals: [],
+    randomBytesImpl: () => Buffer.alloc(32, 21),
+    signal: deployment.signal,
+  }), /already bound/);
+});
+
+test("fails closed on substituted, mutable, or stale ingress-reader evidence", async (t) => {
+  const data = await fixture();
+  const deployment = new AbortController();
+  const client = createTestRfqDeliveryClient({
+    paths: data.paths,
+    policy: deliveryPolicy,
+    requestTtlSeconds: 15,
+    timeoutMs: 5_000,
+    maximumResponseBytes: 262_144,
+    requestImpl: data.responder,
+    nowSeconds: () => NOW,
+    randomBytesImpl: () => Buffer.alloc(32, 31),
+  });
+  const service = startTestRfqDeliveryService({ client, signal: deployment.signal });
+  const signals = marketSigners.map((_signer, index) => (
+    marketSignal(index, "lightning-to-bit", id(`ingress-evidence-${index}`))
+  ));
+  const base = {
+    blindPolicy: { ...blindPolicy },
+    capabilityVerifications: [...data.verifications],
+    deliveryService: service,
+    marketRiskPolicy: {
+      ...marketRiskPolicy,
+      allowedPriceSourcePolicyDigests: [...marketRiskPolicy.allowedPriceSourcePolicyDigests],
+    },
+    marketRiskSnapshot: currentMarketRiskSnapshot(),
+    nowSeconds: () => NOW,
+    priceSignals: signals,
+    randomBytesImpl: () => Buffer.alloc(32, 32),
+    signal: deployment.signal,
+  };
+  t.after(() => deployment.abort());
+
+  let getterCalls = 0;
+  const accessorInput = { ...base };
+  Object.defineProperty(accessorInput, "blindPolicy", {
+    enumerable: true,
+    get() {
+      getterCalls += 1;
+      return blindPolicy;
+    },
+  });
+  assert.throws(
+    () => createTestRfqQuoteIngressServiceReader(accessorInput),
+    /enumerable data properties/,
+  );
+  assert.equal(getterCalls, 0);
+  let coercionCalls = 0;
+  assert.throws(() => createTestRfqQuoteIngressServiceReader({
+    ...base,
+    blindPolicy: {
+      ...blindPolicy,
+      chainId: {
+        valueOf() {
+          coercionCalls += 1;
+          return 1;
+        },
+      },
+    },
+  }), /primitive data value/);
+  assert.equal(coercionCalls, 0);
+  assert.throws(() => createTestRfqQuoteIngressServiceReader({
+    ...base,
+    capabilityVerifications: [{ ...data.verifications[0] }, data.verifications[1]],
+  }), /locally verified capability/);
+  assert.throws(() => createTestRfqQuoteIngressServiceReader({
+    ...base,
+    priceSignals: [{ ...signals[0] }, signals[1], signals[2]],
+  }), /original verifier provenance/);
+  assert.throws(() => createTestRfqQuoteIngressServiceReader({
+    ...base,
+    blindPolicy: { ...blindPolicy, marketRiskPolicyDigest: id("another-market-risk-policy") },
+  }), /exact market-risk policy/);
+
+  let entropy = 33;
+  const reader = createTestRfqQuoteIngressServiceReader({
+    ...base,
+    randomBytesImpl: () => Buffer.alloc(32, ++entropy),
+  });
+  base.blindPolicy.minimumIndependentSolvers = 16;
+  base.marketRiskPolicy.allowedPriceSourcePolicyDigests.length = 0;
+  base.marketRiskSnapshot.observedAt = 0;
+  const session = await reader.read({ pricing, signal: new AbortController().signal });
+  assert.equal(session.preview().quoteCount, 2);
+  session.close();
+  service.stop();
+  assert.equal(reader.status().state, "stopped");
+
+  const staleDeployment = new AbortController();
+  const staleClient = createTestRfqDeliveryClient({
+    paths: data.paths,
+    policy: deliveryPolicy,
+    requestTtlSeconds: 15,
+    timeoutMs: 5_000,
+    maximumResponseBytes: 262_144,
+    requestImpl: data.responder,
+    nowSeconds: () => NOW,
+    randomBytesImpl: () => Buffer.alloc(32, 35),
+  });
+  const staleService = startTestRfqDeliveryService({ client: staleClient, signal: staleDeployment.signal });
+  let staleEntropy = 40;
+  const staleReader = createTestRfqQuoteIngressServiceReader({
+    ...base,
+    blindPolicy,
+    deliveryService: staleService,
+    marketRiskPolicy,
+    marketRiskSnapshot: { ...currentMarketRiskSnapshot(), observedAt: NOW - 121 },
+    priceSignals: signals,
+    randomBytesImpl: () => Buffer.alloc(32, ++staleEntropy),
+    signal: staleDeployment.signal,
+  });
+  t.after(() => staleDeployment.abort());
+  await assert.rejects(
+    staleReader.read({ pricing, signal: new AbortController().signal }),
+    /not enough independent valid blind solver offers/,
+  );
+  assert.equal(staleReader.status().requestsFailed, 1);
+});
+
+test("keeps quote ingress factories, execution modes, and methods provenance-bound", async (t) => {
+  const data = await fixture();
+  const store = await quoteIngressStore();
+  const coordinatorStore = await CoordinatorStore.open(":memory:", { allowMemory: true });
+  const deployment = new AbortController();
+  const productionClient = createRfqDeliveryClient({
+    paths: data.paths,
+    policy: deliveryPolicy,
+    requestTtlSeconds: 15,
+    timeoutMs: 5_000,
+    maximumResponseBytes: 262_144,
+  });
+  const productionService = startRfqDeliveryService({
+    client: productionClient,
+    signal: deployment.signal,
+  });
+  assert.throws(() => createRfqQuoteIngressReader({ read: async () => null }), /fields are not exact/);
+  const productionReader = createRfqQuoteIngressReader({
+    blindPolicy,
+    capabilityVerifications: data.verifications,
+    deliveryService: productionService,
+    marketRiskPolicy,
+    marketRiskSnapshot: currentMarketRiskSnapshot(),
+    priceSignals: marketSigners.map((_signer, index) => (
+      marketSignal(index, "lightning-to-bit", id(`production-ingress-reader-${index}`))
+    )),
+    signal: deployment.signal,
+  });
+  const productionSelectionReservation = createRfqSelectionReservationService({
+    admissionPolicy,
+    capabilityVerifications: data.verifications,
+    coordinatorStore,
+    invoicePolicy,
+    maximumPendingSelections: quoteIngressPolicy.maximumLiveRequests,
+    signal: deployment.signal,
+  });
+  const testSelectionReservation = createTestRfqSelectionReservationService({
+    admissionPolicy,
+    capabilityVerifications: data.verifications,
+    coordinatorStore,
+    invoicePolicy,
+    maximumPendingSelections: quoteIngressPolicy.maximumLiveRequests,
+    nowSeconds: () => NOW,
+    randomBytesImpl: () => Buffer.alloc(32, 2),
+    signal: deployment.signal,
+  });
+  const testReader = createTestRfqQuoteIngressReader({ read: async () => null });
+  t.after(() => {
+    deployment.abort();
+    try { store.close(); } catch {}
+    try { coordinatorStore.close(); } catch {}
+  });
+  assert.throws(() => createRfqQuoteIngressRoute({
+    policy: quoteIngressPolicy,
+    quoteReader: productionReader,
+    replayStore: store,
+    selectionReservation: testSelectionReservation,
+    signal: deployment.signal,
+  }), /matching factory-created selection reservation service/);
+  assert.throws(() => createRfqQuoteIngressRoute({
+    policy: quoteIngressPolicy,
+    quoteReader: testReader,
+    replayStore: store,
+    selectionReservation: productionSelectionReservation,
+    signal: deployment.signal,
+  }), /matching factory-created quote reader/);
+  assert.throws(() => createTestRfqQuoteIngressRoute({
+    nowSeconds: () => NOW,
+    policy: quoteIngressPolicy,
+    quoteReader: productionReader,
+    randomBytesImpl: () => Buffer.alloc(32, 1),
+    replayStore: store,
+    selectionReservation: productionSelectionReservation,
+    signal: deployment.signal,
+  }), /matching factory-created quote reader/);
+  assert.throws(() => createRfqPrivateCeremonyRoute({
+    policy: privateCeremonyPolicy,
+    selectionReservation: testSelectionReservation,
+    signal: deployment.signal,
+  }), /matching factory-created reservation service/);
+  assert.throws(() => createTestRfqPrivateCeremonyRoute({
+    policy: privateCeremonyPolicy,
+    selectionReservation: productionSelectionReservation,
+    signal: deployment.signal,
+  }), /matching factory-created reservation service/);
+  assert.throws(() => createRfqPrivateCeremonyRoute({
+    policy: privateCeremonyPolicy,
+    selectionReservation: productionSelectionReservation,
+    signal: new AbortController().signal,
+  }), /share one deployment lifecycle/);
+  let policyAccessorRead = false;
+  const accessorPolicy = { ...privateCeremonyPolicy };
+  Object.defineProperty(accessorPolicy, "apiOrigin", {
+    enumerable: true,
+    get() {
+      policyAccessorRead = true;
+      return CEREMONY_API_ORIGIN;
+    },
+  });
+  assert.throws(() => createTestRfqPrivateCeremonyRoute({
+    policy: accessorPolicy,
+    selectionReservation: testSelectionReservation,
+    signal: deployment.signal,
+  }), /enumerable data properties/);
+  assert.equal(policyAccessorRead, false);
+  let policyCoercionRead = false;
+  assert.throws(() => createTestRfqPrivateCeremonyRoute({
+    policy: {
+      ...privateCeremonyPolicy,
+      apiOrigin: {
+        toString() {
+          policyCoercionRead = true;
+          return CEREMONY_API_ORIGIN;
+        },
+      },
+    },
+    selectionReservation: testSelectionReservation,
+    signal: deployment.signal,
+  }), /canonical HTTPS origin/);
+  assert.equal(policyCoercionRead, false);
+  const ceremonyRoute = createRfqPrivateCeremonyRoute({
+    policy: privateCeremonyPolicy,
+    selectionReservation: productionSelectionReservation,
+    signal: deployment.signal,
+  });
+  assert.equal(isRfqPrivateCeremonyRoute(ceremonyRoute), true);
+  assert.throws(
+    () => productionSelectionReservation.prepare({}),
+    /ceremony is route-owned/,
+  );
+  const copiedCeremony = { ...ceremonyRoute };
+  await assert.rejects(
+    copiedCeremony.handle(privateCeremonyRequest("/v1/selection/prepare", {})),
+    /factory provenance/,
+  );
+  const extractedCeremony = ceremonyRoute.handle;
+  await assert.rejects(
+    extractedCeremony(privateCeremonyRequest("/v1/selection/prepare", {})),
+    /factory provenance/,
+  );
+  assert.throws(() => createRfqQuoteIngressRoute({
+    policy: quoteIngressPolicy,
+    quoteReader: productionReader,
+    replayStore: store,
+    selectionReservation: productionSelectionReservation,
+    signal: new AbortController().signal,
+  }), /share one deployment lifecycle/);
+  const route = createRfqQuoteIngressRoute({
+    policy: quoteIngressPolicy,
+    quoteReader: productionReader,
+    replayStore: store,
+    selectionReservation: productionSelectionReservation,
+    signal: deployment.signal,
+  });
+  await assert.rejects(productionReader.read({}), /route-owned/);
+  assert.equal(isRfqQuoteIngressRoute(route), true);
+  const copied = { ...route };
+  await assert.rejects(copied.handle(quoteIngressRequest("/v1/quotes", {})), /factory provenance/);
+  const extracted = route.handle;
+  await assert.rejects(extracted(quoteIngressRequest("/v1/quotes", {})), /factory provenance/);
+  assert.equal(route.stop().state, "stopped");
+  assert.throws(() => createRfqQuoteIngressRoute({
+    policy: quoteIngressPolicy,
+    quoteReader: productionReader,
+    replayStore: store,
+    selectionReservation: productionSelectionReservation,
+    signal: deployment.signal,
+  }), /already bound/);
+});
+
+test("permits only the exact credential-free browser preflight", async (t) => {
+  const data = await quoteIngressFixture(t);
+  const valid = () => new Request(`${QUOTE_API_ORIGIN}/v1/quotes`, {
+    method: "OPTIONS",
+    headers: {
+      "access-control-request-headers": "Content-Type, Cache-Control",
+      "access-control-request-method": "POST",
+      origin: QUOTE_CLIENT_ORIGIN,
+    },
+  });
+  const accepted = await data.route.handle(valid());
+  assert.equal(accepted.status, 204);
+  assert.equal(accepted.headers.get("access-control-allow-origin"), QUOTE_CLIENT_ORIGIN);
+  assert.equal(accepted.headers.get("access-control-allow-methods"), "POST");
+  assert.equal(accepted.headers.get("access-control-allow-headers"), "cache-control, content-type");
+  assert.equal(accepted.headers.get("access-control-allow-credentials"), null);
+  assert.equal(accepted.headers.get("cache-control"), "no-store");
+  assert.equal(await accepted.text(), "");
+  for (const headers of [
+    { "access-control-request-headers": "content-type", "access-control-request-method": "POST" },
+    { "access-control-request-headers": "authorization, cache-control, content-type", "access-control-request-method": "POST" },
+    { "access-control-request-headers": "cache-control, content-type", "access-control-request-method": "GET" },
+    { "access-control-request-headers": "cache-control, content-type", "access-control-request-method": "POST", "access-control-request-private-network": "true" },
+  ]) {
+    const request = new Request(`${QUOTE_API_ORIGIN}/v1/quotes`, {
+      method: "OPTIONS",
+      headers: { ...headers, origin: QUOTE_CLIENT_ORIGIN },
+    });
+    assert.equal((await data.route.handle(request)).status, 400);
+  }
+  assert.equal(data.reads(), 0);
+  assert.equal(data.route.status().durableLiveClaimedRequests, 0);
+});
+
+test("rejects changed, expired, overlong, and incorrectly signed quote authorizations before RFQ access", async (t) => {
+  const data = await quoteIngressFixture(t);
+  const valid = await signedQuoteIngressBody();
+  const otherSigner = await user.signTypedData(
+    buildRfqQuoteAuthorization({
+      authorizationExpiresAt: NOW + 30,
+      policy: quoteIngressPolicy,
+      pricing,
+      requestNonce: "17",
+      user: solvers[0].address,
+    }).domain,
+    RFQ_QUOTE_AUTHORIZATION_TYPES,
+    buildRfqQuoteAuthorization({
+      authorizationExpiresAt: NOW + 30,
+      policy: quoteIngressPolicy,
+      pricing,
+      requestNonce: "17",
+      user: solvers[0].address,
+    }).message,
+  );
+  const expired = await signedQuoteIngressBody({ authorizationExpiresAt: NOW });
+  const overlong = await signedQuoteIngressBody({ authorizationExpiresAt: NOW + 61 });
+  const policyInvalidPricing = { ...pricing, maxFeeBps: "301" };
+  const policyInvalid = await signedQuoteIngressBody({
+    publicPricing: policyInvalidPricing,
+    authorizationExpiresAt: NOW + 30,
+  });
+  const cases = [
+    { ...valid, pricing: { ...valid.pricing, maxFeeBps: "101" } },
+    { ...valid, authorization: { ...valid.authorization, pricingDigest: id("changed-pricing") } },
+    { ...valid, authorization: { ...valid.authorization, clientOriginDigest: id("changed-origin") } },
+    { ...valid, signature: `${valid.signature.slice(0, -2)}00` },
+    { ...valid, authorization: { ...valid.authorization, user: solvers[0].address }, signature: otherSigner },
+    expired,
+    overlong,
+    policyInvalid,
+  ];
+  for (const [index, body] of cases.entries()) {
+    const response = await data.route.handle(quoteIngressRequest("/v1/quotes", body));
+    assert.equal(response.status, 400, `authorization rejection case ${index}`);
+    assert.deepEqual(await response.json(), { error: "quote request rejected" });
+  }
+  assert.equal(data.reads(), 0);
+  assert.equal(data.route.status().durableLiveClaimedRequests, 0);
+});
+
+test("rejects noncanonical quote HTTP targets, credentials, framing, UTF-8, and JSON", async (t) => {
+  const data = await quoteIngressFixture(t);
+  const body = await signedQuoteIngressBody();
+  const encoded = Buffer.from(JSON.stringify(body), "utf8");
+  const requests = [
+    quoteIngressRequest("/v1/quotes", body, { method: "GET" }),
+    quoteIngressRequest("/v1/quotes/", body),
+    quoteIngressRequest("/v1/quotes?mode=fast", body),
+    quoteIngressRequest("/v1/quotes#fragment", body),
+    quoteIngressRequest("/v1/quotes", body, { origin: "https://other.treeswap.example" }),
+    quoteIngressRequest("/v1/quotes", body, { headers: { origin: "https://evil.example" } }),
+    quoteIngressRequest("/v1/quotes", body, { headers: { "content-type": "text/plain" } }),
+    quoteIngressRequest("/v1/quotes", body, { headers: { "content-type": "application/json; charset=utf-16" } }),
+    quoteIngressRequest("/v1/quotes", body, { headers: { "cache-control": "max-age=0" } }),
+    quoteIngressRequest("/v1/quotes", body, { headers: { "content-encoding": "gzip" } }),
+    quoteIngressRequest("/v1/quotes", body, { headers: { authorization: "Bearer ambient" } }),
+    quoteIngressRequest("/v1/quotes", body, { headers: { cookie: "session=ambient" } }),
+    quoteIngressRequest("/v1/quotes", body, { headers: { "transfer-encoding": "chunked" } }),
+    quoteIngressRequest("/v1/quotes", body, { omitContentLength: true }),
+    quoteIngressRequest("/v1/quotes", body, { headers: { "content-length": `0${encoded.length}` } }),
+    quoteIngressRequest("/v1/quotes", body, { headers: { "content-length": String(encoded.length + 1) } }),
+    quoteIngressRequest("/v1/quotes", body, { headers: { "content-length": String(quoteIngressPolicy.maximumRequestBytes + 1) } }),
+    quoteIngressRequest("/v1/quotes", Buffer.concat([Buffer.from([0xef, 0xbb, 0xbf]), encoded])),
+    quoteIngressRequest("/v1/quotes", Buffer.from([0xc3, 0x28])),
+    quoteIngressRequest("/v1/quotes", "{"),
+    quoteIngressRequest("/v1/quotes", `${JSON.stringify(body)} true`),
+  ];
+  for (const request of requests) {
+    const response = await data.route.handle(request);
+    assert.equal(response.status, 400);
+    assert.equal(response.headers.get("cache-control"), "no-store");
+    assert.deepEqual(await response.json(), { error: "quote request rejected" });
+  }
+  assert.equal(data.reads(), 0);
+  assert.equal(data.route.status().durableLiveClaimedRequests, 0);
+});
+
+test("bounds stalled bodies and fails closed when deployment stops during collection", async (t) => {
+  const stalled = await quoteIngressFixture(t);
+  const neverEndingBody = new ReadableStream({ start() {} });
+  const stalledRequest = new Request(`${QUOTE_API_ORIGIN}/v1/quotes`, {
+    method: "POST",
+    headers: {
+      "cache-control": "no-store",
+      "content-length": "10",
+      "content-type": "application/json",
+      origin: QUOTE_CLIENT_ORIGIN,
+    },
+    body: neverEndingBody,
+    duplex: "half",
+  });
+  const startedAt = Date.now();
+  assert.equal((await stalled.route.handle(stalledRequest)).status, 400);
+  assert.ok(Date.now() - startedAt < 2_000);
+  assert.equal(stalled.reads(), 0);
+
+  let collectionStarted;
+  const reachedReader = new Promise((resolve) => { collectionStarted = resolve; });
+  let observedSignal;
+  const interrupted = await quoteIngressFixture(t, {
+    read: async (_publicPricing, { signal }) => {
+      observedSignal = signal;
+      collectionStarted();
+      if (!signal.aborted) {
+        await new Promise((resolve) => signal.addEventListener("abort", resolve, { once: true }));
+      }
+      return null;
+    },
+  });
+  const pending = interrupted.route.handle(quoteIngressRequest(
+    "/v1/quotes",
+    await signedQuoteIngressBody(),
+  ));
+  await reachedReader;
+  interrupted.deployment.abort();
+  assert.equal((await pending).status, 400);
+  assert.equal(observedSignal.aborted, true);
+  const stopped = interrupted.route.status();
+  assert.equal(stopped.state, "stopped");
+  assert.equal(stopped.inMemoryReadySessions, 0);
+  assert.equal(stopped.requestsInFlight, 0);
+  assert.equal(stopped.durableLiveClaimedRequests, 1);
+});
+
+test("closes a genuine preview session returned through the wrong ingress mode", async (t) => {
+  const { book } = await collectedBlindBook();
+  const productionSession = createClientSafeBlindQuoteSession(book);
+  const data = await quoteIngressFixture(t, { read: async () => productionSession });
+  const response = await data.route.handle(quoteIngressRequest(
+    "/v1/quotes",
+    await signedQuoteIngressBody(),
+  ));
+  assert.equal(response.status, 400);
+  assert.equal(productionSession.status().state, "closed");
+  assert.equal(data.route.status().durableLiveClaimedRequests, 1);
+});
+
 test("atomically reserves authenticated blind competition before private disclosure and finalization", async (t) => {
   const { collection, verifications } = await collect();
   const book = buildMultipathBlindQuoteBook({
     pricing,
     collection,
     capabilityVerifications: verifications,
+    marketRiskAttestations: marketRiskAttestationsForCollection(collection),
     now: NOW,
     policy: blindPolicy,
   });
   assert.equal(book.deliveryAuthenticated, true);
+  assert.equal(book.marketRiskBound, true);
+  assert.equal(book.marketRiskPolicyDigest, blindPolicy.marketRiskPolicyDigest);
   assert.equal(book.solverCount, 2);
   assert.equal(book.relayOfferPathCount, 2);
   assert.equal(book.directSolverOfferPathCount, 2);
@@ -538,6 +6062,18 @@ test("atomically reserves authenticated blind competition before private disclos
   });
   assert.equal(activeBlindQuoteReservationBinding(reservation, { now: NOW }), reservation);
   assert.equal(store.getFirmOffer(reservation.selectedOfferId).state, "ACTIVE");
+  assert.equal(
+    store.getFirmOffer(reservation.selectedOfferId).marketRiskDigest,
+    selection.marketRiskDigest,
+  );
+  assert.equal(
+    store.getFirmOffer(reservation.selectedOfferId).marketRiskPolicyDigest,
+    blindPolicy.marketRiskPolicyDigest,
+  );
+  assert.equal(
+    store.getFirmOffer(reservation.selectedOfferId).marketRiskValidUntil,
+    Number(selection.marketRiskValidUntil),
+  );
   assert.equal(store.getSolverCapacity(reservation.selectedSolver.toLowerCase()).committedBitWei, String(100n * BIT + 5n * 10n ** 17n));
   const publicReservation = JSON.stringify(reservation).toLowerCase();
   for (const secret of [privateRequest.requestId, privateRequest.user, privateRequest.beneficiary]) {
@@ -624,6 +6160,14 @@ test("atomically reserves authenticated blind competition before private disclos
   assert.equal(intent.receivedSetDigest, book.receiptDigest);
   assert.notEqual(intent.pricingId, intent.requestId);
   const finalizationDb = new DatabaseSync(path);
+  finalizationDb.prepare("UPDATE settlements SET payment_hash = ? WHERE settlement_id = ?")
+    .run(id("tampered-durable-settlement-payment"), privateRequest.requestId);
+  assert.throws(
+    () => verifiedFinalizedExecutableQuote(authorized, { now: NOW }),
+    /durable settlement payment hash changed/,
+  );
+  finalizationDb.prepare("UPDATE settlements SET payment_hash = ? WHERE settlement_id = ?")
+    .run(intent.paymentHash, privateRequest.requestId);
   finalizationDb.prepare("UPDATE firm_offer_commitments SET finalized_at = ? WHERE offer_id = ?")
     .run(NOW + 1, reservation.selectedOfferId);
   finalizationDb.close();
@@ -633,22 +6177,242 @@ test("atomically reserves authenticated blind competition before private disclos
   );
 });
 
+test("requires original current market evidence through every retained offer expiry", async () => {
+  const { collection, offers, verifications } = await collect();
+  const input = {
+    pricing,
+    collection,
+    capabilityVerifications: verifications,
+    now: NOW,
+    policy: blindPolicy,
+  };
+  assert.throws(
+    () => buildMultipathBlindQuoteBook(input),
+    /blind quote-book input fields are not exact/,
+  );
+
+  const current = marketRiskAttestationsForCollection(collection);
+  assert.throws(() => buildMultipathBlindQuoteBook({
+    ...input,
+    marketRiskAttestations: current.map((attestation) => ({ ...attestation })),
+  }), /not enough independent valid blind solver offers/);
+
+  const tooShort = offers.map(({ envelope }) => marketRiskAttestationForOffer(
+    envelope.offer,
+    { validUntil: NOW + 30 },
+  ));
+  assert.throws(() => buildMultipathBlindQuoteBook({
+    ...input,
+    marketRiskAttestations: tooShort,
+  }), /not enough independent valid blind solver offers/);
+
+  const weakPolicy = offers.map(({ envelope }) => marketRiskAttestationForOffer(
+    envelope.offer,
+    { policyOverrides: { maxMarketDeviationBps: 10_000 } },
+  ));
+  assert.ok(weakPolicy.every(
+    (attestation) => attestation.policyDigest !== blindPolicy.marketRiskPolicyDigest,
+  ));
+  assert.throws(() => buildMultipathBlindQuoteBook({
+    ...input,
+    marketRiskAttestations: weakPolicy,
+  }), /not enough independent valid blind solver offers/);
+
+  const book = buildMultipathBlindQuoteBook({ ...input, marketRiskAttestations: current });
+  assert.equal(book.solverCount, 2);
+  assert.equal(book.rejected.length, 0);
+  assert.equal(book.marketRiskPolicyDigest, bitRiskPolicyDigest(marketRiskPolicy));
+  assert.ok(book.offers.every((offer) => offer.marketRiskValidUntil >= BigInt(offer.offer.expiresAt)));
+});
+
+test("rejects non-data blind competition authority without accessors or coercion", async () => {
+  const { collection, offers, verifications } = await collect();
+  const marketRiskAttestations = marketRiskAttestationsForCollection(collection);
+  const base = {
+    pricing,
+    collection,
+    capabilityVerifications: verifications,
+    marketRiskAttestations,
+    now: NOW,
+    policy: blindPolicy,
+  };
+  let getterCalls = 0;
+  let coercionCalls = 0;
+
+  const outerAccessor = { ...base };
+  Object.defineProperty(outerAccessor, "pricing", {
+    enumerable: true,
+    get() {
+      getterCalls += 1;
+      return pricing;
+    },
+  });
+  assert.throws(
+    () => buildMultipathBlindQuoteBook(outerAccessor),
+    /enumerable data properties/,
+  );
+
+  const policyAccessor = { ...blindPolicy };
+  Object.defineProperty(policyAccessor, "marketRiskPolicyDigest", {
+    enumerable: true,
+    get() {
+      getterCalls += 1;
+      return blindPolicy.marketRiskPolicyDigest;
+    },
+  });
+  assert.throws(
+    () => buildMultipathBlindQuoteBook({ ...base, policy: policyAccessor }),
+    /enumerable data properties/,
+  );
+
+  const amountCoercion = {
+    toString() {
+      coercionCalls += 1;
+      return pricing.exactOutput;
+    },
+  };
+  assert.throws(
+    () => buildMultipathBlindQuoteBook({
+      ...base,
+      pricing: { ...pricing, exactOutput: amountCoercion },
+    }),
+    /canonical bounded unsigned integer/,
+  );
+
+  const attestationAccessor = {};
+  Object.defineProperty(attestationAccessor, "requestDigest", {
+    enumerable: true,
+    get() {
+      getterCalls += 1;
+      return marketRiskAttestations[0].requestDigest;
+    },
+  });
+  assert.throws(
+    () => buildMultipathBlindQuoteBook({
+      ...base,
+      marketRiskAttestations: [attestationAccessor, ...marketRiskAttestations.slice(1)],
+    }),
+    /requestDigest must be an enumerable data property/,
+  );
+
+  const envelopeAccessor = {};
+  Object.defineProperty(envelopeAccessor, "offer", {
+    enumerable: true,
+    get() {
+      getterCalls += 1;
+      return offers[0].envelope.offer;
+    },
+  });
+  Object.defineProperty(envelopeAccessor, "signature", {
+    enumerable: true,
+    value: offers[0].envelope.signature,
+  });
+  const accessorResult = validateBlindSolverOffer({
+    pricing,
+    envelope: envelopeAccessor,
+    capabilityVerification: verifications[0],
+    now: NOW,
+    policy: blindPolicy,
+  });
+  assert.equal(accessorResult.valid, false);
+  assert.match(accessorResult.reasons[0], /enumerable data properties/);
+
+  const signatureCoercion = {
+    toString() {
+      coercionCalls += 1;
+      return offers[0].envelope.signature;
+    },
+  };
+  const coercionResult = validateBlindSolverOffer({
+    pricing,
+    envelope: { offer: offers[0].envelope.offer, signature: signatureCoercion },
+    capabilityVerification: verifications[0],
+    now: NOW,
+    policy: blindPolicy,
+  });
+  assert.equal(coercionResult.valid, false);
+  assert.match(coercionResult.reasons[0], /signature must be a string/);
+  assert.equal(getterCalls, 0);
+  assert.equal(coercionCalls, 0);
+});
+
+test("rejects hidden, symbolic, inherited, sparse, and decorated blind competition authority", async () => {
+  const { collection, verifications } = await collect();
+  const marketRiskAttestations = marketRiskAttestationsForCollection(collection);
+  const base = {
+    pricing,
+    collection,
+    capabilityVerifications: verifications,
+    marketRiskAttestations,
+    now: NOW,
+    policy: blindPolicy,
+  };
+
+  const hiddenPricing = { ...pricing };
+  Object.defineProperty(hiddenPricing, "preferredSolver", { enumerable: false, value: solvers[0].address });
+  assert.throws(
+    () => buildMultipathBlindQuoteBook({ ...base, pricing: hiddenPricing }),
+    /outside policy/,
+  );
+
+  const symbolicPolicy = { ...blindPolicy };
+  symbolicPolicy[Symbol("fallback")] = true;
+  assert.throws(
+    () => buildMultipathBlindQuoteBook({ ...base, policy: symbolicPolicy }),
+    /outside policy/,
+  );
+
+  const inheritedPolicy = Object.create(blindPolicy);
+  assert.throws(
+    () => buildMultipathBlindQuoteBook({ ...base, policy: inheritedPolicy }),
+    /plain data object/,
+  );
+
+  const sparseCapabilities = [...verifications];
+  delete sparseCapabilities[1];
+  assert.throws(
+    () => buildMultipathBlindQuoteBook({ ...base, capabilityVerifications: sparseCapabilities }),
+    /dense/,
+  );
+
+  const decoratedCapabilities = [...verifications];
+  decoratedCapabilities.preferred = solvers[0].address;
+  assert.throws(
+    () => buildMultipathBlindQuoteBook({ ...base, capabilityVerifications: decoratedCapabilities }),
+    /dense/,
+  );
+
+  const sparseAttestations = [...marketRiskAttestations];
+  delete sparseAttestations[0];
+  assert.throws(
+    () => buildMultipathBlindQuoteBook({ ...base, marketRiskAttestations: sparseAttestations }),
+    /dense/,
+  );
+
+  const decoratedAttestations = [...marketRiskAttestations];
+  Object.defineProperty(decoratedAttestations, "fallback", { enumerable: false, value: "reference-par" });
+  assert.throws(
+    () => buildMultipathBlindQuoteBook({ ...base, marketRiskAttestations: decoratedAttestations }),
+    /dense/,
+  );
+});
+
 test("reserves outbound Lightning plus routing headroom before disclosing the user invoice", async (t) => {
   const offers = [
     await blindEnvelope(0, 25_000, {
       pricingRequest: bitToLightningPricing,
-      grossBitAmount: 101n * BIT,
+      grossBitAmount: 251n * BIT,
       feeBitAmount: 1n * BIT,
     }),
     await blindEnvelope(1, 25_000, {
       pricingRequest: bitToLightningPricing,
-      grossBitAmount: 102n * BIT,
+      grossBitAmount: 252n * BIT,
       feeBitAmount: 1n * BIT,
     }),
   ];
   const verifications = offers.map((item) => item.verification);
   const paths = pathPlan(verifications);
-  const collection = await collectVerifiedRfqDeliveries({
+  const collection = await collectTestVerifiedRfqDeliveries({
     paths,
     requestId: bitToLightningPricing.pricingId,
     requestDigest: rfqDeliveryPayloadDigest(bitToLightningPricing),
@@ -674,6 +6438,7 @@ test("reserves outbound Lightning plus routing headroom before disclosing the us
     pricing: bitToLightningPricing,
     collection,
     capabilityVerifications: verifications,
+    marketRiskAttestations: marketRiskAttestationsForCollection(collection),
     now: NOW,
     policy: blindPolicy,
   });
@@ -741,6 +6506,7 @@ test("requires two exact user signatures before reservation and executable use",
     pricing,
     collection,
     capabilityVerifications: verifications,
+    marketRiskAttestations: marketRiskAttestationsForCollection(collection),
     now: NOW,
     policy: blindPolicy,
   });
@@ -943,6 +6709,7 @@ test("rejects copied provenance, caller-asserted verification, fake stores, and 
     pricing,
     collection,
     capabilityVerifications: verifications,
+    marketRiskAttestations: marketRiskAttestationsForCollection(collection),
     now: NOW,
     policy: blindPolicy,
   });
@@ -994,6 +6761,7 @@ test("revokes disclosure and finalization when the durable RFQ cancels", async (
     pricing,
     collection,
     capabilityVerifications: verifications,
+    marketRiskAttestations: marketRiskAttestationsForCollection(collection),
     now: NOW,
     policy: blindPolicy,
   });
@@ -1029,6 +6797,7 @@ test("rejects expired, same-ID-mutated, and stale-capacity reservations", async 
       pricing,
       collection,
       capabilityVerifications: verifications,
+      marketRiskAttestations: marketRiskAttestationsForCollection(collection),
       now: NOW,
       policy: blindPolicy,
     });
@@ -1091,7 +6860,7 @@ test("rejects expired, same-ID-mutated, and stale-capacity reservations", async 
 test("rejects an RFQ payload mismatch before transport", async () => {
   const data = await fixture();
   let requests = 0;
-  await assert.rejects(collectVerifiedRfqDeliveries({
+  await assert.rejects(collectTestVerifiedRfqDeliveries({
     paths: data.paths,
     requestId: pricing.pricingId,
     requestDigest: rfqDeliveryPayloadDigest(pricing),
@@ -1101,6 +6870,601 @@ test("rejects an RFQ payload mismatch before transport", async () => {
     nowSeconds: () => NOW,
   }), /does not match its request digest/);
   assert.equal(requests, 0);
+});
+
+test("separates the fixed production RFQ client from explicit test dependencies", async () => {
+  const data = await fixture();
+  const configuration = {
+    paths: data.paths,
+    policy: deliveryPolicy,
+    requestTtlSeconds: 15,
+    timeoutMs: 5_000,
+    maximumResponseBytes: 262_144,
+  };
+  const production = createRfqDeliveryClient(configuration);
+  assert.equal(isRfqDeliveryClient(production), true);
+  assert.equal(isProductionRfqDeliveryClient(production), true);
+  assert.equal(rfqDeliveryClientTransportMode(production), "fixed-public-node-https");
+  assert.equal(isRfqDeliveryClient({ ...production }), false);
+  let getterCalls = 0;
+  const accessorConfiguration = { ...configuration };
+  Object.defineProperty(accessorConfiguration, "policy", {
+    enumerable: true,
+    get() {
+      getterCalls += 1;
+      return deliveryPolicy;
+    },
+  });
+  assert.throws(() => createRfqDeliveryClient(accessorConfiguration), /enumerable data properties/);
+  assert.equal(getterCalls, 0);
+  assert.throws(() => createRfqDeliveryClient({
+    ...configuration,
+    requestImpl: data.responder,
+  }), /fields are (?:not exact|outside policy)/);
+  assert.throws(() => createRfqDeliveryClient({
+    ...configuration,
+    nowSeconds: () => NOW,
+  }), /fields are (?:not exact|outside policy)/);
+  assert.throws(() => createRfqDeliveryClient({
+    ...configuration,
+    randomBytesImpl: () => Buffer.alloc(32, 1),
+  }), /fields are (?:not exact|outside policy)/);
+  let injectedRequests = 0;
+  const productionCallSignal = new AbortController().signal;
+  await assert.rejects(collectVerifiedRfqDeliveries({
+    ...configuration,
+    requestId: pricing.pricingId,
+    requestDigest: rfqDeliveryPayloadDigest(pricing),
+    rfq: pricing,
+    signal: productionCallSignal,
+    requestImpl: async () => { injectedRequests += 1; },
+  }), /fields are (?:not exact|outside policy)/);
+  await assert.rejects(queryVerifiedRfqDelivery({
+    path: data.paths[0],
+    policy: deliveryPolicy,
+    requestId: pricing.pricingId,
+    requestDigest: rfqDeliveryPayloadDigest(pricing),
+    rfq: pricing,
+    signal: productionCallSignal,
+    requestImpl: async () => { injectedRequests += 1; },
+  }), /fields are (?:not exact|outside policy)/);
+  await assert.rejects(collectVerifiedRfqDeliveries({
+    ...configuration,
+    requestId: pricing.pricingId,
+    requestDigest: rfqDeliveryPayloadDigest(pricing),
+    rfq: pricing,
+  }), /fields are not exact/);
+  assert.equal(injectedRequests, 0);
+
+  const mutablePaths = pathPlan(data.verifications);
+  const mutablePolicy = { ...deliveryPolicy };
+  const testClient = createTestRfqDeliveryClient({
+    ...configuration,
+    paths: mutablePaths,
+    policy: mutablePolicy,
+    requestImpl: data.responder,
+    nowSeconds: () => NOW,
+    randomBytesImpl: () => Buffer.alloc(32, 9),
+  });
+  mutablePaths.length = 0;
+  mutablePolicy.minimumRelayPaths = 16;
+  assert.equal(isRfqDeliveryClient(testClient), true);
+  assert.equal(isProductionRfqDeliveryClient(testClient), false);
+  assert.equal(rfqDeliveryClientTransportMode(testClient), "injected-test");
+  const controller = new AbortController();
+  const collection = await testClient.collect({
+    requestId: pricing.pricingId,
+    requestDigest: rfqDeliveryPayloadDigest(pricing),
+    rfq: pricing,
+    signal: controller.signal,
+  });
+  assert.equal(verifiedRfqDeliveryCollection(collection), collection);
+  assert.equal(collection.attemptCount, 4);
+
+  const copied = { ...testClient };
+  assert.throws(() => copied.collect({
+    requestId: pricing.pricingId,
+    requestDigest: rfqDeliveryPayloadDigest(pricing),
+    rfq: pricing,
+    signal: controller.signal,
+  }), /factory provenance/);
+  testClient.close();
+  assert.throws(() => testClient.collect({
+    requestId: pricing.pricingId,
+    requestDigest: rfqDeliveryPayloadDigest(pricing),
+    rfq: pricing,
+    signal: controller.signal,
+  }), (error) => error instanceof RfqDeliveryError && error.code === "CLIENT_CLOSED");
+});
+
+test("cancels every in-flight RFQ path on caller abort or client shutdown", async () => {
+  const data = await fixture();
+  for (const cancelWith of ["caller", "client"]) {
+    let requests = 0;
+    const client = createTestRfqDeliveryClient({
+      paths: data.paths,
+      policy: deliveryPolicy,
+      requestTtlSeconds: 15,
+      timeoutMs: 30_000,
+      maximumResponseBytes: 262_144,
+      requestImpl: async () => {
+        requests += 1;
+        return new Promise(() => {});
+      },
+      nowSeconds: () => NOW,
+      randomBytesImpl: () => Buffer.alloc(32, 8),
+    });
+    const controller = new AbortController();
+    const pending = client.collect({
+      requestId: pricing.pricingId,
+      requestDigest: rfqDeliveryPayloadDigest(pricing),
+      rfq: pricing,
+      signal: controller.signal,
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(requests, data.paths.length);
+    if (cancelWith === "caller") controller.abort();
+    else client.close();
+    await assert.rejects(
+      pending,
+      (error) => error instanceof RfqDeliveryError && error.code === "CANCELLED" && error.ambiguous === false,
+    );
+    client.close();
+  }
+});
+
+test("binds one production RFQ client to one authority-free service lifecycle", async () => {
+  const data = await fixture();
+  const configuration = {
+    paths: data.paths,
+    policy: deliveryPolicy,
+    requestTtlSeconds: 15,
+    timeoutMs: 5_000,
+    maximumResponseBytes: 262_144,
+  };
+  const productionClient = createRfqDeliveryClient(configuration);
+  const deploymentController = new AbortController();
+  let getterCalls = 0;
+  const accessorInput = { client: productionClient, signal: deploymentController.signal };
+  Object.defineProperty(accessorInput, "client", {
+    enumerable: true,
+    get() {
+      getterCalls += 1;
+      return productionClient;
+    },
+  });
+  assert.throws(() => startRfqDeliveryService(accessorInput), /enumerable data properties/);
+  assert.equal(getterCalls, 0);
+
+  const service = startRfqDeliveryService({
+    client: productionClient,
+    signal: deploymentController.signal,
+  });
+  assert.equal(rfqDeliveryClientLifecycleState(productionClient), "owned");
+  assert.throws(() => productionClient.collect({
+    requestId: pricing.pricingId,
+    requestDigest: rfqDeliveryPayloadDigest(pricing),
+    rfq: pricing,
+    signal: new AbortController().signal,
+  }), (error) => error.code === "CLIENT_OWNED");
+  assert.throws(() => productionClient.close(), (error) => error.code === "CLIENT_OWNED");
+  assert.equal(isRfqDeliveryService(service), true);
+  assert.equal(isProductionRfqDeliveryService(service), true);
+  assert.deepEqual(service.status(), {
+    schema: "treeswap.rfq-delivery-service-status.v1",
+    state: "active",
+    transportMode: "fixed-public-node-https",
+    requestsStarted: 0,
+    requestsCompleted: 0,
+    requestsCancelled: 0,
+    requestsFailed: 0,
+    requestsInFlight: 0,
+    fundingAuthorization: false,
+    settlementAuthorization: false,
+    networkListener: false,
+  });
+  assert.equal(isRfqDeliveryService({ ...service }), false);
+  assert.throws(() => ({ ...service }).status(), /factory provenance/);
+  assert.throws(() => startRfqDeliveryService({
+    client: productionClient,
+    signal: new AbortController().signal,
+  }), /already owned/);
+
+  const testClient = createTestRfqDeliveryClient({
+    ...configuration,
+    requestImpl: data.responder,
+    nowSeconds: () => NOW,
+    randomBytesImpl: () => Buffer.alloc(32, 4),
+  });
+  assert.throws(() => startRfqDeliveryService({
+    client: testClient,
+    signal: new AbortController().signal,
+  }), /fixed public Node HTTPS/);
+  const testService = startTestRfqDeliveryService({
+    client: testClient,
+    signal: new AbortController().signal,
+  });
+  assert.equal(isProductionRfqDeliveryService(testService), false);
+  testService.stop();
+
+  const preExistingClient = createTestRfqDeliveryClient({
+    ...configuration,
+    requestImpl: data.responder,
+    nowSeconds: () => NOW,
+    randomBytesImpl: () => Buffer.alloc(32, 5),
+  });
+  const preExistingCall = preExistingClient.collect({
+    requestId: pricing.pricingId,
+    requestDigest: rfqDeliveryPayloadDigest(pricing),
+    rfq: pricing,
+    signal: new AbortController().signal,
+  });
+  assert.throws(() => startTestRfqDeliveryService({
+    client: preExistingClient,
+    signal: new AbortController().signal,
+  }), /active unowned request/);
+  await preExistingCall;
+  const claimedAfterSettle = startTestRfqDeliveryService({
+    client: preExistingClient,
+    signal: new AbortController().signal,
+  });
+  claimedAfterSettle.stop();
+
+  const stopped = service.stop();
+  assert.equal(stopped.state, "stopped");
+  assert.equal(stopped.fundingAuthorization, false);
+  assert.equal(rfqDeliveryClientLifecycleState(productionClient), "closed");
+  assert.throws(() => startRfqDeliveryService({
+    client: productionClient,
+    signal: new AbortController().signal,
+  }), /already closed|already owned/);
+});
+
+test("collects without identifier-bearing health and cancels through either lifecycle", async () => {
+  const data = await fixture();
+  let hanging = false;
+  const client = createTestRfqDeliveryClient({
+    paths: data.paths,
+    policy: deliveryPolicy,
+    requestTtlSeconds: 15,
+    timeoutMs: 30_000,
+    maximumResponseBytes: 262_144,
+    requestImpl: async (...args) => (hanging ? new Promise(() => {}) : data.responder(...args)),
+    nowSeconds: () => NOW,
+    randomBytesImpl: () => Buffer.alloc(32, 3),
+  });
+  const deploymentController = new AbortController();
+  const service = startTestRfqDeliveryService({ client, signal: deploymentController.signal });
+  const firstController = new AbortController();
+  const call = {
+    requestId: pricing.pricingId,
+    requestDigest: rfqDeliveryPayloadDigest(pricing),
+    rfq: pricing,
+    signal: firstController.signal,
+  };
+  const collection = await service.collect(call);
+  assert.equal(verifiedRfqDeliveryCollection(collection), collection);
+  const completed = service.status();
+  assert.equal(completed.state, "active");
+  assert.equal(completed.requestsStarted, 1);
+  assert.equal(completed.requestsCompleted, 1);
+  assert.equal(completed.requestsInFlight, 0);
+  assert.doesNotMatch(JSON.stringify(completed), new RegExp(pricing.pricingId.slice(2), "i"));
+
+  hanging = true;
+  const callerController = new AbortController();
+  const callerPending = service.collect({ ...call, signal: callerController.signal });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(service.status().requestsInFlight, 1);
+  callerController.abort();
+  await assert.rejects(callerPending, (error) => error.code === "CANCELLED");
+  const callerCancelled = service.status();
+  assert.equal(callerCancelled.state, "active");
+  assert.equal(callerCancelled.requestsCancelled, 1);
+
+  const deploymentPending = service.collect({ ...call, signal: new AbortController().signal });
+  await new Promise((resolve) => setImmediate(resolve));
+  deploymentController.abort();
+  await assert.rejects(deploymentPending, (error) => error.code === "CANCELLED");
+  const stopped = service.status();
+  assert.equal(stopped.state, "stopped");
+  assert.equal(stopped.requestsStarted, 3);
+  assert.equal(stopped.requestsCompleted, 1);
+  assert.equal(stopped.requestsCancelled, 2);
+  assert.equal(stopped.requestsFailed, 0);
+  assert.equal(stopped.requestsInFlight, 0);
+  await assert.rejects(service.collect(call), (error) => error.code === "SERVICE_STOPPED");
+});
+
+test("rejects accessor and coercion RFQ inputs without executing caller code", async () => {
+  const data = await fixture();
+  let getterCalls = 0;
+  let coercionCalls = 0;
+  let requests = 0;
+  const accessorPricing = { ...pricing };
+  Object.defineProperty(accessorPricing, "maxFeeBps", {
+    enumerable: true,
+    get() {
+      getterCalls += 1;
+      return pricing.maxFeeBps;
+    },
+  });
+  assert.throws(() => rfqDeliveryPayloadDigest(accessorPricing), /enumerable data properties/);
+
+  const coercionPricing = {
+    ...pricing,
+    maxFeeBps: {
+      toString() {
+        coercionCalls += 1;
+        return pricing.maxFeeBps;
+      },
+    },
+  };
+  assert.throws(() => rfqDeliveryPayloadDigest(coercionPricing), /canonical bounded unsigned integer/);
+
+  const accessorCall = {
+    paths: data.paths,
+    requestId: pricing.pricingId,
+    requestDigest: rfqDeliveryPayloadDigest(pricing),
+    rfq: pricing,
+    policy: deliveryPolicy,
+    requestImpl: async () => { requests += 1; },
+    nowSeconds: () => NOW,
+  };
+  Object.defineProperty(accessorCall, "policy", {
+    enumerable: true,
+    get() {
+      getterCalls += 1;
+      return deliveryPolicy;
+    },
+  });
+  await assert.rejects(collectTestVerifiedRfqDeliveries(accessorCall), /enumerable data properties/);
+
+  const accessorPaths = pathPlan(data.verifications);
+  Object.defineProperty(accessorPaths[0], "kind", {
+    enumerable: true,
+    get() {
+      getterCalls += 1;
+      return "relay";
+    },
+  });
+  await assert.rejects(collectTestVerifiedRfqDeliveries({
+    paths: accessorPaths,
+    requestId: pricing.pricingId,
+    requestDigest: rfqDeliveryPayloadDigest(pricing),
+    rfq: pricing,
+    policy: deliveryPolicy,
+    requestImpl: async () => { requests += 1; },
+    nowSeconds: () => NOW,
+  }), /enumerable data properties/);
+  assert.equal(getterCalls, 0);
+  assert.equal(coercionCalls, 0);
+  assert.equal(requests, 0);
+});
+
+test("rejects hidden, symbolic, inherited, sparse, and decorated RFQ authority", async () => {
+  const data = await fixture();
+  let requests = 0;
+  const base = {
+    requestId: pricing.pricingId,
+    requestDigest: rfqDeliveryPayloadDigest(pricing),
+    rfq: pricing,
+    policy: deliveryPolicy,
+    requestImpl: async () => { requests += 1; },
+    nowSeconds: () => NOW,
+  };
+  const hiddenPolicy = { ...deliveryPolicy };
+  Object.defineProperty(hiddenPolicy, "override", { enumerable: false, value: true });
+  await assert.rejects(collectTestVerifiedRfqDeliveries({
+    ...base,
+    paths: data.paths,
+    policy: hiddenPolicy,
+  }), /fields are outside policy/);
+
+  const symbolicPricing = { ...pricing, [Symbol("private-beneficiary")]: user.address };
+  assert.throws(() => rfqDeliveryPayloadDigest(symbolicPricing), /fields are outside policy/);
+
+  const inheritedPath = Object.assign(Object.create({ privileged: true }), data.paths[0]);
+  const inheritedPaths = [...data.paths];
+  inheritedPaths[0] = inheritedPath;
+  await assert.rejects(collectTestVerifiedRfqDeliveries({ ...base, paths: inheritedPaths }), /plain data object/);
+
+  const sparsePaths = [...data.paths];
+  delete sparsePaths[1];
+  await assert.rejects(collectTestVerifiedRfqDeliveries({ ...base, paths: sparsePaths }), /dense/);
+
+  const decoratedPaths = [...data.paths];
+  Object.defineProperty(decoratedPaths, "selected", { enumerable: false, value: 0 });
+  await assert.rejects(collectTestVerifiedRfqDeliveries({ ...base, paths: decoratedPaths }), /dense/);
+  assert.equal(requests, 0);
+});
+
+test("snapshots RFQ collection inputs before concurrent delivery", async () => {
+  const data = await fixture();
+  const mutablePricing = { ...pricing };
+  const mutablePolicy = { ...deliveryPolicy };
+  const mutablePaths = pathPlan(data.verifications);
+  const pending = collectTestVerifiedRfqDeliveries({
+    paths: mutablePaths,
+    requestId: pricing.pricingId,
+    requestDigest: rfqDeliveryPayloadDigest(pricing),
+    rfq: mutablePricing,
+    policy: mutablePolicy,
+    requestImpl: data.responder,
+    nowSeconds: () => NOW,
+    randomBytesImpl: () => Buffer.alloc(32, 9),
+  });
+  mutablePricing.maxFeeBps = "999";
+  mutablePolicy.minimumRelayPaths = 16;
+  mutablePaths[0].kind = "direct-solver";
+  mutablePaths.push({ ...mutablePaths[0], pathId: "late-path" });
+  const collection = await pending;
+  assert.equal(collection.relayCount, 2);
+  assert.equal(collection.directSolverCount, 2);
+  assert.equal(collection.attemptCount, 4);
+  assert.equal(collection.rfqPayloadDigest, rfqDeliveryPayloadDigest(pricing));
+});
+
+test("rejects accessor-bearing response digest inputs without executing them", () => {
+  let getterCalls = 0;
+  const response = {
+    schema: "treeswap.rfq-delivery-response.v1",
+    request: {},
+    envelopes: [],
+    servedAt: NOW,
+    expiresAt: NOW + 10,
+  };
+  Object.defineProperty(response, "request", {
+    enumerable: true,
+    get() {
+      getterCalls += 1;
+      return {};
+    },
+  });
+  assert.throws(() => rfqDeliveryResponseDigest(response), /enumerable data properties/);
+  assert.equal(getterCalls, 0);
+});
+
+test("rejects accessor and decorated response-builder inputs without executing them", async () => {
+  const candidate = await blindEnvelope(0, 10_000);
+  const request = buildRfqDeliveryRequest({
+    challenge: id("exact-data-builder-challenge").toLowerCase(),
+    requestId: pricing.pricingId,
+    requestDigest: rfqDeliveryPayloadDigest(pricing),
+    pathIdentityDigest: id("exact-data-builder-path").toLowerCase(),
+    rfq: pricing,
+    requestedAt: NOW,
+    expiresAt: NOW + 15,
+  });
+  let getterCalls = 0;
+  const accessorEnvelope = { ...candidate.envelope };
+  Object.defineProperty(accessorEnvelope, "offer", {
+    enumerable: true,
+    get() {
+      getterCalls += 1;
+      return candidate.envelope.offer;
+    },
+  });
+  assert.throws(() => buildSignedRfqDeliveryResponse({
+    request,
+    envelopes: [accessorEnvelope],
+    servedAt: NOW,
+    expiresAt: NOW + 10,
+    privateKey: relayKeys[0].privateKey,
+  }), /enumerable data properties/);
+
+  const decorated = [candidate.envelope];
+  decorated.source = "caller-selected";
+  assert.throws(() => buildSignedRfqDeliveryResponse({
+    request,
+    envelopes: decorated,
+    servedAt: NOW,
+    expiresAt: NOW + 10,
+    privateKey: relayKeys[0].privateKey,
+  }), /dense/);
+  assert.equal(getterCalls, 0);
+});
+
+test("bounds strict RFQ response framing under the complete transport deadline", async () => {
+  const data = await fixture();
+  const args = {
+    path: data.paths[0],
+    requestId: pricing.pricingId,
+    requestDigest: rfqDeliveryPayloadDigest(pricing),
+    rfq: pricing,
+    policy: deliveryPolicy,
+    nowSeconds: () => NOW,
+    randomBytesImpl: () => Buffer.alloc(32, 7),
+  };
+  const framed = (headers) => async (url, options, pathId) => {
+    const valid = await data.responder(url, options, pathId);
+    return new Response(await valid.text(), {
+      headers: {
+        "cache-control": "no-store",
+        "content-type": "application/json",
+        ...headers,
+      },
+    });
+  };
+  for (const headers of [
+    { "cache-control": "" },
+    { "content-encoding": "gzip" },
+    { "content-length": "01" },
+    { "content-length": "2", "transfer-encoding": "chunked" },
+    { "content-length": "1" },
+    { "content-type": "application/json; charset=utf-16" },
+    { "transfer-encoding": "gzip" },
+  ]) {
+    await assert.rejects(queryTestVerifiedRfqDelivery({
+      ...args,
+      requestImpl: framed(headers),
+    }), (error) => error.code === "INVALID_RESPONSE" && error.ambiguous === false);
+  }
+
+  for (const bytes of [
+    [0x7b, 0x22, 0x78, 0x22, 0x3a, 0x22, 0xc0, 0xaf, 0x22, 0x7d],
+    [0xef, 0xbb, 0xbf, ...Buffer.from('{"x":true}')],
+  ]) {
+    await assert.rejects(queryTestVerifiedRfqDelivery({
+      ...args,
+      requestImpl: async () => new Response(Uint8Array.from(bytes), {
+        headers: { "cache-control": "no-store", "content-type": "application/json; charset=utf-8" },
+      }),
+    }), (error) => error.code === "INVALID_RESPONSE" && error.ambiguous === false);
+  }
+
+  let stalledCancelled = 0;
+  await assert.rejects(queryTestVerifiedRfqDelivery({
+    ...args,
+    timeoutMs: 5,
+    requestImpl: async () => new Response(new ReadableStream({
+      pull: () => new Promise(() => {}),
+      cancel() {
+        stalledCancelled += 1;
+      },
+    }), {
+      headers: { "cache-control": "no-store", "content-type": "application/json" },
+    }),
+  }), (error) => error.code === "TRANSPORT_FAILED" && error.ambiguous === false);
+  assert.equal(stalledCancelled, 1);
+});
+
+test("cancels malformed and rejected RFQ bodies without trusting teardown", async () => {
+  const data = await fixture();
+  const args = {
+    path: data.paths[0],
+    requestId: pricing.pricingId,
+    requestDigest: rfqDeliveryPayloadDigest(pricing),
+    rfq: pricing,
+    policy: deliveryPolicy,
+    nowSeconds: () => NOW,
+    randomBytesImpl: () => Buffer.alloc(32, 7),
+  };
+  let cancelled = 0;
+  for (const response of [
+    { status: 200, redirected: false, contentType: "text/plain", code: "INVALID_RESPONSE" },
+    { status: 503, redirected: false, contentType: "application/json", code: "HTTP_REJECTED" },
+    { status: 200, redirected: true, contentType: "application/json", code: "REDIRECT_REFUSED" },
+  ]) {
+    await assert.rejects(queryTestVerifiedRfqDelivery({
+      ...args,
+      requestImpl: async () => ({
+        status: response.status,
+        redirected: response.redirected,
+        headers: new Headers({
+          "cache-control": "no-store",
+          "content-type": response.contentType,
+        }),
+        body: new ReadableStream({
+          cancel() {
+            cancelled += 1;
+            return new Promise(() => {});
+          },
+        }),
+      }),
+    }), (error) => error.code === response.code && error.ambiguous === false);
+  }
+  assert.equal(cancelled, 3);
 });
 
 test("rejects relay rewriting while retaining valid offers from two other relay paths", async () => {
@@ -1120,7 +7484,7 @@ test("rejects relay rewriting while retaining valid offers from two other relay 
       privateKey: relayKeys[0].privateKey,
     }));
   };
-  const collection = await collectVerifiedRfqDeliveries({
+  const collection = await collectTestVerifiedRfqDeliveries({
     paths: data.paths,
     requestId: pricing.pricingId,
     requestDigest: rfqDeliveryPayloadDigest(pricing),
@@ -1134,6 +7498,7 @@ test("rejects relay rewriting while retaining valid offers from two other relay 
     pricing,
     collection,
     capabilityVerifications: data.verifications,
+    marketRiskAttestations: marketRiskAttestationsForCollection(collection),
     now: NOW,
     policy: blindPolicy,
   });
@@ -1141,9 +7506,112 @@ test("rejects relay rewriting while retaining valid offers from two other relay 
   assert.match(book.rejected.flatMap((item) => item.reasons).join("; "), /signature is invalid|exact BIT output changed/);
 });
 
+test("invalid relay offers cannot exhaust the retained competition limit", async () => {
+  const data = await fixture();
+  const unknownSolver = new Wallet(`0x${"44".repeat(32)}`);
+  const invalid = Array.from({ length: 7 }, (_, index) => ({
+    offer: {
+      ...data.offers[0].envelope.offer,
+      offerId: id(`relay-cap-poison-${index}`),
+      solver: unknownSolver.address,
+    },
+    signature: `0x${"00".repeat(65)}`,
+  }));
+  const collection = await collectTestVerifiedRfqDeliveries({
+    paths: data.paths,
+    requestId: pricing.pricingId,
+    requestDigest: rfqDeliveryPayloadDigest(pricing),
+    rfq: pricing,
+    policy: deliveryPolicy,
+    requestImpl: async (url, options, pathId) => {
+      if (pathId !== "relay-a") return data.responder(url, options, pathId);
+      return jsonResponse(buildSignedRfqDeliveryResponse({
+        request: JSON.parse(options.body),
+        envelopes: [data.offers[0].envelope, ...invalid],
+        servedAt: NOW,
+        expiresAt: NOW + 10,
+        privateKey: relayKeys[0].privateKey,
+      }));
+    },
+    nowSeconds: () => NOW,
+    randomBytesImpl: () => Buffer.alloc(32, 6),
+  });
+
+  const book = buildMultipathBlindQuoteBook({
+    pricing,
+    collection,
+    capabilityVerifications: data.verifications,
+    marketRiskAttestations: marketRiskAttestationsForCollection(collection),
+    now: NOW,
+    policy: { ...blindPolicy, maxOffersPerRequest: 2 },
+  });
+  assert.equal(book.solverCount, 2);
+  assert.equal(book.relayOfferPathCount, 2);
+  assert.equal(book.directSolverOfferPathCount, 2);
+  assert.equal(book.rejected.length, 7);
+  assert.match(book.rejected.flatMap((item) => item.reasons).join("; "), /locally verified capability/);
+  assert.throws(() => buildMultipathBlindQuoteBook({
+    pricing,
+    collection,
+    capabilityVerifications: Array.from({ length: 129 }, () => data.verifications[0]),
+    marketRiskAttestations: marketRiskAttestationsForCollection(collection),
+    now: NOW,
+    policy: blindPolicy,
+  }), /bounded candidate limit/);
+});
+
+test("retained competition limit keeps the deterministic best valid offers", async () => {
+  const data = await fixture();
+  const third = await blindEnvelope(2, 9_900);
+  const offers = [...data.offers, third];
+  const verifications = [...data.verifications, third.verification];
+  const paths = pathPlan(verifications, { includeThirdSolver: true });
+  const collection = await collectTestVerifiedRfqDeliveries({
+    paths,
+    requestId: pricing.pricingId,
+    requestDigest: rfqDeliveryPayloadDigest(pricing),
+    rfq: pricing,
+    policy: deliveryPolicy,
+    requestImpl: async (_url, options, pathId) => {
+      const delivered = pathId === "direct-a" ? [offers[0].envelope]
+        : pathId === "direct-b" ? [offers[1].envelope]
+          : pathId === "direct-c" ? [offers[2].envelope]
+            : offers.map((item) => item.envelope);
+      return jsonResponse(buildSignedRfqDeliveryResponse({
+        request: JSON.parse(options.body),
+        envelopes: delivered,
+        servedAt: NOW,
+        expiresAt: NOW + 10,
+        privateKey: responseKey(pathId),
+      }));
+    },
+    nowSeconds: () => NOW,
+    randomBytesImpl: () => Buffer.alloc(32, 5),
+  });
+
+  const book = buildMultipathBlindQuoteBook({
+    pricing,
+    collection,
+    capabilityVerifications: verifications,
+    marketRiskAttestations: marketRiskAttestationsForCollection(collection),
+    now: NOW,
+    policy: { ...blindPolicy, maxOffersPerRequest: 2 },
+  });
+  assert.deepEqual(
+    book.offers.map(({ offer }) => offer.offerId),
+    [third.envelope.offer.offerId, data.offers[0].envelope.offer.offerId],
+  );
+  assert.equal(book.relayOfferPathCount, 2);
+  assert.equal(book.directSolverOfferPathCount, 2);
+  assert.match(
+    book.rejected.flatMap((item) => item.reasons).join("; "),
+    /outside the deterministic retained-offer limit/,
+  );
+});
+
 test("rejects private or executable fields at the public delivery boundary", async () => {
   const data = await fixture();
-  await assert.rejects(collectVerifiedRfqDeliveries({
+  await assert.rejects(collectTestVerifiedRfqDeliveries({
     paths: data.paths,
     requestId: pricing.pricingId,
     requestDigest: rfqDeliveryPayloadDigest(pricing),
@@ -1188,7 +7656,7 @@ test("does not count an authenticated empty path as valid quote delivery", async
       privateKey: endpointKeys[1].privateKey,
     }));
   };
-  const collection = await collectVerifiedRfqDeliveries({
+  const collection = await collectTestVerifiedRfqDeliveries({
     paths: data.paths,
     requestId: pricing.pricingId,
     requestDigest: rfqDeliveryPayloadDigest(pricing),
@@ -1202,6 +7670,7 @@ test("does not count an authenticated empty path as valid quote delivery", async
     pricing,
     collection,
     capabilityVerifications: data.verifications,
+    marketRiskAttestations: marketRiskAttestationsForCollection(collection),
     now: NOW,
     policy: blindPolicy,
   }), /not enough authenticated delivery paths supplied valid blind offers/);
@@ -1214,7 +7683,7 @@ test("requires two authenticated relay responses but tolerates a failed extra pa
     if (pathId === "relay-c") throw new Error("private upstream details");
     return baseResponder(url, options, pathId);
   };
-  const collection = await collectVerifiedRfqDeliveries({
+  const collection = await collectTestVerifiedRfqDeliveries({
     paths: data.paths,
     requestId: pricing.pricingId,
     requestDigest: rfqDeliveryPayloadDigest(pricing),
@@ -1227,7 +7696,7 @@ test("requires two authenticated relay responses but tolerates a failed extra pa
   assert.doesNotMatch(JSON.stringify(collection), /private upstream details/);
 
   const exactlyFour = await fixture();
-  await assert.rejects(collectVerifiedRfqDeliveries({
+  await assert.rejects(collectTestVerifiedRfqDeliveries({
     paths: exactlyFour.paths,
     requestId: pricing.pricingId,
     requestDigest: rfqDeliveryPayloadDigest(pricing),
@@ -1243,7 +7712,7 @@ test("requires two authenticated relay responses but tolerates a failed extra pa
 
 test("rejects direct solver substitution and copied capability provenance", async () => {
   const data = await fixture();
-  await assert.rejects(collectVerifiedRfqDeliveries({
+  await assert.rejects(collectTestVerifiedRfqDeliveries({
     paths: data.paths,
     requestId: pricing.pricingId,
     requestDigest: rfqDeliveryPayloadDigest(pricing),
@@ -1264,7 +7733,7 @@ test("rejects direct solver substitution and copied capability provenance", asyn
 
   const copied = pathPlan(data.verifications);
   copied[2] = { ...copied[2], capabilityVerification: { ...data.verifications[0] } };
-  await assert.rejects(collectVerifiedRfqDeliveries({
+  await assert.rejects(collectTestVerifiedRfqDeliveries({
     paths: copied,
     requestId: pricing.pricingId,
     requestDigest: rfqDeliveryPayloadDigest(pricing),
@@ -1289,7 +7758,7 @@ test("binds each direct response to the exact capability configured for that pat
       changedOffer,
     ),
   };
-  await assert.rejects(collectVerifiedRfqDeliveries({
+  await assert.rejects(collectTestVerifiedRfqDeliveries({
     paths: data.paths,
     requestId: pricing.pricingId,
     requestDigest: rfqDeliveryPayloadDigest(pricing),
@@ -1319,7 +7788,7 @@ test("rejects duplicate path identity claims before network access", async () =>
   ]) {
     const paths = pathPlan(data.verifications);
     mutation(paths);
-    await assert.rejects(collectVerifiedRfqDeliveries({
+    await assert.rejects(collectTestVerifiedRfqDeliveries({
       paths,
       requestId: pricing.pricingId,
       requestDigest: rfqDeliveryPayloadDigest(pricing),
@@ -1335,7 +7804,7 @@ test("rejects duplicate path identity claims before network access", async () =>
 test("rejects responder-controlled receipt metadata and request rebinding", async () => {
   const data = await fixture();
   for (const mode of ["extra-metadata", "changed-request"]) {
-    await assert.rejects(collectVerifiedRfqDeliveries({
+    await assert.rejects(collectTestVerifiedRfqDeliveries({
       paths: data.paths,
       requestId: pricing.pricingId,
       requestDigest: rfqDeliveryPayloadDigest(pricing),
@@ -1366,7 +7835,7 @@ test("rejects private endpoints and weakened diversity policy before transport",
   let requests = 0;
   const paths = pathPlan(data.verifications);
   paths[0] = { ...paths[0], endpointOrigin: "https://127.0.0.1" };
-  await assert.rejects(collectVerifiedRfqDeliveries({
+  await assert.rejects(collectTestVerifiedRfqDeliveries({
     paths,
     requestId: pricing.pricingId,
     requestDigest: rfqDeliveryPayloadDigest(pricing),
@@ -1375,7 +7844,7 @@ test("rejects private endpoints and weakened diversity policy before transport",
     requestImpl: async () => { requests += 1; },
     nowSeconds: () => NOW,
   }), /not public/);
-  await assert.rejects(collectVerifiedRfqDeliveries({
+  await assert.rejects(collectTestVerifiedRfqDeliveries({
     paths: data.paths,
     requestId: pricing.pricingId,
     requestDigest: rfqDeliveryPayloadDigest(pricing),
@@ -1384,6 +7853,15 @@ test("rejects private endpoints and weakened diversity policy before transport",
     requestImpl: async () => { requests += 1; },
     nowSeconds: () => NOW,
   }), /diversity minimum/);
+  await assert.rejects(collectTestVerifiedRfqDeliveries({
+    paths: data.paths,
+    requestId: pricing.pricingId,
+    requestDigest: rfqDeliveryPayloadDigest(pricing),
+    rfq: pricing,
+    policy: { ...deliveryPolicy, maxOffersPerPath: 17 },
+    requestImpl: async () => { requests += 1; },
+    nowSeconds: () => NOW,
+  }), /too many total offer candidates/);
   assert.equal(requests, 0);
 });
 
@@ -1393,6 +7871,7 @@ test("rejects post-selection repricing, solver change, and request linkage", asy
     pricing,
     collection,
     capabilityVerifications: verifications,
+    marketRiskAttestations: marketRiskAttestationsForCollection(collection),
     now: NOW,
     policy: blindPolicy,
   });

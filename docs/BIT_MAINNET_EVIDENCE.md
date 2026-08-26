@@ -54,14 +54,28 @@ Explorer verification and local reproduction prove source-to-bytecode identity, 
 
 ## Mainnet-fork campaign
 
-`npm run test:fork` refuses to start without `MAINNET_RPC_URL` and forks the pinned block. Six campaigns pass against the actual BIT proxy:
+`npm run test:fork` refuses to start without `MAINNET_RPC_URL`, silently verifies
+that the endpoint reports Ethereum mainnet and exact canonical block `25788856`
+before Forge can run, and then forks that pinned block. The credential-bearing
+URL is not included in the preflight errors. Seven campaigns pass against the
+actual BIT proxy:
 
 1. exact proxy hash, implementation slot/hash, symbol, decimals, and pause state;
 2. solver-owned BIT deposit, Lightning-to-BIT reserve, exact claim, fee, and refund deltas;
 3. user-funded BIT-to-Lightning open, exact claim, fee, and refund deltas;
 4. a real BIT administrator pause blocks new TreeSwap exposure while the recorded v1 implementation still permits existing ERC-20 exits, followed by unpause;
 5. an incompatible implementation-slot change fails closed before new exposure; and
-6. the sealed registry prevents one payment hash from being used across both directions.
+6. a future implementation that still reports 18 decimals and unpaused state
+   but returns `false` from `transfer` cannot consume either already-locked
+   escrow liability; restoring the pinned implementation permits each exact
+   claim once; and
+7. the sealed registry prevents one payment hash from being used across both directions.
+
+The chain/block preflight and the complete seven-test fork suite reproduced
+against two separately addressed public archive RPCs during development. That
+is reproducibility evidence only: public URLs and matching output do not prove
+authenticated service, independent ownership, independent infrastructure, or
+truthful upstream state.
 
 The observer separately rejects an unfinalized target, a changing finalized hash, non-canonical state reads, a finalized-state regression, and provider disagreement. The [controlled EVM reorg campaign](./EVM_REORG_EVIDENCE.md) now proves both actual TreeSwap escrows fail closed across local block replacement before authorization, after authorization, and after claim with mock BIT and again on an Anvil fork using the pinned live BIT proxy. The clean-published live-fork digest is `0x1475c60668bf57ded78659302e1e03382f17a26c1d8479835f8a8a2436176507`. Genuine public-testnet finality transitions through two independent authenticated providers remain required for release evidence.
 

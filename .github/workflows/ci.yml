@@ -48,9 +48,19 @@ jobs:
         with:
           node-version: 22.22.0
       - run: bash -n infra/regtest/lab.sh
+      - run: node --check lib/lnd-rest-client.mjs
+      - run: node --check lib/selected-solver-invoice-material.mjs
+      - run: node --check lib/selected-solver-invoice-material-transport.mjs
+      - run: node --check lib/selected-solver-invoice-material-provider.mjs
+      - run: node --check lib/selected-solver-invoice-material-finalizer.mjs
       - run: node --check infra/lightning-adapter/server.mjs
       - run: node --check infra/lightning-adapter/client.mjs
+      - run: node --check infra/selected-solver-invoice-material/smoke.mjs
+      - run: node --check infra/selected-solver-invoice-material/service.mjs
+      - run: node --check infra/selected-solver-invoice-material/healthcheck.mjs
+      - run: node --check infra/selected-solver-invoice-material/private-service-smoke.mjs
       - run: docker build --file infra/lightning-adapter/Dockerfile --tag treeswap/lightning-adapter:${{ github.sha }} .
+      - run: docker build --file infra/selected-solver-invoice-material/Dockerfile --tag treeswap/selected-solver-invoice-material:${{ github.sha }} .
 
   coordinator:
     runs-on: ubuntu-latest
@@ -75,6 +85,7 @@ jobs:
       - run: node --check lib/coordinator-recovery-action-loop.mjs
       - run: node --check lib/coordinator-recovery-execution-supervisor.mjs
       - run: node --check lib/coordinator-recovery-execution-service.mjs
+      - run: node --check lib/coordinator-recovery-operator-policy.mjs
       - run: node --check lib/coordinator-action-runner.mjs
       - run: node --check lib/evm-action-runner.mjs
       - run: node --check lib/deployment-observer.mjs
@@ -87,6 +98,9 @@ jobs:
       - run: node --check lib/closed-testnet-deployment-preflight.mjs
       - run: node --check lib/closed-testnet-deployment-postflight-observer.mjs
       - run: node --check lib/closed-testnet-deployment-postflight.mjs
+      - run: node --check lib/d1-access-policy-review.mjs
+      - run: node --check lib/scheduled-account-storage-monitor.mjs
+      - run: node --check infra/account-storage-monitor/worker.mjs
       - run: node --check lib/qualification-evidence.mjs
       - run: node --check lib/local-qualification-verification.mjs
       - run: node --check lib/production-duration-evidence.mjs
@@ -103,13 +117,35 @@ jobs:
       - run: node --check lib/public-testnet-release-activation.mjs
       - run: node --check lib/release-retention-custody.mjs
       - run: node --check lib/solver-capability.mjs
+      - run: node --check lib/lnd-node-signature.mjs
       - run: node --check lib/solver-endpoint-transport.mjs
       - run: node --check lib/rfq-delivery.mjs
+      - run: node --check lib/rfq-delivery-service.mjs
+      - run: node --check lib/contract-intent-wallet-abuse-store.mjs
+      - run: node --check lib/contract-intent-wallet-session-reader.mjs
+      - run: node --check lib/contract-intent-wallet-session-route.mjs
+      - run: node --check lib/contract-intent-wallet-siwe-edge.mjs
+      - run: node --check tests/fixtures/contract-intent-wallet-edge-abrupt-kill.mjs
+      - run: node --check infra/coordinator/wallet-abuse-disk-full-smoke.mjs
       - run: node --check lib/blind-rfq.mjs
+      - run: node --check lib/blind-quote-preview.mjs
+      - run: node --check lib/rfq-quote-ingress-store.mjs
+      - run: node --check lib/rfq-quote-ingress-reader.mjs
+      - run: node --check lib/bolt11.mjs
+      - run: node --check lib/invoice-policy.mjs
+      - run: node --check scripts/verify-regtest-bolt11.mjs
+      - run: node --check lib/rfq-selection-reservation.mjs
+      - run: node --check lib/rfq-finalization-restart-policy.mjs
+      - run: node --check lib/rfq-private-ceremony.mjs
+      - run: node --check lib/rfq-quote-ingress.mjs
       - run: node --check lib/solver-capacity-readers.mjs
       - run: node --check lib/lightning-capacity-protocol.mjs
+      - run: node --check lib/private-https-address.mjs
+      - run: node --check lib/private-json-response.mjs
       - run: node --check lib/solver-daemon-planner.mjs
       - run: node --check lib/solver-daemon-evidence.mjs
+      - run: node --check lib/solver-daemon-evidence-client.mjs
+      - run: node --check lib/solver-daemon-evidence-provider.mjs
       - run: node --check lib/solver-daemon-runtime.mjs
       - run: node --check lib/active-solver-daemon-runtime.mjs
       - run: node --check lib/coordinator-active-execution-policy.mjs
@@ -117,6 +153,7 @@ jobs:
       - run: node --check lib/coordinator-active-execution-supervisor.mjs
       - run: node --check lib/coordinator-active-execution-service.mjs
       - run: node --check lib/solver-private-packet.mjs
+      - run: node --check lib/solver-private-packet-provider.mjs
       - run: node --check lib/safety-monitor.mjs
       - run: node --check lib/lightning-close-monitor.mjs
       - run: node --check lib/lightning-close-collector.mjs
@@ -133,6 +170,7 @@ jobs:
       - run: node --check infra/coordinator/disk-full-smoke.mjs
       - run: node --check infra/coordinator/service.mjs
       - run: node --check infra/coordinator/healthcheck.mjs
+      - run: node --check infra/coordinator/supervision-status.mjs
       - run: node --check infra/evm/escrow-reorg-smoke.mjs
       - run: node --check infra/evm/outbox-fault-smoke.mjs
       - run: node --check infra/evm/safety-monitor-smoke.mjs
@@ -147,6 +185,8 @@ jobs:
       - run: bash -n scripts/run-live-bit-cross-chain-deadline-smoke.sh
       - run: node --check scripts/run-local-qualification.mjs
       - run: node --check scripts/verify-local-qualification.mjs
+      - run: node --check scripts/prepare-d1-access-policy-review-attestation.mjs
+      - run: node --check scripts/verify-d1-access-policy-review.mjs
       - run: node --check scripts/write-production-duration-evidence.mjs
       - run: node --check scripts/evaluate-lightning-close-recovery.mjs
       - run: node --check scripts/verify-lightning-close-collector-quorum.mjs

@@ -36,6 +36,49 @@ test("serializes audit records as one JSON line despite forged log content", () 
   });
 });
 
+test("keeps the trusted audit event immutable and does not execute accessors", () => {
+  let getterReads = 0;
+  const fields = { event: "forged", solver: "Rootline" };
+  Object.defineProperty(fields, "__proto__", {
+    configurable: true,
+    enumerable: true,
+    writable: true,
+    value: "retained as data",
+  });
+  Object.defineProperty(fields, "hostile", {
+    configurable: true,
+    enumerable: true,
+    get() {
+      getterReads += 1;
+      return "forged";
+    },
+  });
+
+  const parsed = JSON.parse(safeAuditLine("quote accepted", fields));
+  assert.equal(parsed.event, "quote accepted");
+  assert.equal(parsed.solver, "Rootline");
+  assert.equal(Object.hasOwn(parsed, "__proto__"), true);
+  assert.equal(parsed.__proto__, "retained as data");
+  assert.equal(getterReads, 0);
+  assert.equal(Object.prototype.hostile, undefined);
+});
+
+test("does not coerce object-shaped audit events or field values", () => {
+  let coercions = 0;
+  const hostile = {
+    [Symbol.toPrimitive]() {
+      coercions += 1;
+      return "forged";
+    },
+  };
+  const parsed = JSON.parse(safeAuditLine(hostile, {
+    valid: 7,
+    hostile,
+  }));
+  assert.deepEqual(parsed, { event: "unknown", valid: "7" });
+  assert.equal(coercions, 0);
+});
+
 test("rejects rather than silently canonicalizing signed relay identifiers", () => {
   assert.equal(canonicalRelaySource("relay-a"), "relay-a");
   for (const source of ["Relay-A", " relay-a", "relay/a", "relay\nadmin", "\u202erelay-a", "a".repeat(65)]) {

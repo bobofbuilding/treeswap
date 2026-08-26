@@ -6,12 +6,18 @@ import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { id } from "ethers";
 import { CoordinatorStore } from "../lib/coordinator-store.mjs";
+import {
+  TEST_CONTRACT_SOLVER,
+  TEST_CONTRACT_USER,
+  bindTestContractIntent,
+} from "./helpers/contract-intent-fixture.mjs";
 
 const NOW = 2_000_000_000;
-const USER = "0x1111111111111111111111111111111111111111";
-const SOLVER = "0x2222222222222222222222222222222222222222";
+const USER = TEST_CONTRACT_USER;
+const SOLVER = TEST_CONTRACT_SOLVER;
 const SOLVER_TWO = "0x3333333333333333333333333333333333333333";
 const BIT = 10n ** 18n;
+const SEND_PAYMENT = "/routerrpc.Router/SendPaymentV2";
 const SETTLE_INVOICE = "/invoicesrpc.Invoices/SettleInvoice";
 
 function hash(label) {
@@ -74,6 +80,9 @@ function reservation(value, label, overrides = {}) {
   return {
     offerId: hash(`offer:${label}`),
     offerDigest: hash(`offer-digest:${label}`),
+    marketRiskDigest: hash(`market-risk:${label}`),
+    marketRiskPolicyDigest: hash("reviewed-market-risk-policy"),
+    marketRiskValidUntil: NOW + 30,
     selectionAuthorizationDigest: hash(`selection-authorization:${label}`),
     selectionAuthorizationExpiresAt: NOW + 30,
     requestId: value.requestId,
@@ -95,59 +104,78 @@ function reservation(value, label, overrides = {}) {
 }
 
 function completeSelectedSettlement(store, firmOffer, label, proofDigest) {
+  const boundAt = firmOffer.reservedAt;
+  const executable = store.bindFirmOfferExecution({
+    offerId: firmOffer.offerId,
+    privateRequestDigest: hash(`private-request:${label}`),
+    executableOfferDigest: hash(`executable-offer:${label}`),
+    finalizedAt: boundAt,
+  });
+  const executionAuthorizationDigest = hash(`execution-authorization:${label}`);
+  store.bindFirmOfferUserAuthorization({
+    offerId: firmOffer.offerId,
+    executionBindingDigest: executable.executionBindingDigest,
+    executionAuthorizationDigest,
+    authorizationExpiresAt: firmOffer.selectionAuthorizationExpiresAt,
+    authorizedAt: boundAt,
+  });
   const settlement = {
     settlementId: hash(`settlement:${label}`),
-    pricingId: hash(`pricing:${label}`),
-    direction: "lightning-to-bit",
+    pricingId: firmOffer.requestId,
+    direction: firmOffer.direction,
     nonceAuthorityDigest: hash(`nonce-authority:${label}`),
     intentNonce: String(100 + firmOffer.capacityEpoch),
-    intentDigest: hash(`intent:${label}`),
+    intentDigest: executionAuthorizationDigest,
     paymentHash: hash(`payment:${label}`),
     invoiceDigest: hash(`invoice:${label}`),
-    amountSats: "10000",
+    amountSats: firmOffer.lightningAmountSats,
     quoteReceiptDigest: hash(`quote-receipt:${label}`),
     selectedSetDigest: hash(`selected-set:${label}`),
     selectedOfferId: firmOffer.offerId,
     capacityEpoch: firmOffer.capacityEpoch,
-    createdAt: NOW + 2,
+    createdAt: boundAt,
   };
   store.acceptSettlement(settlement);
+  const contractBound = bindTestContractIntent(store, settlement, {
+    bitAmount: firmOffer.bitAmountWei === "0" ? "1000000" : firmOffer.bitAmountWei,
+    quoteExpiresAt: firmOffer.selectionAuthorizationExpiresAt,
+  });
   store.recordReservation({
     settlementId: settlement.settlementId,
-    reservationId: hash(`reservation:${label}`),
+    reservationId: contractBound.contractQuoteId,
     reservationTxHash: hash(`reservation-tx:${label}`),
     reservationBlockNumber: 20_000_000,
     reservationBlockHash: hash(`reservation-block:${label}`),
-    reservationIntentDigest: settlement.intentDigest,
-    observedAt: NOW + 3,
+    reservationIntentDigest: contractBound.contractIntentDigest,
+    observedAt: boundAt + 1,
   });
   const action = store.planAction({
     actionId: hash(`action:${label}`),
     settlementId: settlement.settlementId,
-    method: SETTLE_INVOICE,
+    method: firmOffer.direction === "bit-to-lightning" ? SEND_PAYMENT : SETTLE_INVOICE,
     requestId: hash(`action-request:${label}`),
     payloadDigest: hash(`action-payload:${label}`),
-    intentDigest: settlement.intentDigest,
+    intentDigest: contractBound.contractIntentDigest,
     paymentHash: settlement.paymentHash,
     invoiceDigest: settlement.invoiceDigest,
     amountSats: settlement.amountSats,
     capacityEpoch: settlement.capacityEpoch,
-    plannedAt: NOW + 4,
+    plannedAt: boundAt + 2,
   });
-  store.claimAction(action.actionId, NOW + 5);
+  store.claimAction(action.actionId, boundAt + 3);
   store.recordActionResult({
     actionId: action.actionId,
     outcome: "confirmed",
     resultDigest: hash(`action-result:${label}`),
-    resultCode: "SETTLED",
-    recordedAt: NOW + 6,
+    resultCode: firmOffer.direction === "bit-to-lightning" ? "SUCCEEDED" : "SETTLED",
+    recordedAt: boundAt + 4,
   });
   store.recordTerminal({
     settlementId: settlement.settlementId,
     terminalState: "COMPLETED",
     proofDigest,
     assetsReconciled: true,
-    recordedAt: NOW + 7,
+    recordedAt: boundAt + 5,
   });
 }
 
@@ -268,6 +296,15 @@ test("atomically persists firm capacity, fails closed on conflicting snapshots, 
     store.admitRfq({ identity: identity(), request: one, policy: policy(), now: NOW });
     store.admitRfq({ identity: identity(), request: two, policy: policy(), now: NOW });
     assert.equal(store.recordSolverCapacity(snapshot()).capacityConflict, false);
+    assert.throws(() => store.reserveVerifiedFirmOffer(reservation(one, "zero-market-risk", {
+      marketRiskDigest: `0x${"0".repeat(64)}`,
+    })), /market risk digest must be non-zero/);
+    assert.throws(() => store.reserveVerifiedFirmOffer(reservation(one, "short-market-risk", {
+      marketRiskValidUntil: NOW + 29,
+    })), /market risk authorization must remain active through the firm offer/);
+    assert.throws(() => store.reserveVerifiedFirmOffer(reservation(one, "zero-market-risk-policy", {
+      marketRiskPolicyDigest: `0x${"0".repeat(64)}`,
+    })), /market risk policy digest must be non-zero/);
     const first = store.reserveVerifiedFirmOffer(reservation(one, "capacity-one"));
     assert.equal(first.state, "ACTIVE");
     assert.equal(store.getSolverCapacity(SOLVER).committedBitWei, String(60n * BIT));
@@ -320,6 +357,7 @@ test("atomically persists firm capacity, fails closed on conflicting snapshots, 
     const refreshed = store.recordSolverCapacity(snapshot(9, { observedAt: NOW + 31 }));
     assert.equal(refreshed.capacityEpoch, 9);
     const admitted = store.reserveVerifiedFirmOffer(reservation(two, "capacity-recovered", {
+      marketRiskValidUntil: NOW + 60,
       selectionAuthorizationExpiresAt: NOW + 60,
       offer: {
         ...reservation(two, "capacity-recovered").offer,
@@ -485,6 +523,175 @@ test("opens admission without an allowlist while enforcing the unknown BIT-to-Li
     }));
     assert.equal(accepted.state, "ACTIVE");
     assert.equal(store.getSolverCapacity(SOLVER).successfulFills, "0");
+  } finally {
+    store.close();
+  }
+});
+
+test("does not promote BIT-to-Lightning exposure from Lightning-to-BIT fill history", async () => {
+  const store = await CoordinatorStore.open(":memory:", { allowMemory: true });
+  const admissionPolicy = policy({ maxRequestsPerWindow: 10 });
+  try {
+    store.recordSolverCapacity(snapshot());
+    for (const [index, nonce] of [[1, 2], [2, 3], [3, 4]]) {
+      const rfq = request(`safe-direction-fill-${index}`, nonce);
+      store.admitRfq({ identity: identity(), request: rfq, policy: admissionPolicy, now: NOW });
+      const firm = store.reserveVerifiedFirmOffer(reservation(rfq, `safe-direction-fill-${index}`, {
+        offer: {
+          ...reservation(rfq, `safe-direction-fill-${index}`).offer,
+          bitAmountWei: String(10n * BIT),
+        },
+        policy: admissionPolicy,
+      }));
+      const proof = hash(`safe-direction-fill-proof-${index}`);
+      completeSelectedSettlement(store, firm, `safe-direction-fill-${index}`, proof);
+      store.recordFirmOfferOutcome({
+        offerId: firm.offerId,
+        outcome: "filled",
+        evidenceDigest: proof,
+        recordedAt: NOW + 8,
+        policy: admissionPolicy,
+      });
+    }
+    assert.equal(store.getSolverCapacity(SOLVER).successfulFills, "3");
+
+    const riskyDirection = request("cross-direction-promotion", 5, {
+      direction: "bit-to-lightning",
+      notionalSats: "5001",
+    });
+    store.admitRfq({ identity: identity(), request: riskyDirection, policy: admissionPolicy, now: NOW + 9 });
+    assert.throws(() => store.reserveVerifiedFirmOffer(reservation(riskyDirection, "cross-direction-promotion", {
+      offer: {
+        ...reservation(riskyDirection, "cross-direction-promotion").offer,
+        direction: "bit-to-lightning",
+        bitAmountWei: "0",
+        lightningAmountSats: "5001",
+      },
+      policy: admissionPolicy,
+      now: NOW + 9,
+    })), /unknown solver BIT-to-Lightning cap exceeded/);
+  } finally {
+    store.close();
+  }
+});
+
+test("promotes BIT-to-Lightning exposure only from reconciled fills in that direction", async () => {
+  const store = await CoordinatorStore.open(":memory:", { allowMemory: true });
+  const admissionPolicy = policy({ maxRequestsPerWindow: 10 });
+  try {
+    store.recordSolverCapacity(snapshot(7, { availableBitWei: "0" }));
+    for (const [index, nonce] of [[1, 2], [2, 3], [3, 4]]) {
+      const rfq = request(`risky-direction-fill-${index}`, nonce, {
+        direction: "bit-to-lightning",
+        notionalSats: "5000",
+      });
+      store.admitRfq({ identity: identity(), request: rfq, policy: admissionPolicy, now: NOW });
+      const firm = store.reserveVerifiedFirmOffer(reservation(rfq, `risky-direction-fill-${index}`, {
+        offer: {
+          ...reservation(rfq, `risky-direction-fill-${index}`).offer,
+          direction: "bit-to-lightning",
+          bitAmountWei: "0",
+          lightningAmountSats: "5000",
+        },
+        policy: admissionPolicy,
+      }));
+      const proof = hash(`risky-direction-fill-proof-${index}`);
+      completeSelectedSettlement(store, firm, `risky-direction-fill-${index}`, proof);
+      store.recordFirmOfferOutcome({
+        offerId: firm.offerId,
+        outcome: "filled",
+        evidenceDigest: proof,
+        recordedAt: NOW + 8,
+        policy: admissionPolicy,
+      });
+    }
+
+    const established = request("same-direction-promotion", 5, {
+      direction: "bit-to-lightning",
+      notionalSats: "5001",
+    });
+    store.admitRfq({ identity: identity(), request: established, policy: admissionPolicy, now: NOW + 9 });
+    const accepted = store.reserveVerifiedFirmOffer(reservation(established, "same-direction-promotion", {
+      offer: {
+        ...reservation(established, "same-direction-promotion").offer,
+        direction: "bit-to-lightning",
+        bitAmountWei: "0",
+        lightningAmountSats: "5001",
+      },
+      policy: admissionPolicy,
+      now: NOW + 9,
+    }));
+    assert.equal(accepted.state, "ACTIVE");
+  } finally {
+    store.close();
+  }
+});
+
+test("does not let opposite-direction fills reset BIT-to-Lightning failure history", async () => {
+  const store = await CoordinatorStore.open(":memory:", { allowMemory: true });
+  const admissionPolicy = policy({ maxRequestsPerWindow: 10 });
+  try {
+    store.recordSolverCapacity(snapshot());
+    for (const [index, nonce, observedAt] of [[1, 2, NOW], [2, 4, NOW + 9]]) {
+      const risky = request(`directional-failure-${index}`, nonce, {
+        direction: "bit-to-lightning",
+        notionalSats: "5000",
+      });
+      store.admitRfq({ identity: identity(), request: risky, policy: admissionPolicy, now: observedAt });
+      const failed = store.reserveVerifiedFirmOffer(reservation(risky, `directional-failure-${index}`, {
+        offer: {
+          ...reservation(risky, `directional-failure-${index}`).offer,
+          direction: "bit-to-lightning",
+          bitAmountWei: "0",
+          lightningAmountSats: "5000",
+        },
+        policy: admissionPolicy,
+        now: observedAt + 1,
+      }));
+      store.recordFirmOfferOutcome({
+        offerId: failed.offerId,
+        outcome: "solver-failed",
+        evidenceDigest: hash(`directional-failure-proof-${index}`),
+        recordedAt: observedAt + 2,
+        policy: admissionPolicy,
+      });
+
+      if (index === 1) {
+        const safe = request("interleaved-safe-fill", 3);
+        store.admitRfq({ identity: identity(), request: safe, policy: admissionPolicy, now: NOW + 3 });
+        const firm = store.reserveVerifiedFirmOffer(reservation(safe, "interleaved-safe-fill", {
+          offer: { ...reservation(safe, "interleaved-safe-fill").offer, bitAmountWei: String(10n * BIT) },
+          policy: admissionPolicy,
+          now: NOW + 3,
+        }));
+        const proof = hash("interleaved-safe-fill-proof");
+        completeSelectedSettlement(store, firm, "interleaved-safe-fill", proof);
+        store.recordFirmOfferOutcome({
+          offerId: firm.offerId,
+          outcome: "filled",
+          evidenceDigest: proof,
+          recordedAt: NOW + 8,
+          policy: admissionPolicy,
+        });
+      }
+    }
+    assert.equal(store.getSolverCapacity(SOLVER).suspended, false);
+
+    const blocked = request("directional-failure-block", 5, {
+      direction: "bit-to-lightning",
+      notionalSats: "5000",
+    });
+    store.admitRfq({ identity: identity(), request: blocked, policy: admissionPolicy, now: NOW + 12 });
+    assert.throws(() => store.reserveVerifiedFirmOffer(reservation(blocked, "directional-failure-block", {
+      offer: {
+        ...reservation(blocked, "directional-failure-block").offer,
+        direction: "bit-to-lightning",
+        bitAmountWei: "0",
+        lightningAmountSats: "5000",
+      },
+      policy: admissionPolicy,
+      now: NOW + 12,
+    })), /solver failed consecutive firm quotes/);
   } finally {
     store.close();
   }
@@ -665,7 +872,108 @@ test("binds only one executable quote to a firm offer across coordinator connect
   }
 });
 
-test("binds a settlement once to its reviewed release, evidence policy, and selected capability before exposure", async () => {
+test("atomically binds exact user authorization and accepts its settlement before any asset action", async () => {
+  const store = await CoordinatorStore.open(":memory:", { allowMemory: true });
+  const rfq = request("atomic-settlement-handoff", 2);
+  try {
+    store.admitRfq({ identity: identity(), request: rfq, policy: policy(), now: NOW });
+    store.recordSolverCapacity(snapshot());
+    const firm = store.reserveVerifiedFirmOffer(reservation(rfq, "atomic-settlement-handoff"));
+    const executable = store.bindFirmOfferExecution({
+      offerId: firm.offerId,
+      privateRequestDigest: hash("atomic-settlement-private-request"),
+      executableOfferDigest: hash("atomic-settlement-executable-offer"),
+      finalizedAt: NOW + 2,
+    });
+    const authorization = {
+      offerId: firm.offerId,
+      executionBindingDigest: executable.executionBindingDigest,
+      executionAuthorizationDigest: hash("atomic-settlement-execution-authorization"),
+      authorizationExpiresAt: NOW + 20,
+      authorizedAt: NOW + 3,
+    };
+    const settlement = {
+      settlementId: hash("atomic-settlement-id"),
+      pricingId: rfq.requestId,
+      direction: rfq.direction,
+      nonceAuthorityDigest: firm.selectionAuthorizationDigest,
+      intentNonce: rfq.nonce,
+      intentDigest: authorization.executionAuthorizationDigest,
+      paymentHash: hash("atomic-settlement-payment"),
+      invoiceDigest: hash("atomic-settlement-invoice"),
+      amountSats: rfq.notionalSats,
+      quoteReceiptDigest: hash("atomic-settlement-received-set"),
+      selectedSetDigest: firm.offerDigest,
+      selectedOfferId: firm.offerId,
+      capacityEpoch: firm.capacityEpoch,
+      createdAt: authorization.authorizedAt,
+    };
+
+    store.acceptSettlement({
+      ...settlement,
+      settlementId: hash("atomic-settlement-collision"),
+      pricingId: hash("atomic-settlement-unrelated-pricing"),
+      nonceAuthorityDigest: hash("atomic-settlement-unrelated-authority"),
+      intentNonce: "99",
+      intentDigest: hash("atomic-settlement-unrelated-intent"),
+      quoteReceiptDigest: hash("atomic-settlement-unrelated-receipt"),
+      selectedSetDigest: hash("atomic-settlement-unrelated-set"),
+      selectedOfferId: hash("atomic-settlement-unrelated-offer"),
+    });
+    assert.throws(
+      () => store.acceptAuthorizedFirmOfferSettlement({ ...authorization, settlement }),
+      /existing nonce, intent, or payment hash/,
+    );
+    assert.equal(store.getFirmOffer(firm.offerId).executionAuthorizationDigest, null);
+    assert.equal(store.getSettlement(settlement.settlementId), null);
+
+    const safeSettlement = { ...settlement, paymentHash: hash("atomic-settlement-safe-payment") };
+    for (const changed of [
+      { nonceAuthorityDigest: hash("atomic-settlement-wrong-authority") },
+      { intentDigest: hash("atomic-settlement-wrong-authorization") },
+      { selectedSetDigest: hash("atomic-settlement-wrong-offer-digest") },
+      { amountSats: "10001" },
+      { capacityEpoch: firm.capacityEpoch + 1 },
+      { createdAt: authorization.authorizedAt + 1 },
+    ]) {
+      assert.throws(
+        () => store.acceptAuthorizedFirmOfferSettlement({
+          ...authorization,
+          settlement: { ...safeSettlement, ...changed },
+        }),
+        /does not match its exact firm-offer commitments/,
+      );
+      assert.equal(store.getFirmOffer(firm.offerId).executionAuthorizationDigest, null);
+    }
+
+    const accepted = store.acceptAuthorizedFirmOfferSettlement({
+      ...authorization,
+      settlement: safeSettlement,
+    });
+    assert.equal(accepted.offer.executionAuthorizationDigest, authorization.executionAuthorizationDigest);
+    assert.equal(accepted.settlement.state, "INTENT_ACCEPTED");
+    assert.equal(accepted.settlement.intentDigest, authorization.executionAuthorizationDigest);
+    assert.equal(accepted.settlement.nonceAuthorityDigest, firm.selectionAuthorizationDigest);
+    assert.equal(accepted.settlement.selectedSetDigest, firm.offerDigest);
+    assert.equal(accepted.settlement.reservationId, null);
+    assert.deepEqual(store.listSettlementActions(accepted.settlement.settlementId), []);
+    assert.deepEqual(
+      store.acceptAuthorizedFirmOfferSettlement({ ...authorization, settlement: safeSettlement }),
+      accepted,
+    );
+    assert.throws(
+      () => store.acceptAuthorizedFirmOfferSettlement({
+        ...authorization,
+        settlement: { ...safeSettlement, invoiceDigest: hash("atomic-settlement-changed-invoice") },
+      }),
+      /different terms/,
+    );
+  } finally {
+    store.close();
+  }
+});
+
+test("binds a settlement once to its reviewed release, risk policy, evidence policy, and selected capability", async () => {
   const store = await CoordinatorStore.open(":memory:", { allowMemory: true });
   const rfq = request("execution-policy-binding", 2);
   try {
@@ -691,7 +999,7 @@ test("binds a settlement once to its reviewed release, evidence policy, and sele
       direction: rfq.direction,
       nonceAuthorityDigest: hash("execution-policy-nonce-authority"),
       intentNonce: "22",
-      intentDigest: hash("execution-policy-intent"),
+      intentDigest: hash("execution-policy-user-authorization"),
       paymentHash: hash("execution-policy-payment"),
       invoiceDigest: hash("execution-policy-invoice"),
       amountSats: rfq.notionalSats,
@@ -702,9 +1010,14 @@ test("binds a settlement once to its reviewed release, evidence policy, and sele
       createdAt: NOW + 2,
     };
     store.acceptSettlement(value);
+    bindTestContractIntent(store, value, {
+      bitAmount: firm.bitAmountWei,
+      quoteExpiresAt: NOW + 20,
+    });
     const authority = {
       settlementId: value.settlementId,
       releaseRecordDigest: hash("execution-policy-release"),
+      riskPolicyDigest: firm.marketRiskPolicyDigest,
       evidencePolicyDigest: hash("execution-policy-evidence"),
       solverCapabilityDigest: firm.capabilityDigest,
       boundAt: NOW + 3,
@@ -716,8 +1029,16 @@ test("binds a settlement once to its reviewed release, evidence policy, and sele
       }),
       /does not match its durable RFQ, offer, capability, or amount/,
     );
+    assert.throws(
+      () => store.bindSettlementExecutionPolicy({
+        ...authority,
+        riskPolicyDigest: hash("different-risk-policy"),
+      }),
+      /active fully authorized firm offer/,
+    );
     const bound = store.bindSettlementExecutionPolicy(authority);
     assert.equal(bound.releaseRecordDigest, authority.releaseRecordDigest);
+    assert.equal(bound.riskPolicyDigest, authority.riskPolicyDigest);
     assert.equal(bound.evidencePolicyDigest, authority.evidencePolicyDigest);
     assert.equal(bound.solverCapabilityDigest, authority.solverCapabilityDigest);
     assert.equal(bound.executionPolicyBoundAt, authority.boundAt);
@@ -727,12 +1048,13 @@ test("binds a settlement once to its reviewed release, evidence policy, and sele
       bound.executionPolicyBindingDigest,
     );
     const boundLiabilities = store.releaseLiabilitySnapshot();
-    assert.equal(boundLiabilities.coordinatorSchema, "treeswap.coordinator.v7");
+    assert.equal(boundLiabilities.coordinatorSchema, "treeswap.coordinator.v10");
     assert.equal(boundLiabilities.totalNonterminalSettlementCount, 1);
     assert.equal(boundLiabilities.unboundNonterminalSettlementCount, 0);
     assert.equal(boundLiabilities.releases.length, 1);
     assert.deepEqual(boundLiabilities.releases[0].executionPolicies, [{
       direction: value.direction,
+      riskPolicyDigest: authority.riskPolicyDigest,
       evidencePolicyDigest: authority.evidencePolicyDigest,
       historicalSolverCapabilityDigests: [authority.solverCapabilityDigest],
       nonterminalSettlementCount: 1,
@@ -758,13 +1080,14 @@ test("binds a settlement once to its reviewed release, evidence policy, and sele
       selectedOfferId: hash("execution-policy-late-offer"),
     };
     store.acceptSettlement(late);
+    const lateContractBound = bindTestContractIntent(store, late);
     store.recordReservation({
       settlementId: late.settlementId,
-      reservationId: hash("execution-policy-late-reservation"),
+      reservationId: lateContractBound.contractQuoteId,
       reservationTxHash: hash("execution-policy-late-transaction"),
       reservationBlockNumber: 20_000_001,
       reservationBlockHash: hash("execution-policy-late-block"),
-      reservationIntentDigest: late.intentDigest,
+      reservationIntentDigest: lateContractBound.contractIntentDigest,
       observedAt: NOW + 3,
     });
     const unsafeLiabilities = store.releaseLiabilitySnapshot();
@@ -774,7 +1097,7 @@ test("binds a settlement once to its reviewed release, evidence policy, and sele
     assert.notEqual(unsafeLiabilities.snapshotDigest, boundLiabilities.snapshotDigest);
     assert.throws(
       () => store.bindSettlementExecutionPolicy({ ...authority, settlementId: late.settlementId }),
-      /must bind before reservation, actions, or closure/,
+      /requires the contract intent before reservation, actions, or closure/,
     );
   } finally {
     store.close();

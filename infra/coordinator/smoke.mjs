@@ -1,7 +1,8 @@
-import { createHash, createPrivateKey, generateKeyPairSync, randomBytes } from "node:crypto";
+import { createHash, createPrivateKey, createPublicKey, generateKeyPairSync, randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { readConfirmedLightningPaymentProof } from "../../lib/coordinator-action-runner.mjs";
 import { CoordinatorStore, coordinatorCommitmentDigest } from "../../lib/coordinator-store.mjs";
+import { bindSmokeContractIntent } from "./contract-intent-smoke-fixture.mjs";
 import { invoiceDigest } from "../../lib/lnd-rest-client.mjs";
 import {
   SOLVER_DAEMON_EVIDENCE_POLICY_SCHEMA,
@@ -10,7 +11,10 @@ import {
   solverDaemonEvidencePolicyDigest,
   verifySolverDaemonEvidence,
 } from "../../lib/solver-daemon-evidence.mjs";
-import { createAuthenticatedPrivatePacketClient, executeSolverDaemonStep } from "../../lib/solver-daemon-runtime.mjs";
+import {
+  createTestAuthenticatedPrivatePacketClient,
+  executeSolverDaemonStep,
+} from "../../lib/solver-daemon-runtime.mjs";
 import { buildSignedPrivatePacketResponse } from "../../lib/solver-private-packet.mjs";
 import { Wallet, id } from "ethers";
 
@@ -65,6 +69,7 @@ const decoded = await fetch("http://payer-adapter:3000/healthz");
 if (!decoded.ok) throw new Error("payer adapter is unavailable");
 
 const privateKey = createPrivateKey(await readFile(required("COORDINATOR_PRIVATE_KEY_PATH")));
+const responsePublicKey = createPublicKey(await readFile(required("PAYER_ADAPTER_RESPONSE_PUBLIC_KEY_PATH")));
 const paymentHash = required("PAYMENT_HASH").toLowerCase();
 if (!BYTES32.test(paymentHash)) throw new TypeError("PAYMENT_HASH is invalid");
 const now = Math.floor(Date.now() / 1_000);
@@ -87,13 +92,15 @@ const settlement = {
 const databasePath = required("COORDINATOR_DATABASE_PATH");
 let store = await CoordinatorStore.open(databasePath);
 store.acceptSettlement(settlement);
+const quoteId = randomHash();
+const boundSettlement = await bindSmokeContractIntent({ store, settlement, quoteId });
 const observedReservation = {
   settlementId: settlement.settlementId,
-  reservationId: randomHash(),
+  reservationId: quoteId,
   reservationTxHash: randomHash(),
   reservationBlockNumber: 1,
   reservationBlockHash: randomHash(),
-  reservationIntentDigest: settlement.intentDigest,
+  reservationIntentDigest: boundSettlement.contractIntentDigest,
   observedAt: now + 1,
 };
 store.recordReservation(observedReservation);
@@ -118,7 +125,8 @@ const evidencePolicy = {
   maxEvidenceLifetimeSeconds: 30,
   maxClockSkewSeconds: 2,
 };
-const packetClient = createAuthenticatedPrivatePacketClient({
+const consumedPacketRequests = new Set();
+const packetClient = createTestAuthenticatedPrivatePacketClient({
   providerOrigin: "https://private-packet-provider.internal",
   requesterPrivateKey: packetRequesterKeys.privateKey,
   requesterKeyId: "coordinator-regtest",
@@ -127,6 +135,7 @@ const packetClient = createAuthenticatedPrivatePacketClient({
   minimumEvmSafetySeconds: 600,
   requestTtlSeconds: 15,
   nowSeconds: () => Math.floor(Date.now() / 1_000),
+  randomBytesImpl: randomBytes,
   requestImpl: async (_url, options) => {
     const request = JSON.parse(options.body);
     const servedAt = Math.floor(Date.now() / 1_000);
@@ -154,13 +163,18 @@ const packetClient = createAuthenticatedPrivatePacketClient({
         feeLimitSats: "10",
       },
     };
-    const signed = buildSignedPrivatePacketResponse({
+    const signed = await buildSignedPrivatePacketResponse({
       requestEnvelope: request,
       requesterPublicKey: packetRequesterKeys.publicKey,
       expectedRequesterKeyId: "coordinator-regtest",
       packet,
       providerKeyId: "packet-provider-regtest",
       providerPrivateKey: packetProviderKeys.privateKey,
+      consumeRequest: async ({ requestId }) => {
+        if (consumedPacketRequests.has(requestId)) return false;
+        consumedPacketRequests.add(requestId);
+        return true;
+      },
       servedAt,
       expiresAt: servedAt + 10,
       minimumEvmSafetySeconds: 600,
@@ -220,16 +234,29 @@ const controls = {
 };
 
 let responseWasLost = false;
+let lastAdapterObservation = null;
 const lightning = {
     privateKey,
     keyId: required("COORDINATOR_KEY_ID"),
     adapterUrl: "http://payer-adapter:3000",
+    responsePublicKey,
+    responseKeyId: required("PAYER_ADAPTER_RESPONSE_KEY_ID"),
     nowSeconds: () => Math.floor(Date.now() / 1_000),
     requestImpl: async (url, options) => {
       const response = await fetch(url, options);
       const body = await response.clone().json();
       const method = JSON.parse(options.body).payload.method;
-      if (method === "/routerrpc.Router/SendPaymentV2" && response.ok && body?.result?.status === "SUCCEEDED") {
+      lastAdapterObservation = {
+        status: response.status,
+        schema: String(body?.payload?.schema ?? "none"),
+        responseKeyId: String(body?.payload?.keyId ?? "none"),
+        resultStatus: String(body?.payload?.body?.result?.status ?? "none"),
+        errorCode: String(body?.payload?.body?.errorCode ?? "none"),
+        error: String(body?.payload?.body?.error ?? "none").slice(0, 120),
+        ambiguous: body?.payload?.body?.ambiguous === true,
+      };
+      if (method === "/routerrpc.Router/SendPaymentV2"
+          && response.ok && body?.payload?.body?.result?.status === "SUCCEEDED") {
         responseWasLost = true;
         throw new Error("simulated loss after successful adapter response");
       }
@@ -256,7 +283,9 @@ const ambiguous = await executeSolverDaemonStep({
   lightning,
 });
 if (!responseWasLost || ambiguous.outcome !== "DISPATCH_AMBIGUOUS") {
-  throw new Error("daemon did not preserve the lost payment response as ambiguous");
+  throw new Error(
+    `daemon did not preserve the lost payment response as ambiguous: responseWasLost=${responseWasLost}, outcome=${ambiguous.outcome}, actionState=${store.getAction(action.actionId)?.state}, adapter=${JSON.stringify(lastAdapterObservation)}`,
+  );
 }
 if (store.getAction(action.actionId)?.state !== "UNKNOWN") throw new Error("lost response did not enter UNKNOWN");
 store.close();
@@ -293,7 +322,10 @@ const restartedProof = await readConfirmedLightningPaymentProof({
   privateKey,
   keyId: required("COORDINATOR_KEY_ID"),
   adapterUrl: "http://payer-adapter:3000",
+  responsePublicKey,
+  responseKeyId: required("PAYER_ADAPTER_RESPONSE_KEY_ID"),
   nowSeconds: () => Math.floor(Date.now() / 1_000),
+  requestImpl: fetch,
 });
 const recoveredPreimage = restartedProof.preimage;
 if (!BYTES32.test(String(recoveredPreimage)) || paymentHashFor(recoveredPreimage) !== paymentHash) {

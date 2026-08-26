@@ -13,6 +13,7 @@ import {
   sha256,
 } from "ethers";
 import { CoordinatorStore, coordinatorCommitmentDigest } from "../../lib/coordinator-store.mjs";
+import { bindSmokeContractIntent } from "../coordinator/contract-intent-smoke-fixture.mjs";
 import {
   dispatchEvmClaimAction,
   EvmProviderQuorumError,
@@ -44,6 +45,27 @@ function digest(label) {
 
 function quantity(value) {
   return BigInt(value);
+}
+
+async function isolatedLoopbackRpcRequest({ url, method, params, signal }) {
+  const endpoint = new URL(url);
+  if (endpoint.protocol !== "http:"
+      || (endpoint.hostname !== "127.0.0.1" && endpoint.hostname !== "localhost" && endpoint.hostname !== "::1")) {
+    throw new Error("local EVM evidence client accepts loopback HTTP only");
+  }
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+    signal,
+  });
+  const text = await response.text();
+  if (Buffer.byteLength(text) > 128 * 1024) throw new Error("local EVM evidence response is too large");
+  const body = JSON.parse(text);
+  if (!response.ok || body?.jsonrpc !== "2.0" || body?.id !== 1 || body.error || !("result" in body)) {
+    throw new Error("local EVM evidence RPC failed");
+  }
+  return body.result;
 }
 
 async function waitForReceipt(provider, transactionHash, attempts = 80) {
@@ -170,15 +192,25 @@ async function prepareClaim({ label, signer, nonce = null }) {
     capacityEpoch: settlement.capacityEpoch,
     plannedAt: settlement.createdAt + 2,
   };
-  action.payloadDigest = evmClaimActionCommitment(action, operation, signer.address);
   store.acceptSettlement(settlement);
+  const boundSettlement = await bindSmokeContractIntent({
+    store,
+    settlement,
+    quoteId,
+    chainId: CHAIN_ID.toString(),
+    verifyingContract: contract,
+    settlementContractCodeHash: contractCodeHash,
+    userWallet: signer,
+  });
+  action.intentDigest = boundSettlement.contractIntentDigest;
+  action.payloadDigest = evmClaimActionCommitment(action, operation, signer.address);
   store.recordReservation({
     settlementId: settlement.settlementId,
     reservationId: quoteId,
     reservationTxHash: digest(`${label}:reservation-transaction`),
     reservationBlockNumber: 1,
     reservationBlockHash: digest(`${label}:reservation-block`),
-    reservationIntentDigest: settlement.intentDigest,
+    reservationIntentDigest: boundSettlement.contractIntentDigest,
     observedAt: settlement.createdAt + 1,
   });
   await prepareEvmClaimAction({
@@ -206,6 +238,7 @@ async function dispatchClaim(claim, signer, observedOffset) {
     expectedContractCodeHash: contractCodeHash,
     maximumGasCostWei: MAXIMUM_GAS_COST_WEI,
     rpcUrl: PRIMARY_RPC_URL,
+    rpcRequestImpl: isolatedLoopbackRpcRequest,
     nowSeconds: () => NOW + observedOffset,
   });
 }
@@ -216,8 +249,8 @@ function sameBackendQuorum(claim, observedOffset) {
     actionId: claim.action.actionId,
     expectedContractCodeHash: contractCodeHash,
     providers: [
-      { label: "primary-direct", rpcUrl: PRIMARY_RPC_URL },
-      { label: "primary-proxy", rpcUrl: proxyUrl },
+      { label: "primary-direct", rpcUrl: PRIMARY_RPC_URL, rpcRequestImpl: isolatedLoopbackRpcRequest },
+      { label: "primary-proxy", rpcUrl: proxyUrl, rpcRequestImpl: isolatedLoopbackRpcRequest },
     ],
     nowSeconds: () => NOW + observedOffset,
   });
@@ -260,8 +293,8 @@ try {
       actionId: disagreementClaim.action.actionId,
       expectedContractCodeHash: contractCodeHash,
       providers: [
-        { label: "primary-chain", rpcUrl: PRIMARY_RPC_URL },
-        { label: "divergent-chain", rpcUrl: SECONDARY_RPC_URL },
+        { label: "primary-chain", rpcUrl: PRIMARY_RPC_URL, rpcRequestImpl: isolatedLoopbackRpcRequest },
+        { label: "divergent-chain", rpcUrl: SECONDARY_RPC_URL, rpcRequestImpl: isolatedLoopbackRpcRequest },
       ],
       nowSeconds: () => NOW + 201,
     }),
@@ -273,7 +306,7 @@ try {
   assert.equal(recoveredDisagreement.disposition, "confirmed");
 
   const contentionClaim = await prepareClaim({ label: "nonce-contention", signer: relayerA });
-  await primary.send("evm_setAutomine", [false]);
+  await primary.send("evm_setIntervalMining", [0]);
   await dispatchClaim(contentionClaim, relayerA, 300);
   const replacementRaw = await relayerA.signTransaction({
     type: 2,
@@ -287,7 +320,7 @@ try {
   });
   const replacementHash = String(await primary.send("eth_sendRawTransaction", [replacementRaw])).toLowerCase();
   await primary.send("evm_mine", []);
-  await primary.send("evm_setAutomine", [true]);
+  await primary.send("evm_setIntervalMining", [1]);
   await waitForReceipt(primary, replacementHash);
   const contentionResult = await sameBackendQuorum(contentionClaim, 301);
   assert.equal(contentionResult.disposition, "unresolved");

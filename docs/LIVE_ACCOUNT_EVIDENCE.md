@@ -46,6 +46,10 @@ Passing live evidence does not authorize swaps, deposits, public account access,
 
 These remain release blockers in the [launch checklist](./LAUNCH_CHECKLIST.md).
 
+The repository now defines the aggregate-only fail-closed monitor and dual-route escalation semantics in [Account storage monitoring](./ACCOUNT_STORAGE_MONITORING.md). That protocol does not supply the missing deployed collectors, schedule, platform audit integration, paging delivery, retained window, or independent review.
+
+The separate [account backup/restore evidence](./ACCOUNT_BACKUP_RESTORE_EVIDENCE.md) boundary now verifies two accountable signatures over an encrypted export and fresh isolated restore ceremony. It performs no live export, import, Time Travel operation, or target deletion, so deployed backup and witnessed-restore evidence remains open. The [scheduled account maintenance](./SCHEDULED_ACCOUNT_MAINTENANCE.md) runtime likewise remains undeployed; its three-record natural-expiry drill is still required.
+
 ## Retained checkpoint
 
 The version 11 run passed all 13 exact checks. Its ignored mode-`0600` record independently reconstructs to:

@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { createPrivateKey, createPublicKey, generateKeyPairSync, randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
-import { createAuthenticatedLightningCapacityReader } from "../../lib/lightning-capacity-protocol.mjs";
+import { createTestAuthenticatedLightningCapacityReader } from "../../lib/lightning-capacity-protocol.mjs";
 
 function required(name) {
   const value = process.env[name];
@@ -35,7 +35,7 @@ async function fetchObservation(envelope) {
   return response.json();
 }
 
-const read = createAuthenticatedLightningCapacityReader({
+const read = createTestAuthenticatedLightningCapacityReader({
   observerPublicKey,
   observerKeyId: required("CAPACITY_OBSERVER_KEY_ID"),
   requesterPrivateKey,
@@ -45,6 +45,8 @@ const read = createAuthenticatedLightningCapacityReader({
   maxClockSkewSeconds: 5,
   maxObservationTtlSeconds: 30,
   timeoutMs: 5_000,
+  nowSeconds: () => Math.floor(Date.now() / 1_000),
+  randomBytesImpl: randomBytes,
 });
 
 const request = {

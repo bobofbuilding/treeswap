@@ -1,4 +1,4 @@
-import { createHash, createPrivateKey, randomBytes } from "node:crypto";
+import { createHash, createPrivateKey, createPublicKey, randomBytes } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import {
   dispatchLightningAction,
@@ -6,6 +6,7 @@ import {
   reconcileLightningAction,
 } from "../../lib/coordinator-action-runner.mjs";
 import { CoordinatorStore, coordinatorCommitmentDigest } from "../../lib/coordinator-store.mjs";
+import { bindSmokeContractIntent } from "./contract-intent-smoke-fixture.mjs";
 
 const BYTES32 = /^0x[0-9a-f]{64}$/;
 
@@ -66,6 +67,7 @@ if (!BYTES32.test(paymentHash) || paymentHashFor(input.preimage) !== paymentHash
 const health = await fetch("http://invoice-adapter:3000/healthz");
 if (!health.ok) throw new Error("invoice adapter is unavailable");
 const privateKey = createPrivateKey(await readFile(required("COORDINATOR_PRIVATE_KEY_PATH")));
+const responsePublicKey = createPublicKey(await readFile(required("INVOICE_ADAPTER_RESPONSE_PUBLIC_KEY_PATH")));
 const now = Math.floor(Date.now() / 1_000);
 const settlement = {
   settlementId: randomHash(),
@@ -97,17 +99,23 @@ const actionDraft = {
   capacityEpoch: settlement.capacityEpoch,
   plannedAt: now + 1,
 };
-const action = { ...actionDraft, payloadDigest: lightningActionCommitment(actionDraft, operation) };
 const databasePath = required("COORDINATOR_DATABASE_PATH");
 let store = await CoordinatorStore.open(databasePath);
 store.acceptSettlement(settlement);
+const quoteId = randomHash();
+const boundSettlement = await bindSmokeContractIntent({ store, settlement, quoteId });
+const boundActionDraft = { ...actionDraft, intentDigest: boundSettlement.contractIntentDigest };
+const action = {
+  ...boundActionDraft,
+  payloadDigest: lightningActionCommitment(boundActionDraft, operation),
+};
 store.recordReservation({
   settlementId: settlement.settlementId,
-  reservationId: randomHash(),
+  reservationId: quoteId,
   reservationTxHash: randomHash(),
   reservationBlockNumber: 1,
   reservationBlockHash: randomHash(),
-  reservationIntentDigest: settlement.intentDigest,
+  reservationIntentDigest: boundSettlement.contractIntentDigest,
   observedAt: now + 1,
 });
 store.planAction(action);
@@ -121,11 +129,13 @@ try {
     privateKey,
     keyId: required("COORDINATOR_KEY_ID"),
     adapterUrl: "http://invoice-adapter:3000",
+    responsePublicKey,
+    responseKeyId: required("INVOICE_ADAPTER_RESPONSE_KEY_ID"),
     nowSeconds: () => Math.floor(Date.now() / 1_000),
     requestImpl: async (url, options) => {
       const response = await fetch(url, options);
       const body = await response.clone().json();
-      if (response.ok && body?.result?.state === "SETTLED") {
+      if (response.ok && body?.payload?.body?.result?.state === "SETTLED") {
         responseWasLost = true;
         throw new Error("simulated loss after successful invoice settlement");
       }
@@ -151,7 +161,10 @@ const reconciled = await reconcileLightningAction({
   privateKey,
   keyId: required("COORDINATOR_KEY_ID"),
   adapterUrl: "http://invoice-adapter:3000",
+  responsePublicKey,
+  responseKeyId: required("INVOICE_ADAPTER_RESPONSE_KEY_ID"),
   nowSeconds: () => Math.floor(Date.now() / 1_000),
+  requestImpl: fetch,
 });
 if (reconciled.disposition !== "confirmed" || reconciled.action.dispatchCount !== 1) {
   throw new Error(

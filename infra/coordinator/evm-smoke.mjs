@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ContractFactory, HDNodeWallet, JsonRpcProvider, id, keccak256, sha256 } from "ethers";
 import { CoordinatorStore, coordinatorCommitmentDigest } from "../../lib/coordinator-store.mjs";
+import { bindSmokeContractIntent } from "./contract-intent-smoke-fixture.mjs";
 import {
   dispatchEvmClaimAction,
   evmClaimActionCommitment,
@@ -27,6 +28,27 @@ const directory = await mkdtemp(join(tmpdir(), "treeswap-evm-smoke-"));
 const databasePath = join(directory, "coordinator.sqlite");
 let store;
 
+async function isolatedLoopbackRpcRequest({ url, method, params, signal }) {
+  const endpoint = new URL(url);
+  if (endpoint.protocol !== "http:"
+      || (endpoint.hostname !== "127.0.0.1" && endpoint.hostname !== "localhost" && endpoint.hostname !== "::1")) {
+    throw new Error("local EVM evidence client accepts loopback HTTP only");
+  }
+  const response = await fetch(endpoint, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ jsonrpc: "2.0", id: 1, method, params }),
+    signal,
+  });
+  const text = await response.text();
+  if (Buffer.byteLength(text) > 128 * 1024) throw new Error("local EVM evidence response is too large");
+  const body = JSON.parse(text);
+  if (!response.ok || body?.jsonrpc !== "2.0" || body?.id !== 1 || body.error || !("result" in body)) {
+    throw new Error("local EVM evidence RPC failed");
+  }
+  return body.result;
+}
+
 async function reconcileUntilIncluded({ actionId, contractCodeHash, now }) {
   const maximumAttempts = 40;
   for (let attempt = 0; attempt < maximumAttempts; attempt += 1) {
@@ -34,6 +56,7 @@ async function reconcileUntilIncluded({ actionId, contractCodeHash, now }) {
       store,
       actionId,
       rpcUrl: RPC_URL,
+      rpcRequestImpl: isolatedLoopbackRpcRequest,
       expectedContractCodeHash: contractCodeHash,
       nowSeconds: () => now + attempt,
     });
@@ -105,17 +128,26 @@ try {
     capacityEpoch: settlement.capacityEpoch,
     plannedAt: now + 2,
   };
-  action.payloadDigest = evmClaimActionCommitment(action, operation, signer.address);
-
   store = await CoordinatorStore.open(databasePath);
   store.acceptSettlement(settlement);
+  const boundSettlement = await bindSmokeContractIntent({
+    store,
+    settlement,
+    quoteId,
+    chainId: "31337",
+    verifyingContract: contract,
+    settlementContractCodeHash: contractCodeHash,
+    userWallet: signer,
+  });
+  action.intentDigest = boundSettlement.contractIntentDigest;
+  action.payloadDigest = evmClaimActionCommitment(action, operation, signer.address);
   store.recordReservation({
     settlementId: settlement.settlementId,
     reservationId: quoteId,
     reservationTxHash: digest("reservation-transaction"),
     reservationBlockNumber: 1,
     reservationBlockHash: digest("reservation-block"),
-    reservationIntentDigest: settlement.intentDigest,
+    reservationIntentDigest: boundSettlement.contractIntentDigest,
     observedAt: now + 1,
   });
   await prepareEvmClaimAction({
@@ -139,6 +171,7 @@ try {
     expectedContractCodeHash: contractCodeHash,
     maximumGasCostWei: 1_000_000_000_000_000n,
     rpcUrl: RPC_URL,
+    rpcRequestImpl: isolatedLoopbackRpcRequest,
     nowSeconds: () => now + 4,
   });
   assert.equal(dispatched.action.state, "UNKNOWN");
@@ -157,6 +190,7 @@ try {
     store,
     actionId: action.actionId,
     rpcUrl: RPC_URL,
+    rpcRequestImpl: isolatedLoopbackRpcRequest,
     expectedContractCodeHash: contractCodeHash,
     nowSeconds: () => now + 6,
   });

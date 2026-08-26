@@ -74,6 +74,7 @@ function quorum(attestations, overrides = {}) {
 
 test("signs and verifies one short-lived aggregate-only Ed25519 attestation", () => {
   const signed = attestation(A);
+  assert.equal(signed.schema, "treeswap.lightning-close-collector-attestation.v2");
   assert.throws(() => signLightningCloseCollectorAttestation({
     collectorId: A.collectorId,
     nodeCommitment: NODE_COMMITMENT,
@@ -111,6 +112,11 @@ test("rejects body, signature, identity, node, lifetime, and expired replay muta
     ...options,
   });
   assert.throws(() => verify({ ...signed, evidenceDigest: id("tampered").toLowerCase() }), /verification failed/);
+  assert.throws(() => verify({ ...signed, stateDigest: id("tampered state").toLowerCase() }), /verification failed/);
+  assert.throws(() => verify({
+    ...signed,
+    schema: "treeswap.lightning-close-collector-attestation.v1",
+  }), /schema is invalid/);
   assert.throws(() => verify({ ...signed, signature: signed.signature.slice(1) }), /signature is invalid/);
   assert.throws(() => verify({ ...signed, collectorId: B.collectorId }), /identity mismatch/);
   assert.throws(() => verify({ ...signed, nodeCommitment: id("other-node").toLowerCase() }), /node commitment mismatch/);
@@ -134,6 +140,23 @@ test("requires exactly two distinct healthy collectors and exposes only digests"
     JSON.stringify(result),
     /(signature|channel.?point|outpoint|txid|node.?pub|invoice|macaroon|preimage|private.?key)/i,
   );
+});
+
+test("fails closed when healthy collectors disagree on aggregate state or observation window", () => {
+  const differentBlock = quorum([
+    attestation(A),
+    attestation(B, evidence({ blockHeight: 264 })),
+  ]);
+  assert.equal(differentBlock.status, "unsafe");
+  assert.ok(differentBlock.reasonCodes.includes("COLLECTOR_STATE_DISAGREEMENT"));
+
+  const delayed = quorum([
+    attestation(A),
+    attestation(B, evidence({ observedAt: NOW + 6 })),
+  ]);
+  assert.equal(delayed.status, "unsafe");
+  assert.ok(delayed.reasonCodes.includes("COLLECTOR_OBSERVATION_SKEW"));
+  assert.equal(delayed.reasonCodes.includes("COLLECTOR_STATE_DISAGREEMENT"), false);
 });
 
 test("fails closed on unsafe, missing, duplicate, unknown, stale, wrong-node, and reused-key reports", () => {

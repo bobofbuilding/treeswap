@@ -6,6 +6,8 @@ import {
   buildPrivatePacketRequest,
   buildSignedPrivatePacketResponse,
   fetchVerifiedPrivatePacket,
+  isVerifiedPrivatePacketResult,
+  privatePacketRequestDigest,
   signPrivatePacketRequest,
   verifyPrivatePacketRequest,
   verifyPrivatePacketResponse,
@@ -28,6 +30,7 @@ function settlement(label, overrides = {}) {
     reservationId: hash(`${label}:reservation`),
     direction: "bit-to-lightning",
     intentDigest: hash(`${label}:intent`),
+    contractIntentDigest: hash(`${label}:contract-intent`),
     paymentHash: hash(`${label}:payment`),
     invoiceDigest: invoiceDigest(paymentRequest),
     quoteReceiptDigest: hash(`${label}:quote`),
@@ -60,7 +63,7 @@ function packet(value, request, operation, overrides = {}) {
     payloadDigest: request.payload.payloadDigest,
     purpose: request.payload.purpose,
     direction: value.direction,
-    intentDigest: value.intentDigest,
+    intentDigest: value.contractIntentDigest,
     paymentHash: value.paymentHash,
     invoiceDigest: value.invoiceDigest,
     quoteReceiptDigest: value.quoteReceiptDigest,
@@ -75,7 +78,11 @@ function packet(value, request, operation, overrides = {}) {
   };
 }
 
-function response(request, privatePacket, overrides = {}) {
+async function response(request, privatePacket, overrides = {}) {
+  const {
+    consumeRequest = async () => true,
+    ...responseOverrides
+  } = overrides;
   return buildSignedPrivatePacketResponse({
     requestEnvelope: request,
     requesterPublicKey: requesterKeys.publicKey,
@@ -83,10 +90,11 @@ function response(request, privatePacket, overrides = {}) {
     packet: privatePacket,
     providerKeyId: PROVIDER_KEY_ID,
     providerPrivateKey: providerKeys.privateKey,
+    consumeRequest,
     servedAt: 1_001,
     expiresAt: 1_015,
     minimumEvmSafetySeconds: SAFETY_SECONDS,
-    ...overrides,
+    ...responseOverrides,
   });
 }
 
@@ -113,12 +121,14 @@ test("authenticates a fresh exact send-payment packet and private transport", as
   });
   assert.equal(verifiedRequest.actionId, action.actionId);
 
-  const signed = response(request, packet(value, request, {
+  const signed = await response(request, packet(value, request, {
     paymentRequest: value.paymentRequest,
     feeLimitSats: "25",
     timeoutSeconds: 30,
   }));
   const verified = verify(signed, request);
+  assert.equal(isVerifiedPrivatePacketResult(verified), true);
+  assert.equal(isVerifiedPrivatePacketResult({ ...verified }), false);
   assert.equal(verified.packet.operation.paymentRequest, value.paymentRequest);
   assert.match(verified.responseDigest, /^0x[0-9a-f]{64}$/);
 
@@ -145,22 +155,76 @@ test("authenticates a fresh exact send-payment packet and private transport", as
   assert.equal(transported.packet.operation.feeLimitSats, "25");
 });
 
-test("rejects replay, changed action commitments, changed invoices, and changed signed packets", () => {
+test("requires atomic request consumption before releasing a signed response", async () => {
+  const value = settlement("consume");
+  const request = requestEnvelope(value, { requestId: hash("request:consume") });
+  const privatePacket = packet(value, request, {
+    paymentRequest: value.paymentRequest,
+    feeLimitSats: "25",
+    timeoutSeconds: 30,
+  });
+  let consumed = false;
+  let descriptor;
+  const consumeRequest = async (input) => {
+    descriptor = input;
+    if (consumed) return false;
+    consumed = true;
+    return true;
+  };
+  const signed = await response(request, privatePacket, { consumeRequest });
+  assert.equal(signed.request.payload.requestId, request.payload.requestId);
+  assert.equal(Object.isFrozen(descriptor), true);
+  assert.deepEqual(descriptor, {
+    requesterKeyId: REQUESTER_KEY_ID,
+    requestId: request.payload.requestId,
+    requestDigest: privatePacketRequestDigest(request.payload),
+    servedAt: 1_001,
+    expiresAt: 1_020,
+  });
+  await assert.rejects(response(request, privatePacket, { consumeRequest }), /already consumed/);
+  const nominalValue = settlement("nominal-consume");
+  const nominalRequest = requestEnvelope(nominalValue);
+  await assert.rejects(
+    response(nominalRequest, packet(
+      nominalValue,
+      nominalRequest,
+      { paymentRequest: nominalValue.paymentRequest, feeLimitSats: "25", timeoutSeconds: 30 },
+    ), { consumeRequest: async () => ({ accepted: true }) }),
+    /already consumed/,
+  );
+
+  await assert.rejects(buildSignedPrivatePacketResponse({
+    requestEnvelope: request,
+    requesterPublicKey: requesterKeys.publicKey,
+    expectedRequesterKeyId: REQUESTER_KEY_ID,
+    packet: privatePacket,
+    providerKeyId: PROVIDER_KEY_ID,
+    providerPrivateKey: providerKeys.privateKey,
+    servedAt: 1_001,
+    expiresAt: 1_015,
+    minimumEvmSafetySeconds: SAFETY_SECONDS,
+  }), /durable request replay consumer/);
+});
+
+test("rejects replay, changed action commitments, changed invoices, and changed signed packets", async () => {
   const value = settlement("mutation");
   const action = { actionId: hash("mutation:action"), settlementId: value.settlementId, payloadDigest: hash("mutation:payload") };
   const request = requestEnvelope(value, { action });
   const operation = { paymentRequest: value.paymentRequest, feeLimitSats: "25", timeoutSeconds: 30 };
-  const signed = response(request, packet(value, request, operation));
+  const signed = await response(request, packet(value, request, operation));
 
   const replayRequest = requestEnvelope(value, { action, requestId: hash("request:replay") });
   assert.throws(() => verify(signed, replayRequest), /changed the request/);
 
   const changedAction = structuredClone(request);
   changedAction.payload.actionId = hash("mutation:other-action");
-  assert.throws(() => response(changedAction, packet(value, changedAction, operation)), /request signature|changed actionId/);
+  await assert.rejects(
+    response(changedAction, packet(value, changedAction, operation)),
+    /request signature|changed actionId/,
+  );
 
-  assert.throws(
-    () => response(request, packet(value, request, { ...operation, paymentRequest: `${value.paymentRequest}-changed` })),
+  await assert.rejects(
+    response(request, packet(value, request, { ...operation, paymentRequest: `${value.paymentRequest}-changed` })),
     /digest changed/,
   );
 
@@ -169,29 +233,29 @@ test("rejects replay, changed action commitments, changed invoices, and changed 
   assert.throws(() => verify(changedResponse, request), /signature is invalid/);
 });
 
-test("binds settle-invoice preimages and ordered deadlines", () => {
+test("binds settle-invoice preimages and ordered deadlines", async () => {
   const preimage = hash("settle:preimage");
   const paymentHash = `0x${createHash("sha256").update(Buffer.from(preimage.slice(2), "hex")).digest("hex")}`;
   const value = settlement("settle", { direction: "lightning-to-bit", paymentHash });
   const request = requestEnvelope(value, { purpose: "SETTLE_INVOICE" });
-  const signed = response(request, packet(value, request, { preimage }));
+  const signed = await response(request, packet(value, request, { preimage }));
   assert.equal(verify(signed, request).packet.operation.preimage, preimage);
 
-  assert.throws(
-    () => response(request, packet(value, request, { preimage: hash("wrong-preimage") })),
+  await assert.rejects(
+    response(request, packet(value, request, { preimage: hash("wrong-preimage") })),
     /does not match/,
   );
-  assert.throws(
-    () => response(request, packet(value, request, { preimage }, { lightningActionDeadline: 2_000, evmRefundAt: 2_599 })),
+  await assert.rejects(
+    response(request, packet(value, request, { preimage }, { lightningActionDeadline: 2_000, evmRefundAt: 2_599 })),
     /ordering is unsafe/,
   );
-  assert.throws(
-    () => response(request, packet(value, request, { preimage }), { expiresAt: 1_000 }),
+  await assert.rejects(
+    response(request, packet(value, request, { preimage }), { expiresAt: 1_000 }),
     /authority window/,
   );
 });
 
-test("binds an EVM claim template without accepting a provider-supplied preimage", () => {
+test("binds an EVM claim template without accepting a provider-supplied preimage", async () => {
   const value = settlement("claim");
   const request = requestEnvelope(value, { purpose: "EVM_CLAIM" });
   const operation = {
@@ -205,19 +269,19 @@ test("binds an EVM claim template without accepting a provider-supplied preimage
     value: "0",
     quoteId: value.reservationId,
   };
-  const signed = response(request, packet(value, request, operation));
+  const signed = await response(request, packet(value, request, operation));
   assert.equal(verify(signed, request).packet.operation.quoteId, value.reservationId);
 
-  assert.throws(
-    () => response(request, packet(value, request, { ...operation, quoteId: hash("wrong-quote") })),
+  await assert.rejects(
+    response(request, packet(value, request, { ...operation, quoteId: hash("wrong-quote") })),
     /quote changed/,
   );
-  assert.throws(
-    () => response(request, packet(value, request, { ...operation, preimage: hash("provider-preimage") })),
+  await assert.rejects(
+    response(request, packet(value, request, { ...operation, preimage: hash("provider-preimage") })),
     /fields are not exact/,
   );
-  assert.throws(
-    () => response(request, packet(value, request, { ...operation, value: "1" })),
+  await assert.rejects(
+    response(request, packet(value, request, { ...operation, value: "1" })),
     /cannot transfer/,
   );
 });
@@ -265,7 +329,7 @@ test("requires private HTTPS port 443 and hides hard transport failures", async 
 test("bounds headers and the complete response-body read under the same deadline", async () => {
   const value = settlement("response-policy");
   const request = requestEnvelope(value);
-  const signed = response(request, packet(value, request, {
+  const signed = await response(request, packet(value, request, {
     paymentRequest: value.paymentRequest,
     feeLimitSats: "25",
     timeoutSeconds: 30,
@@ -278,6 +342,20 @@ test("bounds headers and the complete response-body read under the same deadline
     minimumEvmSafetySeconds: SAFETY_SECONDS,
     nowSeconds: () => 1_002,
   };
+
+  let rejectedBodyCancelled = false;
+  await assert.rejects(
+    fetchVerifiedPrivatePacket({
+      ...args,
+      requestImpl: async () => new Response(new ReadableStream({
+        cancel() {
+          rejectedBodyCancelled = true;
+        },
+      }), { status: 503 }),
+    }),
+    /rejected the request/,
+  );
+  assert.equal(rejectedBodyCancelled, true);
 
   await assert.rejects(
     fetchVerifiedPrivatePacket({
@@ -323,6 +401,40 @@ test("bounds headers and the complete response-body read under the same deadline
     }),
     /response is too large/,
   );
+  const signedBytes = Buffer.byteLength(JSON.stringify(signed));
+  for (const headers of [
+    { "content-encoding": "gzip" },
+    { "content-length": String(signedBytes), "transfer-encoding": "chunked" },
+    { "content-length": String(signedBytes + 1) },
+  ]) {
+    await assert.rejects(
+      fetchVerifiedPrivatePacket({
+        ...args,
+        requestImpl: async () => new Response(JSON.stringify(signed), {
+          headers: {
+            "cache-control": "no-store",
+            "content-type": "application/json",
+            ...headers,
+          },
+        }),
+      }),
+      /content encoding is invalid|framing is ambiguous|length changed/,
+    );
+  }
+  for (const bytes of [
+    [0x7b, 0x22, 0x78, 0x22, 0x3a, 0x22, 0xc0, 0xaf, 0x22, 0x7d],
+    [0xef, 0xbb, 0xbf, ...Buffer.from('{"x":true}')],
+  ]) {
+    await assert.rejects(
+      fetchVerifiedPrivatePacket({
+        ...args,
+        requestImpl: async () => new Response(Uint8Array.from(bytes), {
+          headers: { "cache-control": "no-store", "content-type": "application/json; charset=utf-8" },
+        }),
+      }),
+      /not valid UTF-8|forbidden UTF-8 byte order mark/,
+    );
+  }
   await assert.rejects(
     fetchVerifiedPrivatePacket({
       ...args,

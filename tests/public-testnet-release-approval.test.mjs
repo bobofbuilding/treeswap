@@ -26,6 +26,7 @@ import {
   buildPublicTestnetReleaseRoleApprovalPayload,
   createPublicTestnetReleaseApprovalProviderSet,
   inspectPreparedPublicTestnetReleaseCandidate,
+  inspectPublicTestnetReleaseApprovalBundle,
   verifyPublicTestnetReleaseApprovals,
 } from "../lib/public-testnet-release-approval.mjs";
 
@@ -380,6 +381,155 @@ test("rejects candidate artifact mutation and authority smuggling", () => {
     () => inspectPreparedPublicTestnetReleaseCandidate(downgradedController),
     /controller approval must use ERC-1271/,
   );
+});
+
+test("snapshots exact release-signing data without executing accessors or coercion", async () => {
+  const candidate = preparedCandidate();
+  let getterCalls = 0;
+  const accessorCandidate = preparedCandidate();
+  Object.defineProperty(accessorCandidate, "record", {
+    configurable: true,
+    enumerable: true,
+    get() {
+      getterCalls += 1;
+      return candidate.record;
+    },
+  });
+  assert.throws(
+    () => inspectPreparedPublicTestnetReleaseCandidate(accessorCandidate),
+    /enumerable data property/,
+  );
+  assert.equal(getterCalls, 0);
+
+  const nestedAccessor = preparedCandidate();
+  Object.defineProperty(nestedAccessor.policy.approvers.securityReviewer, "address", {
+    configurable: true,
+    enumerable: true,
+    get() {
+      getterCalls += 1;
+      return securityReviewer.address;
+    },
+  });
+  assert.throws(
+    () => inspectPreparedPublicTestnetReleaseCandidate(nestedAccessor),
+    /enumerable data property/,
+  );
+  assert.equal(getterCalls, 0);
+
+  assert.throws(
+    () => inspectPreparedPublicTestnetReleaseCandidate({
+      ...candidate,
+      [Symbol("hidden signing authority")]: true,
+    }),
+    /object fields are outside policy/,
+  );
+  const hiddenCandidate = preparedCandidate();
+  Object.defineProperty(hiddenCandidate, "hiddenAuthority", {
+    configurable: true,
+    enumerable: false,
+    value: true,
+  });
+  assert.throws(
+    () => inspectPreparedPublicTestnetReleaseCandidate(hiddenCandidate),
+    /enumerable data property/,
+  );
+  const inheritedCandidate = Object.assign(
+    Object.create({ hiddenAuthority: true }),
+    candidate,
+  );
+  assert.throws(
+    () => inspectPreparedPublicTestnetReleaseCandidate(inheritedCandidate),
+    /unsupported object/,
+  );
+  const prototypeCandidate = preparedCandidate();
+  Object.defineProperty(prototypeCandidate, "__proto__", {
+    configurable: true,
+    enumerable: true,
+    writable: true,
+    value: { funding: true },
+  });
+  assert.throws(
+    () => inspectPreparedPublicTestnetReleaseCandidate(prototypeCandidate),
+    /fields are not exact/,
+  );
+  assert.equal(Object.prototype.funding, undefined);
+
+  let coercionCalls = 0;
+  const objectScalarCandidate = preparedCandidate();
+  objectScalarCandidate.record.releaseId = {
+    toString() {
+      coercionCalls += 1;
+      return candidate.record.releaseId;
+    },
+  };
+  assert.throws(
+    () => inspectPreparedPublicTestnetReleaseCandidate(objectScalarCandidate),
+    /unsupported value/,
+  );
+  assert.equal(coercionCalls, 0);
+
+  const mutableCandidate = preparedCandidate();
+  const inspected = inspectPreparedPublicTestnetReleaseCandidate(mutableCandidate);
+  const originalSwapLimit = inspected.candidate.record.limits.maxSwapSats;
+  mutableCandidate.record.limits.maxSwapSats = "1";
+  assert.equal(inspected.candidate.record.limits.maxSwapSats, originalSwapLimit);
+  assert.equal(Object.isFrozen(inspected.candidate.record.limits), true);
+
+  const approvals = await approvalBundle(candidate);
+  Object.defineProperty(approvals.approvals[0], "role", {
+    configurable: true,
+    enumerable: true,
+    get() {
+      getterCalls += 1;
+      return "controller";
+    },
+  });
+  assert.throws(
+    () => inspectPublicTestnetReleaseApprovalBundle({ candidate, approvalBundle: approvals }),
+    /enumerable data property/,
+  );
+  assert.equal(getterCalls, 0);
+
+  const providerConfiguration = {
+    schema: "treeswap.public-testnet-release-approval-providers.v1",
+    providers: [
+      { identity: PROVIDER_ONE, urlEnvironmentVariable: "TREESWAP_RELEASE_RPC_ONE_URL" },
+      { identity: PROVIDER_TWO, urlEnvironmentVariable: "TREESWAP_RELEASE_RPC_TWO_URL" },
+    ],
+  };
+  Object.defineProperty(providerConfiguration.providers[0], "identity", {
+    configurable: true,
+    enumerable: true,
+    get() {
+      getterCalls += 1;
+      return PROVIDER_ONE;
+    },
+  });
+  assert.throws(() => createPublicTestnetReleaseApprovalProviderSet({
+    configuration: providerConfiguration,
+    environment: {
+      TREESWAP_RELEASE_RPC_ONE_URL: "https://one.example/rpc",
+      TREESWAP_RELEASE_RPC_TWO_URL: "https://two.example/rpc",
+    },
+    expectedProviderCount: 2,
+    expectedProviderSetDigest: candidate.record.approvalProviderSetDigest,
+  }), /enumerable data property/);
+  assert.equal(getterCalls, 0);
+
+  const roleInput = { candidate, role: "securityReviewer", now: NOW };
+  Object.defineProperty(roleInput, "candidate", {
+    configurable: true,
+    enumerable: true,
+    get() {
+      getterCalls += 1;
+      return candidate;
+    },
+  });
+  assert.throws(
+    () => buildPublicTestnetReleaseRoleApprovalPayload(roleInput),
+    /enumerable data properties/,
+  );
+  assert.equal(getterCalls, 0);
 });
 
 test("verifies all five approvals but emits no reusable activation provenance", async () => {

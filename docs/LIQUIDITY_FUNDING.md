@@ -79,6 +79,7 @@ Stopping new quotes must not disable valid claim, refund, or solver withdrawal p
 - [x] Controlled local EVM reorg before and after Lightning authorization, in both directions and on the pinned live-BIT fork
 - [x] Isolated signed Lightning regtest adapters with hold-invoice create, accept, settle, payment, role isolation, and restart-safe replay rejection
 - [x] Full local Lightning failure injection and durable coordinator reconciliation, including restart, lost response, force close, stale chain, route failure, exact duplicates, and credential/TLS rotation
+- [x] Production-composable Lightning action transport fixed to private port-443 Node HTTPS with certificate verification, no injected callback, no redirects or shared dispatcher, and strict non-cacheable bounded JSON responses
 - [x] Deterministic cross-clock timeout model and boundary tests
 - [x] Local dual-provider finalized BIT-vault reader and signed aggregate Lightning-capacity protocol
 - [x] Short-lived signed bootstrap roster with derived provider, observer, monitor, relay, solver, and alert-channel counts; exact deployment-provider matching; and provenance-only release-candidate integration

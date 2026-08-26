@@ -33,7 +33,7 @@ The exact policy:
 
 - forbids solver last-look and partial fills;
 - caps quote lifetime, capacity age, active quotes, consecutive failures, unknown-solver exposure, established-solver exposure, and global BIT → Lightning in-flight exposure;
-- permits established status only from objective completed-fill history and a minimum reliability sample, with no subjective bond slashing;
+- permits established status only from objective completed-fill history in the same direction and a direction-scoped reliability sample, with no subjective bond slashing;
 - discloses that a selected solver may correlate both settlement legs and that onchain linkage exists;
 - forbids raw invoice and preimage logging, disables email delivery, and caps pricing, packet, and receipt retention;
 - states that no insurance fund or automatic reimbursement exists, assigns routing and Lightning-delivery failure to the solver, inventory custody risk to its owner, and wallet/network fees to the user;

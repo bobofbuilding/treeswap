@@ -12,12 +12,12 @@ The response becomes a firm quote only after the solver signs those exact terms 
 
 For Lightning → BIT, the onchain vault is the final commitment: the solver pre-funds its segregated balance and signs the same selected quote as the user. Only the named user can exercise it, and the solver no longer has a transaction-time veto. The vault permits one active reservation per user and releases that slot only at `CLAIMED` or `REFUNDED`.
 
-For BIT → Lightning, Ethereum cannot force an offchain Lightning payment. The user-funded escrow is fully refundable and charges no fee on failure. A solver with insufficient completed history receives only the configured unknown-solver cap. It reaches the higher established cap only after the configured number of settlements have reached `COMPLETED` with an independently verified both-assets terminal proof bound to the selected offer. A claimed fill without that proof cannot change history. A separate atomic global BIT → Lightning in-flight ceiling prevents one operator from multiplying aggregate exposure across many fresh solver identities. Consecutive attributable failures suspend the solver; user abandonment or an unexercised expiry does not count against it.
+For BIT → Lightning, Ethereum cannot force an offchain Lightning payment. The user-funded escrow is fully refundable and charges no fee on failure. A solver with insufficient BIT → Lightning history receives only the configured unknown-solver cap. It reaches the higher established cap only after the configured number of BIT → Lightning settlements have reached `COMPLETED` with an independently verified both-assets terminal proof bound to the selected offer. Lightning → BIT fills cannot promote this risk tier, improve its reliability sample, or reset its consecutive failures. A claimed fill without the exact proof cannot change either direction's history. A separate atomic global BIT → Lightning in-flight ceiling prevents one operator from multiplying aggregate exposure across many fresh solver identities. Consecutive attributable failures suspend the solver; user abandonment or an unexercised expiry does not count against it.
 
 ## Deliberate v1 limits
 
 - Repository admission is open and cryptographic; there is no solver allowlist or administrator promotion switch.
-- Unknown BIT → Lightning exposure is capped. Promotion uses completed-swap evidence only.
+- Unknown BIT → Lightning exposure is capped. Promotion uses completed BIT → Lightning evidence only.
 - Aggregate BIT → Lightning in-flight exposure is capped across every solver identity.
 - Lightning → BIT is limited by exact, independently verified, solver-owned prefunded BIT inventory.
 - Quotes are full-fill, short-lived, exact, and signed.

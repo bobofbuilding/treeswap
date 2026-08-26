@@ -15,6 +15,7 @@ Both modes remain public-testnet-only. Release v2 rejects every mainnet environm
 
 `lib/public-testnet-release-candidate.mjs` removes the manual merge between deployment and campaign evidence. It accepts only live module-private verifications; copied JSON verification claims fail. It then:
 
+- reads both public preparation calls through exact plain own-enumerable data-property schemas, snapshots the record/policy templates and retained manifest/monitor policy as bounded exact data, and freezes those same values before hashing or runtime binding; getters are not invoked, caller coercion and mutation are inert, and hidden, symbol, inherited, prototype-named, custom-prototype, unsafe, executable, cyclic, oversized, sparse, or decorated inputs fail closed;
 - requires the source commit, protocol version, chain, gate, deployment manifest, EVM provider count, campaign timing, review interval, promotion lifetime, both release-authorizing wallet identities and code hashes, and all three Safe owner/threshold observations to agree;
 - rejects a Lightning operator, security reviewer, or incident commander that is also an owner of any controller, guardian, or fee-recipient wallet;
 - rejects an external reviewer signer that overlaps any deployment wallet, deployment-wallet owner, deployment-promotion attester, bootstrap/campaign operator, or release approver;
@@ -36,7 +37,7 @@ Both modes remain public-testnet-only. Release v2 rejects every mainnet environm
 - refuses a missing, stale, copied, incomplete, mismatched, or authority-overlapping review or operational-readiness package; and
 - rejects a bootstrap that enables public permissionless execution, any release/adoption cap mismatch, any adoption/upstream policy mismatch, and any adoption fee above either deployed escrow's immutable ceiling.
 
-The output contains the exact release record, release policy, EIP-712 approval payload, upstream digest summary, and only false authority flags. It is written once with mode `0600`. It does not sign, broadcast, open the gate, move inventory, or activate funding.
+The output contains the exact release record, release policy, EIP-712 approval payload, upstream digest summary, and only false authority flags. It is written once with mode `0600`. Exact-data retention prevents a reviewed template from changing at hashing or runtime binding, but it does not establish upstream evidence truth, deployed manifest truth, organizational independence, or key custody. It does not sign, broadcast, open the gate, move inventory, or activate funding.
 
 ## Bootstrap preparation
 

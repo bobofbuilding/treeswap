@@ -6,6 +6,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { Wallet, id } from "ethers";
 import {
+  RELEASE_QUALIFICATION_CAMPAIGN_NAMES,
   RELEASE_QUALIFICATION_CONFIGURATION_FILES,
   buildQualificationEvidence,
   hashQualificationFile,
@@ -41,7 +42,7 @@ test("reconstructs the exact sealed artifact and binds one independent reviewer"
   const { qualification } = await validFixture();
   const evidence = buildQualificationReviewReleaseEvidence(qualification.verification);
   assert.equal(evidence.fundingMode, "operator-testnet-bootstrap");
-  assert.equal(evidence.campaignCount, 42);
+  assert.equal(evidence.campaignCount, RELEASE_QUALIFICATION_CAMPAIGN_NAMES.length);
   assert.equal(evidence.configurationHashCount, RELEASE_QUALIFICATION_CONFIGURATION_FILES.length);
   assert.equal(evidence.pinnedImageCount, 3);
   assert.equal(evidence.qualificationFileDigest, qualification.review.qualificationFileDigest);
@@ -196,7 +197,7 @@ test("operator CLIs emit typed data and verify without gaining funding authority
       "--attestation", paths.attestation,
     ], { encoding: "utf8" }));
     assert.equal(verified.authorizations.funding, false);
-    assert.equal(verified.campaignCount, 42);
+    assert.equal(verified.campaignCount, RELEASE_QUALIFICATION_CAMPAIGN_NAMES.length);
   } finally {
     await rm(directory, { recursive: true, force: true });
   }

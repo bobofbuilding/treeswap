@@ -34,6 +34,12 @@ One unsafe cycle performs four bounded stages in order:
 
 A guardian broadcaster's acceptance result is not onchain proof. The monitor establishes `onchainGateHalted` only when both configured confirmers return the same exact accepted transaction hash, block number and hash, gate address, alert digest, and fully closed gate state. One confirmer outage, timeout, malformed result, false-finality claim, wrong transaction, provider disagreement, open gate, residual active risk, or pending reopen leaves the halt incomplete. Alerts still run, so a confirmation failure cannot suppress escalation. One successful alert route is enough to establish alert delivery. The result exposes attempted and successful/delivered counts plus separate broadcaster, confirmer, and alert degradation flags. Noncanonical, zero-hash, wrong-digest, or secret-bearing extra-field callback results do not count and are never copied into output. Failed paging never reopens exposure. A healthy cycle performs no action and has no schedule/open authority. Reopening remains a separate controller/multisig procedure with a fresh reviewed risk digest and the immutable delay.
 
+## Coordinator supervision signal
+
+The reusable active coordinator persists one aggregate run/status journal in its durable SQLite store. `npm run coordinator:supervision-status` reads it without opening the database for writes and exits zero only when the current run is `RUNNING`, the most recently committed service phase is active, and the retained crash-loop breaker is closed. It exits nonzero for policy preparation, a slow/degraded/inactive phase, explicit failure, clean stop, journal corruption, or an open failure window. The lease health check separately detects stale or missing process heartbeats; alerting must consume both signals because neither one subsumes the other.
+
+The supervision record is a page input, not a pager. It contains only fixed lifecycle labels, counters, times, and digests and cannot halt or reopen the gate. Before funded testnet, deploy two alert routes that retain and escalate both signals, prove delivery for preparation timeout, degraded execution, stale lease heartbeat, startup/background failure, abrupt kill, and breaker-open conditions, and demonstrate that new exposure remains closed while claims, refunds, and withdrawals remain available.
+
 ## Local evidence
 
 Run:
