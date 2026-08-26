@@ -19,6 +19,7 @@ import {
   isPublicSolverEndpointAddress,
   pinnedPublicHttpsRequest,
   pinnedPublicRfqRequest,
+  pinnedPublicSelectedSolverRequest,
   queryVerifiedSolverCapability,
   solverEndpointResponseDigest,
 } from "../lib/solver-endpoint-transport.mjs";
@@ -479,6 +480,12 @@ test("keeps the public RFQ route pinned and separate from the capability route",
   assert.equal(response.status, 200);
   await assert.rejects(pinnedPublicRfqRequest(`${ORIGIN}/v1/capability`, { body: "{}" }), /invalid/);
   await assert.rejects(pinnedPublicHttpsRequest(`${ORIGIN}/v1/rfq`, { body: "{}" }), /invalid/);
+});
+
+test("keeps the selected-solver finalization route pinned and separate", async () => {
+  await assert.rejects(() => pinnedPublicSelectedSolverRequest(`${ORIGIN}/v1/rfq`, {
+    body: "{}",
+  }), /invalid/);
 });
 
 test("rejects expired responses, oversized bodies, and signed capacity overstatement", async () => {

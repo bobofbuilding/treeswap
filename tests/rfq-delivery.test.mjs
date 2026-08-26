@@ -80,8 +80,14 @@ import {
 } from "../lib/rfq-quote-ingress.mjs";
 import { RfqQuoteIngressStore } from "../lib/rfq-quote-ingress-store.mjs";
 import {
+  claimRfqSelectedSolverFinalizationOwnership,
   claimRfqSelectionReservationOwnership,
 } from "../lib/rfq-selection-reservation.mjs";
+import {
+  buildSignedSelectedSolverFinalizationResponse,
+  createTestSelectedSolverFinalizationClient,
+  verifySelectedSolverFinalizationRequest,
+} from "../lib/selected-solver-finalization-transport.mjs";
 import {
   createRfqPrivateCeremonyRoute,
   createTestRfqPrivateCeremonyRoute,
@@ -1212,7 +1218,7 @@ test("authenticates quote ingress, exposes only opaque competition, and consumes
     networkListener: false,
   });
   assert.deepEqual(data.selectionReservation.status(), {
-    schema: "treeswap.selection-reservation-status.v1",
+    schema: "treeswap.selection-reservation-status.v2",
     state: "active",
     mode: "injected-test",
     selectionsAccepted: 1,
@@ -1222,6 +1228,10 @@ test("authenticates quote ingress, exposes only opaque competition, and consumes
     pendingSelected: 0,
     pendingPrepared: 0,
     inMemoryReservations: 1,
+    finalizationsInFlightOrRetryable: 0,
+    executableQuotesFinalized: 0,
+    executionAuthorizationsCompleted: 0,
+    terminalFinalizationFailures: 0,
     fundingAuthorization: false,
     settlementAuthorization: false,
     signingAuthority: false,
@@ -1761,6 +1771,264 @@ test("reserves BIT-to-Lightning output and routing headroom through the same sel
     String(selection.selected.offer.lightningAmountSats + selection.selected.offer.maxRoutingFeeSats),
   );
   assert.equal(firm.bitAmountWei, "0");
+});
+
+test("carries one durable reservation through authenticated solver finalization and exact second user authorization", async (t) => {
+  const data = await collectedBlindBook();
+  const selection = selectBlindQuote(data.book, data.book.offers[0].offer.offerId);
+  const coordinatorStore = await CoordinatorStore.open(":memory:", { allowMemory: true });
+  const deployment = new AbortController();
+  const service = createTestRfqSelectionReservationService({
+    admissionPolicy,
+    capabilityVerifications: data.verifications,
+    coordinatorStore,
+    maximumPendingSelections: 4,
+    nowSeconds: () => NOW,
+    randomBytesImpl: () => Buffer.alloc(32, 133),
+    signal: deployment.signal,
+  });
+  const selectionLease = claimRfqSelectionReservationOwnership(service, deployment.signal);
+  const handoff = selectionLease.accept({
+    expiresAt: NOW + 45,
+    identityCommitment: id("selected-solver-finalization-identity").toLowerCase(),
+    requestNonce: "23",
+    selection,
+    user: user.address,
+  });
+  const firstPrompt = service.prepare({
+    authorizationExpiresAt: NOW + 40,
+    request: privateRequest,
+    reservationToken: handoff.reservationToken,
+  });
+  const firstSignature = await user.signTypedData(
+    firstPrompt.domain,
+    firstPrompt.types,
+    firstPrompt.message,
+  );
+  service.reserve({
+    authorization: firstPrompt.message,
+    request: privateRequest,
+    reservationToken: handoff.reservationToken,
+    signature: firstSignature,
+  });
+
+  const requesterKeys = generateKeyPairSync("ed25519");
+  const requesterDigest = solverEndpointPublicKeyDigest(pem(requesterKeys));
+  const solverInvoice = "lnbc1000n1treeswapselectedsolver";
+  let requests = 0;
+  let requestBody = null;
+  let providerFailure = null;
+  const client = createTestSelectedSolverFinalizationClient({
+    requesterPrivateKey: requesterKeys.privateKey,
+    signal: deployment.signal,
+    nowSeconds: () => NOW,
+    requestImpl: async (_url, options) => {
+      try {
+        requests += 1;
+        requestBody = requestBody ?? options.body;
+        assert.equal(options.body, requestBody);
+        const providerBinding = verifiedSolverQuoteBinding(data.verifications[0]);
+        const providerRequest = verifySelectedSolverFinalizationRequest({
+          request: JSON.parse(options.body),
+          authority: {
+            requesterPublicKeyDigest: requesterDigest,
+            capabilityDigest: providerBinding.capabilityDigest,
+            endpointPublicKeyDigest: providerBinding.endpointPublicKeyDigest,
+            solverId: providerBinding.solverId,
+            direction: providerBinding.direction,
+          },
+          now: NOW,
+        });
+        const offer = {
+          ...(await executableEnvelope(selection.selected.offer, 0)).offer,
+          invoiceDigest: invoiceDigest(solverInvoice),
+        };
+        const executable = {
+          offer,
+          signature: await solvers[0].signTypedData(
+            rfqDomain(privateRequest),
+            EXECUTABLE_RFQ_OFFER_TYPES,
+            offer,
+          ),
+        };
+        return jsonResponse(buildSignedSelectedSolverFinalizationResponse({
+          request: providerRequest,
+          invoice: solverInvoice,
+          envelope: executable,
+          servedAt: NOW,
+          expiresAt: NOW + 15,
+          endpointPrivateKey: endpointKeys[0].privateKey,
+        }));
+      } catch (error) {
+        providerFailure = error;
+        throw error;
+      }
+    },
+  });
+  const wrongLifecycle = new AbortController();
+  const wrongLifecycleClient = createTestSelectedSolverFinalizationClient({
+    requesterPrivateKey: requesterKeys.privateKey,
+    signal: wrongLifecycle.signal,
+    nowSeconds: () => NOW,
+    requestImpl: async () => { throw new Error("unreachable"); },
+  });
+  assert.throws(() => claimRfqSelectedSolverFinalizationOwnership(service, {
+    client: wrongLifecycleClient,
+    quotePolicy,
+    signal: deployment.signal,
+  }), /share one active deployment lifecycle/);
+  wrongLifecycle.abort();
+  const finalizationLease = claimRfqSelectedSolverFinalizationOwnership(service, {
+    client,
+    quotePolicy,
+    signal: deployment.signal,
+  });
+  t.after(() => {
+    deployment.abort();
+    try { coordinatorStore.close(); } catch {}
+  });
+
+  let secondPrompt;
+  try {
+    secondPrompt = await finalizationLease.finalize({
+      invoice: "",
+      request: privateRequest,
+      reservationToken: handoff.reservationToken,
+    });
+  } catch (error) {
+    throw providerFailure ?? error;
+  }
+  assert.equal(secondPrompt.primaryType, "UserExecutionAuthorization");
+  assert.equal(secondPrompt.invoice, solverInvoice);
+  assert.equal(secondPrompt.settlementAuthorization, true);
+  assert.equal(secondPrompt.movesFundsImmediately, false);
+  assert.equal(requests, 1);
+  assert.equal(service.status().executableQuotesFinalized, 1);
+  assert.equal(
+    coordinatorStore.getFirmOffer(selection.selected.offer.offerId).privateRequestDigest,
+    secondPrompt.message.requestDigest,
+  );
+
+  const secondSignature = await user.signTypedData(
+    secondPrompt.domain,
+    secondPrompt.types,
+    secondPrompt.message,
+  );
+  const ack = finalizationLease.authorize({
+    authorization: secondPrompt.message,
+    request: privateRequest,
+    reservationToken: handoff.reservationToken,
+    signature: secondSignature,
+  });
+  assert.equal(ack.status, "authorized");
+  assert.equal(ack.invoice, solverInvoice);
+  assert.equal(ack.paymentHash, id("private-payment-0"));
+  assert.equal(ack.settlementDispatchAuthority, false);
+  assert.equal(service.status().executionAuthorizationsCompleted, 1);
+  assert.equal(
+    coordinatorStore.getFirmOffer(selection.selected.offer.offerId).executionAuthorizationDigest,
+    secondPrompt.digest,
+  );
+  assert.deepEqual(await finalizationLease.finalize({
+    invoice: "",
+    request: privateRequest,
+    reservationToken: handoff.reservationToken,
+  }), ack);
+  assert.equal(requests, 1);
+  const copied = { ...finalizationLease };
+  await assert.rejects(() => copied.finalize({}), /lease lacks factory provenance/);
+});
+
+test("keeps the user's BIT-to-Lightning invoice fixed through selected-solver finalization", async (t) => {
+  const data = await collectedBlindBook({ pricingRequest: bitToLightningPricing });
+  const selection = selectBlindQuote(data.book, data.book.offers[0].offer.offerId);
+  const coordinatorStore = await CoordinatorStore.open(":memory:", { allowMemory: true });
+  const deployment = new AbortController();
+  const service = createTestRfqSelectionReservationService({
+    admissionPolicy,
+    capabilityVerifications: data.verifications,
+    coordinatorStore,
+    maximumPendingSelections: 4,
+    nowSeconds: () => NOW,
+    randomBytesImpl: () => Buffer.alloc(32, 134),
+    signal: deployment.signal,
+  });
+  const selectionLease = claimRfqSelectionReservationOwnership(service, deployment.signal);
+  const handoff = selectionLease.accept({
+    expiresAt: NOW + 45,
+    identityCommitment: id("selected-solver-bit-to-lightning-finalization").toLowerCase(),
+    requestNonce: "29",
+    selection,
+    user: user.address,
+  });
+  const firstPrompt = service.prepare({
+    authorizationExpiresAt: NOW + 40,
+    request: bitToLightningRequest,
+    reservationToken: handoff.reservationToken,
+  });
+  service.reserve({
+    authorization: firstPrompt.message,
+    request: bitToLightningRequest,
+    reservationToken: handoff.reservationToken,
+    signature: await user.signTypedData(firstPrompt.domain, firstPrompt.types, firstPrompt.message),
+  });
+
+  const requesterKeys = generateKeyPairSync("ed25519");
+  const requesterDigest = solverEndpointPublicKeyDigest(pem(requesterKeys));
+  const client = createTestSelectedSolverFinalizationClient({
+    requesterPrivateKey: requesterKeys.privateKey,
+    signal: deployment.signal,
+    nowSeconds: () => NOW,
+    requestImpl: async (_url, options) => {
+      const providerBinding = verifiedSolverQuoteBinding(data.verifications[0]);
+      const providerRequest = verifySelectedSolverFinalizationRequest({
+        request: JSON.parse(options.body),
+        authority: {
+          requesterPublicKeyDigest: requesterDigest,
+          capabilityDigest: providerBinding.capabilityDigest,
+          endpointPublicKeyDigest: providerBinding.endpointPublicKeyDigest,
+          solverId: providerBinding.solverId,
+          direction: providerBinding.direction,
+        },
+        now: NOW,
+      });
+      return jsonResponse(buildSignedSelectedSolverFinalizationResponse({
+        request: providerRequest,
+        invoice: userInvoice,
+        envelope: await executableEnvelope(selection.selected.offer, 0, { request: bitToLightningRequest }),
+        servedAt: NOW,
+        expiresAt: NOW + 15,
+        endpointPrivateKey: endpointKeys[0].privateKey,
+      }));
+    },
+  });
+  const finalizationLease = claimRfqSelectedSolverFinalizationOwnership(service, {
+    client,
+    quotePolicy,
+    signal: deployment.signal,
+  });
+  t.after(() => {
+    deployment.abort();
+    try { coordinatorStore.close(); } catch {}
+  });
+  const secondPrompt = await finalizationLease.finalize({
+    invoice: `lightning:${userInvoice.toUpperCase()}`,
+    request: bitToLightningRequest,
+    reservationToken: handoff.reservationToken,
+  });
+  assert.equal(secondPrompt.invoice, userInvoice);
+  assert.equal(secondPrompt.message.invoiceDigest, bitToLightningRequest.invoiceDigest);
+  assert.equal(secondPrompt.message.paymentHash, bitToLightningRequest.paymentHash);
+  const ack = finalizationLease.authorize({
+    authorization: secondPrompt.message,
+    request: bitToLightningRequest,
+    reservationToken: handoff.reservationToken,
+    signature: await user.signTypedData(secondPrompt.domain, secondPrompt.types, secondPrompt.message),
+  });
+  assert.equal(ack.direction, "bit-to-lightning");
+  assert.equal(ack.invoice, userInvoice);
+  assert.equal(ack.invoiceDigest, bitToLightningRequest.invoiceDigest);
+  assert.equal(ack.paymentHash, bitToLightningRequest.paymentHash);
 });
 
 test("composes quote ingress through the owned RFQ service and reviewed evidence", async (t) => {
