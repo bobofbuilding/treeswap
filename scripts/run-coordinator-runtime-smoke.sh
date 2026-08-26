@@ -12,7 +12,8 @@ docker run --rm --read-only \
   --entrypoint node \
   "$runtime_image" \
   --test --test-concurrency=1 \
-    tests/admission-store.test.mjs tests/coordinator-store.test.mjs tests/coordinator-service-state.test.mjs \
+    tests/admission-store.test.mjs tests/coordinator-store.test.mjs tests/rfq-finalization-restart-policy.test.mjs \
+    tests/coordinator-service-state.test.mjs \
     tests/coordinator-release-supervisor.test.mjs tests/coordinator-recovery-supervisor.test.mjs \
     tests/coordinator-recovery-job.test.mjs tests/coordinator-recovery-action-loop.test.mjs \
     tests/coordinator-active-execution-service.test.mjs tests/coordinator-active-operator-policy.test.mjs \

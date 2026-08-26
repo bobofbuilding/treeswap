@@ -99,9 +99,23 @@ function reservation(value, label, overrides = {}) {
 }
 
 function completeSelectedSettlement(store, firmOffer, label, proofDigest) {
+  const boundAt = firmOffer.reservedAt;
+  const executable = store.bindFirmOfferExecution({
+    offerId: firmOffer.offerId,
+    privateRequestDigest: hash(`private-request:${label}`),
+    executableOfferDigest: hash(`executable-offer:${label}`),
+    finalizedAt: boundAt,
+  });
+  store.bindFirmOfferUserAuthorization({
+    offerId: firmOffer.offerId,
+    executionBindingDigest: executable.executionBindingDigest,
+    executionAuthorizationDigest: hash(`execution-authorization:${label}`),
+    authorizationExpiresAt: firmOffer.selectionAuthorizationExpiresAt,
+    authorizedAt: boundAt,
+  });
   const settlement = {
     settlementId: hash(`settlement:${label}`),
-    pricingId: hash(`pricing:${label}`),
+    pricingId: firmOffer.requestId,
     direction: firmOffer.direction,
     nonceAuthorityDigest: hash(`nonce-authority:${label}`),
     intentNonce: String(100 + firmOffer.capacityEpoch),
@@ -113,7 +127,7 @@ function completeSelectedSettlement(store, firmOffer, label, proofDigest) {
     selectedSetDigest: hash(`selected-set:${label}`),
     selectedOfferId: firmOffer.offerId,
     capacityEpoch: firmOffer.capacityEpoch,
-    createdAt: NOW + 2,
+    createdAt: boundAt,
   };
   store.acceptSettlement(settlement);
   store.recordReservation({
@@ -123,7 +137,7 @@ function completeSelectedSettlement(store, firmOffer, label, proofDigest) {
     reservationBlockNumber: 20_000_000,
     reservationBlockHash: hash(`reservation-block:${label}`),
     reservationIntentDigest: settlement.intentDigest,
-    observedAt: NOW + 3,
+    observedAt: boundAt + 1,
   });
   const action = store.planAction({
     actionId: hash(`action:${label}`),
@@ -136,22 +150,22 @@ function completeSelectedSettlement(store, firmOffer, label, proofDigest) {
     invoiceDigest: settlement.invoiceDigest,
     amountSats: settlement.amountSats,
     capacityEpoch: settlement.capacityEpoch,
-    plannedAt: NOW + 4,
+    plannedAt: boundAt + 2,
   });
-  store.claimAction(action.actionId, NOW + 5);
+  store.claimAction(action.actionId, boundAt + 3);
   store.recordActionResult({
     actionId: action.actionId,
     outcome: "confirmed",
     resultDigest: hash(`action-result:${label}`),
     resultCode: firmOffer.direction === "bit-to-lightning" ? "SUCCEEDED" : "SETTLED",
-    recordedAt: NOW + 6,
+    recordedAt: boundAt + 4,
   });
   store.recordTerminal({
     settlementId: settlement.settlementId,
     terminalState: "COMPLETED",
     proofDigest,
     assetsReconciled: true,
-    recordedAt: NOW + 7,
+    recordedAt: boundAt + 5,
   });
 }
 

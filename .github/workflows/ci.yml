@@ -126,6 +126,7 @@ jobs:
       - run: node --check lib/invoice-policy.mjs
       - run: node --check scripts/verify-regtest-bolt11.mjs
       - run: node --check lib/rfq-selection-reservation.mjs
+      - run: node --check lib/rfq-finalization-restart-policy.mjs
       - run: node --check lib/rfq-private-ceremony.mjs
       - run: node --check lib/rfq-quote-ingress.mjs
       - run: node --check lib/solver-capacity-readers.mjs
