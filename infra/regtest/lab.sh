@@ -57,6 +57,34 @@ ensure_runtime_env() {
     node "$LAB_DIR/../../scripts/generate-lightning-coordinator-key.mjs" \
       "$STATE_DIR/alice-close-collector-b-private.pem" "$STATE_DIR/alice-close-collector-b-public.pem"
   fi
+  if [[ ! -f "$STATE_DIR/invoice-material-requester-private.pem" || ! -f "$STATE_DIR/invoice-material-requester-public.pem" ]]; then
+    node "$LAB_DIR/../../scripts/generate-lightning-coordinator-key.mjs" \
+      "$STATE_DIR/invoice-material-requester-private.pem" "$STATE_DIR/invoice-material-requester-public.pem"
+  fi
+  if [[ ! -f "$STATE_DIR/invoice-material-provider-private.pem" || ! -f "$STATE_DIR/invoice-material-provider-public.pem" ]]; then
+    node "$LAB_DIR/../../scripts/generate-lightning-coordinator-key.mjs" \
+      "$STATE_DIR/invoice-material-provider-private.pem" "$STATE_DIR/invoice-material-provider-public.pem"
+  fi
+  if [[ -f "$STATE_DIR/invoice-material-tls.key" && ! -f "$STATE_DIR/invoice-material-tls.cert" \
+      || ! -f "$STATE_DIR/invoice-material-tls.key" && -f "$STATE_DIR/invoice-material-tls.cert" ]]; then
+    echo "invoice-material TLS keypair is incomplete; inspect it before recovery" >&2
+    return 1
+  fi
+  if [[ ! -f "$STATE_DIR/invoice-material-tls.key" ]]; then
+    openssl req -x509 -newkey rsa:2048 -sha256 -nodes -days 3650 \
+      -subj "/CN=selected-solver-invoice-material-service" \
+      -addext "subjectAltName=DNS:selected-solver-invoice-material-service" \
+      -keyout "$STATE_DIR/invoice-material-tls.key" \
+      -out "$STATE_DIR/invoice-material-tls.cert" >/dev/null 2>&1
+  fi
+  chmod 600 \
+    "$STATE_DIR/invoice-material-requester-private.pem" \
+    "$STATE_DIR/invoice-material-provider-private.pem" \
+    "$STATE_DIR/invoice-material-tls.key"
+  chmod 644 \
+    "$STATE_DIR/invoice-material-requester-public.pem" \
+    "$STATE_DIR/invoice-material-provider-public.pem" \
+    "$STATE_DIR/invoice-material-tls.cert"
   if ! grep -q '^COORDINATOR_PRIVATE_KEY_PATH=' "$ENV_FILE"; then
     set_runtime_value COORDINATOR_PRIVATE_KEY_PATH "$STATE_DIR/coordinator-private.pem"
   fi
@@ -99,6 +127,28 @@ ensure_runtime_env() {
   if ! grep -q '^ALICE_CLOSE_COLLECTOR_B_PUBLIC_KEY_PATH=' "$ENV_FILE"; then
     set_runtime_value ALICE_CLOSE_COLLECTOR_B_PUBLIC_KEY_PATH "$STATE_DIR/alice-close-collector-b-public.pem"
   fi
+  if ! grep -q '^INVOICE_MATERIAL_REQUESTER_PRIVATE_KEY_PATH=' "$ENV_FILE"; then
+    set_runtime_value INVOICE_MATERIAL_REQUESTER_PRIVATE_KEY_PATH "$STATE_DIR/invoice-material-requester-private.pem"
+  fi
+  if ! grep -q '^INVOICE_MATERIAL_REQUESTER_PUBLIC_KEY_PATH=' "$ENV_FILE"; then
+    set_runtime_value INVOICE_MATERIAL_REQUESTER_PUBLIC_KEY_PATH "$STATE_DIR/invoice-material-requester-public.pem"
+  fi
+  if ! grep -q '^INVOICE_MATERIAL_PROVIDER_PRIVATE_KEY_PATH=' "$ENV_FILE"; then
+    set_runtime_value INVOICE_MATERIAL_PROVIDER_PRIVATE_KEY_PATH "$STATE_DIR/invoice-material-provider-private.pem"
+  fi
+  if ! grep -q '^INVOICE_MATERIAL_PROVIDER_PUBLIC_KEY_PATH=' "$ENV_FILE"; then
+    set_runtime_value INVOICE_MATERIAL_PROVIDER_PUBLIC_KEY_PATH "$STATE_DIR/invoice-material-provider-public.pem"
+  fi
+  if ! grep -q '^INVOICE_MATERIAL_TLS_PRIVATE_KEY_PATH=' "$ENV_FILE"; then
+    set_runtime_value INVOICE_MATERIAL_TLS_PRIVATE_KEY_PATH "$STATE_DIR/invoice-material-tls.key"
+  fi
+  if ! grep -q '^INVOICE_MATERIAL_TLS_CERTIFICATE_PATH=' "$ENV_FILE"; then
+    set_runtime_value INVOICE_MATERIAL_TLS_CERTIFICATE_PATH "$STATE_DIR/invoice-material-tls.cert"
+  fi
+  set_runtime_value INVOICE_MATERIAL_TLS_FINGERPRINT "$(
+    openssl x509 -in "$STATE_DIR/invoice-material-tls.cert" -noout -fingerprint -sha256 |
+      sed -E 's/^[^=]+=//'
+  )"
   if ! grep -q '^ALICE_CLOSE_NODE_COMMITMENT=' "$ENV_FILE"; then
     set_runtime_value ALICE_CLOSE_NODE_COMMITMENT 0x98f937e103e9f926ab650cb4743cffb2cadb32b3f25162a0e4b28e363e8b40c4
   fi
@@ -3194,8 +3244,27 @@ cleanup_selected_solver_material_invoices() {
     [[ -z "$payment_hash" ]] || compose exec -T bob lncli --network=regtest \
       cancelinvoice "$payment_hash" >/dev/null 2>&1 || true
   done < <(compose exec -T bob lncli --network=regtest listinvoices 2>/dev/null |
-    jq -r '.invoices[] | select(.memo == "treeswap-selected-solver-material-regtest")
+    jq -r '.invoices[] | select(
+        .memo == "treeswap-selected-solver-material-regtest"
+        or .memo == "treeswap-selected-solver-private-service-regtest"
+      )
       | select(.state == "OPEN" or .state == "ACCEPTED") | .r_hash')
+}
+
+wait_for_selected_solver_invoice_material_service() {
+  local state=""
+  for _ in $(seq 1 45); do
+    state=$(compose --profile private-service ps --format json \
+      selected-solver-invoice-material-service 2>/dev/null |
+      jq -r 'if type == "array" then .[0].Health else .Health end // empty' || true)
+    if [[ "$state" == "healthy" ]]; then
+      return 0
+    fi
+    sleep 1
+  done
+  compose --profile private-service logs --no-color selected-solver-invoice-material-service >&2
+  echo "selected-solver invoice-material private service did not become healthy" >&2
+  return 1
 }
 
 smoke_selected_solver_invoice_material() {
@@ -3220,6 +3289,83 @@ smoke_selected_solver_invoice_material() {
   unset payment_hash
   trap - EXIT
   echo "Selected-solver invoice-material smoke passed: one exact hold invoice recovered through the private service boundary; its credential could only add and look up, and cleanup used separate authority."
+}
+
+smoke_selected_solver_invoice_material_private_service() {
+  ensure_runtime_env
+  start_lab >/dev/null
+  local first_hash second_hash state service_container invoice_count
+  trap 'compose --profile private-service stop selected-solver-invoice-material-service >/dev/null 2>&1 || true; \
+    cleanup_selected_solver_material_invoices >/dev/null 2>&1 || true' EXIT
+  cleanup_selected_solver_material_invoices
+  compose --profile private-service stop selected-solver-invoice-material-service >/dev/null 2>&1 || true
+  compose --profile tools run --rm -T --user 0:0 --entrypoint /bin/sh \
+    prepare-selected-solver-invoice-material-state -ec \
+    'rm -f /provider/provider.sqlite /provider/provider.sqlite-wal /provider/provider.sqlite-shm /client/client.json /client/client.json.pending; chown 1000:1000 /provider /client; chmod 0700 /provider /client' >/dev/null
+  compose --profile tools run --rm export-selected-solver-invoice-material-provider-credential >/dev/null
+  compose --profile tools run --rm export-selected-solver-invoice-material-client-credential >/dev/null
+  compose --profile tools run --rm prepare-selected-solver-invoice-material-state >/dev/null
+  compose --profile private-service build selected-solver-invoice-material-service >/dev/null
+  compose --profile private-service up -d --force-recreate selected-solver-invoice-material-service >/dev/null
+  wait_for_selected_solver_invoice_material_service
+
+  compose --profile private-service exec -T selected-solver-invoice-material-service \
+    /bin/sh -ec 'test ! -e /run/treeswap/provider/requester-private.pem; test ! -e /run/treeswap/client; test ! -e /root/.lnd'
+  compose --profile tools run --rm -T --entrypoint /bin/sh \
+    selected-solver-invoice-material-private-smoke -ec \
+    'test ! -e /run/treeswap/provider/provider-private.pem; test ! -e /run/treeswap/lnd; test ! -e /run/treeswap/credentials; test ! -e /root/.lnd'
+
+  first_hash=$(INVOICE_MATERIAL_SMOKE_MODE=create compose --profile private-service --profile tools \
+    run --rm -T selected-solver-invoice-material-private-smoke)
+  if [[ ! "$first_hash" =~ ^0x[0-9a-f]{64}$ ]]; then
+    echo "private invoice-material client returned an invalid payment commitment" >&2
+    return 1
+  fi
+  invoice_count=$(compose exec -T bob lncli --network=regtest listinvoices |
+    jq --arg paymentHash "${first_hash#0x}" '[.invoices[] | select(
+      .memo == "treeswap-selected-solver-private-service-regtest"
+      and (.r_hash | ascii_downcase) == $paymentHash
+    )] | length')
+  if [[ "$invoice_count" != "1" ]]; then
+    echo "private invoice-material service did not create exactly one bound LND invoice" >&2
+    return 1
+  fi
+
+  service_container=$(compose --profile private-service ps -q selected-solver-invoice-material-service)
+  if [[ -z "$service_container" ]]; then
+    echo "private invoice-material service container identity is missing" >&2
+    return 1
+  fi
+  docker kill --signal=KILL "$service_container" >/dev/null
+  compose --profile private-service up -d selected-solver-invoice-material-service >/dev/null
+  wait_for_selected_solver_invoice_material_service
+  second_hash=$(INVOICE_MATERIAL_SMOKE_MODE=recover compose --profile private-service --profile tools \
+    run --rm -T selected-solver-invoice-material-private-smoke)
+  if [[ "$second_hash" != "$first_hash" ]]; then
+    echo "private invoice-material restart changed the exact signed response" >&2
+    return 1
+  fi
+  invoice_count=$(compose exec -T bob lncli --network=regtest listinvoices |
+    jq --arg paymentHash "${first_hash#0x}" '[.invoices[] | select(
+      .memo == "treeswap-selected-solver-private-service-regtest"
+      and (.r_hash | ascii_downcase) == $paymentHash
+    )] | length')
+  if [[ "$invoice_count" != "1" ]]; then
+    echo "private invoice-material restart created a second LND liability" >&2
+    return 1
+  fi
+
+  compose exec -T bob lncli --network=regtest cancelinvoice "${first_hash#0x}" >/dev/null
+  state=$(compose exec -T bob lncli --network=regtest lookupinvoice "${first_hash#0x}" |
+    jq -er '.state')
+  if [[ "$state" != "CANCELED" ]]; then
+    echo "private invoice-material cleanup did not reach CANCELED" >&2
+    return 1
+  fi
+  compose --profile private-service stop selected-solver-invoice-material-service >/dev/null
+  unset first_hash second_hash service_container
+  trap - EXIT
+  echo "Selected-solver private invoice-material service passed: pinned TLS and two Ed25519 identities authenticated one exact LND hold invoice, SIGKILL restart replayed the byte-identical durable response, separated mounts exposed no opposite-side secrets, and cleanup required separate authority."
 }
 
 verify_local_lnd_node_signature() {
@@ -3363,12 +3509,12 @@ status_lab() {
 
 stop_lab() {
   ensure_runtime_env
-  compose --profile adapter --profile tools down
+  compose --profile adapter --profile tools --profile private-service down
 }
 
 destroy_lab() {
   ensure_runtime_env
-  compose --profile adapter --profile tools down --volumes
+  compose --profile adapter --profile tools --profile private-service down --volumes
   echo "Regtest containers and Docker volumes removed. Runtime credentials remain in $ENV_FILE."
 }
 
@@ -3394,13 +3540,14 @@ case "${1:-}" in
   coordinator-smoke) smoke_coordinator_reconciliation ;;
   coordinator-invoice-smoke) smoke_coordinator_invoice_reconciliation ;;
   selected-solver-invoice-smoke) smoke_selected_solver_invoice_material ;;
+  selected-solver-invoice-private-service-smoke) smoke_selected_solver_invoice_material_private_service ;;
   solver-node-proof-smoke) smoke_solver_node_proof ;;
   solver-capacity-smoke) smoke_solver_capacity_readers ;;
   status) status_lab ;;
   down) stop_lab ;;
   destroy) destroy_lab ;;
   *)
-    echo "Usage: $0 {up|smoke|adapter-smoke|credential-smoke|credential-rotation-smoke|tls-rotation-smoke|invoice-fault-smoke|policy-fault-smoke|directional-capacity-smoke|daily-cap-smoke|stateless-init-smoke|production-duration-smoke|stale-chain-smoke|unsynced-chain-smoke|force-close-smoke|route-fault-smoke|htlc-cutoff-smoke|cross-chain-deadline-smoke|coordinator-smoke|coordinator-invoice-smoke|selected-solver-invoice-smoke|solver-node-proof-smoke|solver-capacity-smoke|status|down|destroy}" >&2
+    echo "Usage: $0 {up|smoke|adapter-smoke|credential-smoke|credential-rotation-smoke|tls-rotation-smoke|invoice-fault-smoke|policy-fault-smoke|directional-capacity-smoke|daily-cap-smoke|stateless-init-smoke|production-duration-smoke|stale-chain-smoke|unsynced-chain-smoke|force-close-smoke|route-fault-smoke|htlc-cutoff-smoke|cross-chain-deadline-smoke|coordinator-smoke|coordinator-invoice-smoke|selected-solver-invoice-smoke|selected-solver-invoice-private-service-smoke|solver-node-proof-smoke|solver-capacity-smoke|status|down|destroy}" >&2
     exit 2
     ;;
 esac

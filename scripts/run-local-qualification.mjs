@@ -171,6 +171,7 @@ const campaigns = [
   ["lightning:route-and-duplicate-faults", "npm", ["run", "regtest:route-fault-smoke"]],
   ["lightning:htlc-cutoff", "npm", ["run", "regtest:htlc-cutoff-smoke"]],
   ["lightning:selected-solver-invoice-material", "npm", ["run", "regtest:selected-solver-invoice-smoke"]],
+  ["lightning:selected-solver-invoice-private-service", "npm", ["run", "regtest:selected-solver-invoice-private-service-smoke"]],
   ["cross-chain:deadline-ordering", "npm", ["run", "test:cross-chain-deadlines"]],
   ["solver:lightning-node-proof", "npm", ["run", "regtest:solver-node-proof-smoke"]],
   ["solver:capacity-readers", "npm", ["run", "regtest:solver-capacity-smoke"]],

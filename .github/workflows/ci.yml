@@ -50,9 +50,15 @@ jobs:
       - run: bash -n infra/regtest/lab.sh
       - run: node --check lib/lnd-rest-client.mjs
       - run: node --check lib/selected-solver-invoice-material.mjs
+      - run: node --check lib/selected-solver-invoice-material-transport.mjs
+      - run: node --check lib/selected-solver-invoice-material-provider.mjs
+      - run: node --check lib/selected-solver-invoice-material-finalizer.mjs
       - run: node --check infra/lightning-adapter/server.mjs
       - run: node --check infra/lightning-adapter/client.mjs
       - run: node --check infra/selected-solver-invoice-material/smoke.mjs
+      - run: node --check infra/selected-solver-invoice-material/service.mjs
+      - run: node --check infra/selected-solver-invoice-material/healthcheck.mjs
+      - run: node --check infra/selected-solver-invoice-material/private-service-smoke.mjs
       - run: docker build --file infra/lightning-adapter/Dockerfile --tag treeswap/lightning-adapter:${{ github.sha }} .
       - run: docker build --file infra/selected-solver-invoice-material/Dockerfile --tag treeswap/selected-solver-invoice-material:${{ github.sha }} .
 

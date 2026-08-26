@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { generateKeyPairSync, sign } from "node:crypto";
+import { createSecretKey, generateKeyPairSync, sign } from "node:crypto";
 import { lstat, mkdtemp, readdir, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,7 +8,7 @@ import { once } from "node:events";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { id, Wallet } from "ethers";
-import { invoiceDigest } from "../lib/lnd-rest-client.mjs";
+import { invoiceDigest, LndRestError } from "../lib/lnd-rest-client.mjs";
 import {
   SelectedSolverFinalizationProviderStore,
   createSelectedSolverFinalizationProviderFinalizer,
@@ -20,6 +20,22 @@ import {
 import {
   createTestSelectedSolverFinalizationClient,
 } from "../lib/selected-solver-finalization-transport.mjs";
+import {
+  createTestSelectedSolverInvoiceMaterialNode,
+  createTestSelectedSolverInvoiceMaterialService,
+} from "../lib/selected-solver-invoice-material.mjs";
+import {
+  SelectedSolverInvoiceMaterialProviderStore,
+  createTestSelectedSolverInvoiceMaterialProviderRoute,
+} from "../lib/selected-solver-invoice-material-provider.mjs";
+import {
+  createSelectedSolverExecutableOfferBuilder,
+  createSelectedSolverInvoiceMaterialBackedFinalizer,
+  isSelectedSolverInvoiceMaterialBackedFinalizer,
+} from "../lib/selected-solver-invoice-material-finalizer.mjs";
+import {
+  createTestSelectedSolverInvoiceMaterialClient,
+} from "../lib/selected-solver-invoice-material-transport.mjs";
 import {
   SOLVER_CAPABILITY_TYPES,
   solverCapabilityClaimsDigest,
@@ -625,4 +641,230 @@ test("fails closed on copied provenance, clock rollback, malformed HTTP, and exp
   assert.throws(() => store.status({ now: NOW }), /clock regressed/);
   later += 1;
   assert.equal(expiredProvider.status().expiredRequestsAwaitingCleanup, 0);
+});
+
+test("composes Lightning-to-BIT finalization through the authenticated private invoice-material client only", async (t) => {
+  const fixture = await signedRequest("lightning-to-bit");
+  const publicStore = await memoryStore();
+  const materialStore = await SelectedSolverInvoiceMaterialProviderStore.open({
+    path: ":memory:",
+    allowMemory: true,
+    initialize: true,
+    maximumLiveRequests: 8,
+  });
+  t.after(() => publicStore.close());
+  t.after(() => materialStore.close());
+  const materialRequester = generateKeyPairSync("ed25519");
+  const materialProvider = generateKeyPairSync("ed25519");
+  const materialOrigin = "https://invoice-material.internal";
+  const materialInvoices = new Map();
+  let addCalls = 0;
+  let lookupCalls = 0;
+  const materialNode = createTestSelectedSolverInvoiceMaterialNode({
+    lookupInvoice: async (paymentHash) => {
+      lookupCalls += 1;
+      const invoice = materialInvoices.get(paymentHash);
+      if (!invoice) {
+        throw new LndRestError("invoice not found", {
+          httpStatus: 404,
+          grpcCode: 5,
+          ambiguous: false,
+          reason: "invoice-not-found",
+        });
+      }
+      return invoice;
+    },
+    addHoldInvoice: async (input) => {
+      addCalls += 1;
+      const invoice = {
+        r_hash: Buffer.from(input.paymentHash.slice(2), "hex").toString("base64"),
+        r_preimage: Buffer.alloc(32).toString("base64"),
+        payment_request: `lnbcrt1composed${input.paymentHash.slice(2)}`,
+        payment_addr: Buffer.alloc(32, 0x71).toString("base64"),
+        value: input.amountSats,
+        expiry: "3600",
+        cltv_expiry: "80",
+        memo: "TreeSwap composed selected solver invoice",
+        state: "OPEN",
+        private: false,
+        is_amp: false,
+        is_keysend: false,
+        is_blinded: false,
+        settled: false,
+        add_index: "1",
+      };
+      materialInvoices.set(input.paymentHash, invoice);
+      return { payment_request: invoice.payment_request, add_index: invoice.add_index };
+    },
+  });
+  const lifecycle = new AbortController();
+  const materialService = createTestSelectedSolverInvoiceMaterialService({
+    invoiceNode: materialNode,
+    memo: "TreeSwap composed selected solver invoice",
+    paymentSecretKey: createSecretKey(Buffer.alloc(32, 0x72)),
+    paymentSecretKeyId: "composed-payment-secret-1",
+    policy: {
+      addTimeoutMs: 1_000,
+      lookupTimeoutMs: 500,
+      invoiceExpirySeconds: 3_600,
+      cltvExpiry: 80,
+      maximumInvoiceBytes: 4_096,
+    },
+  });
+  const materialRoute = createTestSelectedSolverInvoiceMaterialProviderRoute({
+    store: materialStore,
+    invoiceService: materialService,
+    providerOrigin: materialOrigin,
+    requesterPublicKey: materialRequester.publicKey,
+    expectedRequesterKeyId: "composed-public-provider-1",
+    providerPrivateKey: materialProvider.privateKey,
+    providerKeyId: "composed-material-provider-1",
+    paymentSecretKeyId: "composed-payment-secret-1",
+    maximumRequestBytes: 16_384,
+    maxClockSkewSeconds: 5,
+    requestTimeoutMs: 1_000,
+    recoveryLeaseSeconds: 2,
+    responseTtlSeconds: 10,
+    nowSeconds: () => NOW,
+    signal: lifecycle.signal,
+  });
+  const materialClient = createTestSelectedSolverInvoiceMaterialClient({
+    endpointOrigin: materialOrigin,
+    requesterPrivateKey: materialRequester.privateKey,
+    requesterKeyId: "composed-public-provider-1",
+    providerPublicKey: materialProvider.publicKey,
+    providerKeyId: "composed-material-provider-1",
+    paymentSecretKeyId: "composed-payment-secret-1",
+    requestTtlSeconds: 10,
+    timeoutMs: 1_000,
+    signal: lifecycle.signal,
+    nowSeconds: () => NOW,
+    requestImpl: (endpoint, options) => materialRoute.handle(new Request(endpoint, options)),
+  });
+  let builderMaterial;
+  const builder = createSelectedSolverExecutableOfferBuilder({
+    load: async ({ request }) => ({
+      selectedOfferId: request.disclosure.selectedOfferId,
+      lightningAmountSats: "400",
+    }),
+    build: async ({ request, invoiceMaterial, selectedOffer }) => {
+      builderMaterial = invoiceMaterial;
+      assert.equal(selectedOffer.lightningAmountSats, "400");
+      assert.equal("preimage" in invoiceMaterial, false);
+      assert.equal("lndClient" in invoiceMaterial, false);
+      assert.equal("paymentSecretKey" in invoiceMaterial, false);
+      return {
+        envelope: {
+          offer: {
+            offerId: request.disclosure.selectedOfferId,
+            requestId: request.disclosure.requestId,
+            solver: request.disclosure.selectedSolver,
+            capabilityDigest: request.capabilityDigest,
+            capacitySnapshotDigest: request.capacitySnapshotDigest,
+            lightningAmountSats: selectedOffer.lightningAmountSats,
+            paymentHash: invoiceMaterial.paymentHash,
+            invoiceDigest: invoiceMaterial.invoiceDigest,
+            expiresAt: NOW + 10,
+          },
+          signature: `0x${"42".repeat(65)}`,
+        },
+        expiresAt: NOW + 10,
+      };
+    },
+  });
+  const finalizer = createSelectedSolverInvoiceMaterialBackedFinalizer({
+    invoiceMaterialClient: materialClient,
+    executableBuilder: builder,
+    signal: lifecycle.signal,
+  });
+  assert.equal(isSelectedSolverInvoiceMaterialBackedFinalizer(finalizer), true);
+  assert.equal(isSelectedSolverInvoiceMaterialBackedFinalizer({ ...finalizer }), false);
+  assert.equal(builder.status().receivesLndCredential, false);
+  assert.equal(builder.status().receivesPaymentSecretKey, false);
+  assert.equal(builder.status().receivesPreimage, false);
+  const publicRoute = await route({
+    request: fixture.request,
+    store: publicStore,
+    finalizer,
+  });
+  const response = await publicRoute.handle(webRequest(fixture.request));
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.invoice, builderMaterial.invoice);
+  assert.equal(body.envelope.offer.paymentHash, builderMaterial.paymentHash);
+  assert.equal(body.envelope.offer.invoiceDigest, builderMaterial.invoiceDigest);
+  assert.equal(addCalls, 1);
+  assert.equal(lookupCalls, 2);
+  assert.equal((await publicRoute.handle(webRequest(fixture.request))).status, 200);
+  assert.equal(addCalls, 1);
+  assert.equal(lookupCalls, 2);
+  lifecycle.abort();
+});
+
+test("BIT-to-Lightning composition preserves the user invoice without contacting invoice material", async (t) => {
+  const fixture = await signedRequest("bit-to-lightning");
+  const publicStore = await memoryStore();
+  t.after(() => publicStore.close());
+  const lifecycle = new AbortController();
+  const materialRequester = generateKeyPairSync("ed25519");
+  const materialProvider = generateKeyPairSync("ed25519");
+  let materialCalls = 0;
+  const materialClient = createTestSelectedSolverInvoiceMaterialClient({
+    endpointOrigin: "https://unused-invoice-material.internal",
+    requesterPrivateKey: materialRequester.privateKey,
+    requesterKeyId: "unused-public-provider-1",
+    providerPublicKey: materialProvider.publicKey,
+    providerKeyId: "unused-material-provider-1",
+    paymentSecretKeyId: "unused-payment-secret-1",
+    requestTtlSeconds: 10,
+    timeoutMs: 1_000,
+    signal: lifecycle.signal,
+    nowSeconds: () => NOW,
+    requestImpl: async () => {
+      materialCalls += 1;
+      throw new Error("BIT-to-Lightning must not request invoice material");
+    },
+  });
+  let observedMaterial = "not-called";
+  const builder = createSelectedSolverExecutableOfferBuilder({
+    load: async ({ request }) => ({
+      selectedOfferId: request.disclosure.selectedOfferId,
+      lightningAmountSats: request.disclosure.exactLightningOutputSats,
+    }),
+    build: async ({ request, invoiceMaterial, selectedOffer }) => {
+      observedMaterial = invoiceMaterial;
+      return {
+        envelope: {
+          offer: {
+            offerId: request.disclosure.selectedOfferId,
+            requestId: request.disclosure.requestId,
+            solver: request.disclosure.selectedSolver,
+            capabilityDigest: request.capabilityDigest,
+            capacitySnapshotDigest: request.capacitySnapshotDigest,
+            lightningAmountSats: selectedOffer.lightningAmountSats,
+            paymentHash: request.disclosure.paymentHash,
+            invoiceDigest: request.disclosure.invoiceDigest,
+            expiresAt: NOW + 10,
+          },
+          signature: `0x${"43".repeat(65)}`,
+        },
+        expiresAt: NOW + 10,
+      };
+    },
+  });
+  const finalizer = createSelectedSolverInvoiceMaterialBackedFinalizer({
+    invoiceMaterialClient: materialClient,
+    executableBuilder: builder,
+    signal: lifecycle.signal,
+  });
+  const publicRoute = await route({ request: fixture.request, store: publicStore, finalizer });
+  const response = await publicRoute.handle(webRequest(fixture.request));
+  assert.equal(response.status, 200);
+  const body = await response.json();
+  assert.equal(body.invoice, fixture.request.disclosure.invoice);
+  assert.equal(body.envelope.offer.invoiceDigest, fixture.request.disclosure.invoiceDigest);
+  assert.equal(observedMaterial, null);
+  assert.equal(materialCalls, 0);
+  lifecycle.abort();
+  assert.equal(materialClient.status().state, "stopped");
 });
