@@ -83,6 +83,11 @@ import {
   claimRfqSelectionReservationOwnership,
 } from "../lib/rfq-selection-reservation.mjs";
 import {
+  createRfqPrivateCeremonyRoute,
+  createTestRfqPrivateCeremonyRoute,
+  isRfqPrivateCeremonyRoute,
+} from "../lib/rfq-private-ceremony.mjs";
+import {
   isProductionRfqDeliveryService,
   isRfqDeliveryService,
   startRfqDeliveryService,
@@ -114,6 +119,15 @@ const LIGHTNING_TO_BIT_CODE_HASH = id("delivery-lightning-to-bit-runtime");
 const BIT_TO_LIGHTNING_CODE_HASH = id("delivery-bit-to-lightning-runtime");
 const QUOTE_API_ORIGIN = "https://quotes.treeswap.example";
 const QUOTE_CLIENT_ORIGIN = "https://app.treeswap.example";
+const CEREMONY_API_ORIGIN = "https://authorize.treeswap.example";
+const privateCeremonyPolicy = Object.freeze({
+  apiOrigin: CEREMONY_API_ORIGIN,
+  clientOrigin: QUOTE_CLIENT_ORIGIN,
+  maximumInFlightRequests: 16,
+  maximumProcessingMilliseconds: 5_000,
+  maximumRequestBytes: 32_768,
+  maximumResponseBytes: 262_144,
+});
 const solvers = [
   new Wallet(`0x${"31".repeat(32)}`),
   new Wallet(`0x${"32".repeat(32)}`),
@@ -743,6 +757,28 @@ function quoteIngressRequest(path, value, overrides = {}) {
   });
 }
 
+function privateCeremonyRequest(path, value, overrides = {}) {
+  const body = Buffer.isBuffer(value) || value instanceof Uint8Array
+    ? Buffer.from(value)
+    : Buffer.from(typeof value === "string"
+      ? value
+      : JSON.stringify(value, (_key, item) => typeof item === "bigint" ? item.toString() : item), "utf8");
+  const headers = new Headers({
+    "cache-control": "no-store",
+    "content-length": String(body.length),
+    "content-type": "application/json",
+    origin: QUOTE_CLIENT_ORIGIN,
+    ...overrides.headers,
+  });
+  if (overrides.omitContentLength) headers.delete("content-length");
+  return new Request(`${overrides.origin ?? CEREMONY_API_ORIGIN}${path}`, {
+    method: overrides.method ?? "POST",
+    headers,
+    body: overrides.method === "GET" || overrides.method === "OPTIONS" ? undefined : body,
+    signal: overrides.signal,
+  });
+}
+
 async function quoteIngressFixture(t, {
   nowSeconds = () => NOW,
   policy = quoteIngressPolicy,
@@ -1191,6 +1227,291 @@ test("authenticates quote ingress, exposes only opaque competition, and consumes
     signingAuthority: false,
     networkListener: false,
   });
+});
+
+test("serves the private selection ceremony without logging or inheriting reservation authority", async (t) => {
+  const data = await quoteIngressFixture(t);
+  const ceremony = createTestRfqPrivateCeremonyRoute({
+    policy: privateCeremonyPolicy,
+    selectionReservation: data.selectionReservation,
+    signal: data.deployment.signal,
+  });
+  t.after(() => { try { ceremony.stop(); } catch {} });
+  assert.equal(isRfqPrivateCeremonyRoute(ceremony), true);
+
+  const quoteResponse = await data.route.handle(quoteIngressRequest(
+    "/v1/quotes",
+    await signedQuoteIngressBody(),
+  ));
+  const quotePayload = await quoteResponse.json();
+  const selectionResponse = await data.route.handle(quoteIngressRequest("/v1/quotes/select", {
+    choiceId: quotePayload.preview.offers[0].choiceId,
+    sessionToken: quotePayload.sessionToken,
+  }));
+  const selection = await selectionResponse.json();
+  const preparationBody = {
+    authorizationExpiresAt: NOW + 30,
+    request: privateRequest,
+    reservationToken: selection.reservationToken,
+  };
+  assert.throws(
+    () => data.selectionReservation.prepare(preparationBody),
+    /ceremony is route-owned/,
+  );
+  assert.throws(
+    () => data.selectionReservation.stop(),
+    /lifecycle is route-owned/,
+  );
+
+  const preparedResponse = await ceremony.handle(privateCeremonyRequest(
+    "/v1/selection/prepare",
+    preparationBody,
+  ));
+  assert.equal(preparedResponse.status, 200);
+  assert.equal(preparedResponse.headers.get("cache-control"), "no-store, max-age=0");
+  assert.equal(preparedResponse.headers.get("pragma"), "no-cache");
+  assert.equal(preparedResponse.headers.get("referrer-policy"), "no-referrer");
+  assert.equal(preparedResponse.headers.get("access-control-allow-origin"), QUOTE_CLIENT_ORIGIN);
+  assert.equal(preparedResponse.headers.get("access-control-allow-credentials"), null);
+  const signingPayload = await preparedResponse.json();
+  assert.equal(signingPayload.schema, "treeswap.selection-reservation-signing-payload.v1");
+  assert.equal(signingPayload.message.selectedSolver, data.book.offers[0].offer.solver);
+  assert.equal(JSON.stringify(signingPayload).includes(data.book.offers[0].signature), false);
+
+  const wrongSignature = await Wallet.createRandom().signTypedData(
+    signingPayload.domain,
+    signingPayload.types,
+    signingPayload.message,
+  );
+  const wrongResponse = await ceremony.handle(privateCeremonyRequest(
+    "/v1/selection/reserve",
+    {
+      authorization: signingPayload.message,
+      request: privateRequest,
+      reservationToken: selection.reservationToken,
+      signature: wrongSignature,
+    },
+  ));
+  assert.equal(wrongResponse.status, 400);
+  const wrongWire = await wrongResponse.text();
+  assert.equal(wrongWire.includes(selection.reservationToken), false);
+  assert.equal(wrongWire.toLowerCase().includes(privateRequest.user.toLowerCase()), false);
+  assert.equal(data.coordinatorStore.getFirmOffer(data.book.offers[0].offer.offerId), null);
+
+  const signature = await user.signTypedData(
+    signingPayload.domain,
+    signingPayload.types,
+    signingPayload.message,
+  );
+  const confirmationBody = {
+    authorization: signingPayload.message,
+    request: privateRequest,
+    reservationToken: selection.reservationToken,
+    signature,
+  };
+  const confirmed = await ceremony.handle(privateCeremonyRequest(
+    "/v1/selection/reserve",
+    confirmationBody,
+  ));
+  assert.equal(confirmed.status, 200);
+  assert.deepEqual(await confirmed.json(), {
+    schema: "treeswap.selection-reservation-ack.v1",
+    status: "reserved",
+    expiresAt: NOW + 30,
+    privateExecutionRequired: true,
+    fundingAuthorization: false,
+    settlementAuthorization: false,
+  });
+  assert.equal(data.coordinatorStore.getFirmOffer(data.book.offers[0].offer.offerId).state, "ACTIVE");
+  const replay = await ceremony.handle(privateCeremonyRequest(
+    "/v1/selection/reserve",
+    confirmationBody,
+  ));
+  assert.equal(replay.status, 200);
+
+  const status = ceremony.status();
+  assert.deepEqual(status, {
+    schema: "treeswap.rfq-private-ceremony-status.v1",
+    state: "active",
+    mode: "injected-test",
+    requestsStarted: 4,
+    requestsCompleted: 3,
+    requestsRejected: 1,
+    requestsInFlight: 0,
+    signingPayloadsPrepared: 1,
+    reservationsCompleted: 2,
+    bearerTokensInStatus: false,
+    privateTermsInStatus: false,
+    networkListener: false,
+    signingAuthority: false,
+    fundingAuthorization: false,
+    settlementAuthorization: false,
+  });
+  const statusWire = JSON.stringify(status).toLowerCase();
+  for (const secret of [
+    selection.reservationToken,
+    privateRequest.requestId,
+    privateRequest.user,
+    privateRequest.beneficiary,
+    signingPayload.message.selectedSolver,
+    signature,
+  ]) assert.equal(statusWire.includes(secret.toLowerCase()), false);
+  assert.throws(() => createTestRfqPrivateCeremonyRoute({
+    policy: privateCeremonyPolicy,
+    selectionReservation: data.selectionReservation,
+    signal: data.deployment.signal,
+  }), /already route-bound/);
+  const copied = { ...ceremony };
+  await assert.rejects(
+    copied.handle(privateCeremonyRequest("/v1/selection/prepare", preparationBody)),
+    /factory provenance/,
+  );
+  const extracted = ceremony.handle;
+  await assert.rejects(
+    extracted(privateCeremonyRequest("/v1/selection/prepare", preparationBody)),
+    /factory provenance/,
+  );
+});
+
+test("fails the private ceremony closed on origins, headers, framing, fields, and preflight", async (t) => {
+  const data = await quoteIngressFixture(t);
+  const ceremony = createTestRfqPrivateCeremonyRoute({
+    policy: privateCeremonyPolicy,
+    selectionReservation: data.selectionReservation,
+    signal: data.deployment.signal,
+  });
+  t.after(() => { try { ceremony.stop(); } catch {} });
+  const preparation = {
+    authorizationExpiresAt: NOW + 30,
+    request: privateRequest,
+    reservationToken: id("unavailable-private-ceremony-token").toLowerCase(),
+  };
+
+  const preflight = await ceremony.handle(new Request(
+    `${CEREMONY_API_ORIGIN}/v1/selection/prepare`,
+    {
+      method: "OPTIONS",
+      headers: {
+        "access-control-request-headers": "Content-Type, Cache-Control",
+        "access-control-request-method": "POST",
+        origin: QUOTE_CLIENT_ORIGIN,
+      },
+    },
+  ));
+  assert.equal(preflight.status, 204);
+  assert.equal(preflight.headers.get("access-control-allow-headers"), "cache-control, content-type");
+  assert.equal(preflight.headers.get("access-control-max-age"), "0");
+
+  for (const request of [
+    privateCeremonyRequest("/v1/selection/prepare", preparation, {
+      origin: "https://other-api.treeswap.example",
+    }),
+    privateCeremonyRequest("/v1/selection/prepare?token=secret", preparation),
+    privateCeremonyRequest("/v1/selection/prepare", preparation, {
+      headers: { origin: "https://evil.example" },
+    }),
+    privateCeremonyRequest("/v1/selection/prepare", preparation, {
+      headers: { authorization: "Bearer leaked" },
+    }),
+    privateCeremonyRequest("/v1/selection/prepare", preparation, {
+      headers: { cookie: "reservation=leaked" },
+    }),
+    privateCeremonyRequest("/v1/selection/prepare", preparation, {
+      headers: { "cache-control": "" },
+    }),
+    privateCeremonyRequest("/v1/selection/prepare", { ...preparation, extra: true }),
+    privateCeremonyRequest("/v1/selection/prepare", Buffer.alloc(32_769, 1)),
+    privateCeremonyRequest("/v1/selection/prepare", preparation, { method: "GET" }),
+  ]) {
+    const response = await ceremony.handle(request);
+    assert.equal(response.status, 400);
+    const wire = await response.text();
+    assert.equal(wire.includes(preparation.reservationToken), false);
+    assert.equal(wire.includes("Bearer leaked"), false);
+  }
+
+  const invalidPreflight = await ceremony.handle(new Request(
+    `${CEREMONY_API_ORIGIN}/v1/selection/prepare`,
+    {
+      method: "OPTIONS",
+      headers: {
+        "access-control-request-headers": "Content-Type, Authorization",
+        "access-control-request-method": "POST",
+        origin: QUOTE_CLIENT_ORIGIN,
+      },
+    },
+  ));
+  assert.equal(invalidPreflight.status, 400);
+  assert.equal(invalidPreflight.headers.get("access-control-allow-credentials"), null);
+  const privateNetworkPreflight = await ceremony.handle(new Request(
+    `${CEREMONY_API_ORIGIN}/v1/selection/prepare`,
+    {
+      method: "OPTIONS",
+      headers: {
+        "access-control-request-headers": "Content-Type, Cache-Control",
+        "access-control-request-method": "POST",
+        "access-control-request-private-network": "true",
+        origin: QUOTE_CLIENT_ORIGIN,
+      },
+    },
+  ));
+  assert.equal(privateNetworkPreflight.status, 400);
+});
+
+test("bounds stalled private-ceremony bodies and shares deployment shutdown", async (t) => {
+  const data = await quoteIngressFixture(t);
+  const ceremony = createTestRfqPrivateCeremonyRoute({
+    policy: {
+      ...privateCeremonyPolicy,
+      maximumInFlightRequests: 1,
+      maximumProcessingMilliseconds: 250,
+    },
+    selectionReservation: data.selectionReservation,
+    signal: data.deployment.signal,
+  });
+  t.after(() => { try { ceremony.stop(); } catch {} });
+  let cancelled = false;
+  const neverEndingBody = new ReadableStream({
+    start() {},
+    cancel() { cancelled = true; },
+  });
+  const request = new Request(`${CEREMONY_API_ORIGIN}/v1/selection/prepare`, {
+    method: "POST",
+    headers: {
+      "cache-control": "no-store",
+      "content-length": "10",
+      "content-type": "application/json",
+      origin: QUOTE_CLIENT_ORIGIN,
+    },
+    body: neverEndingBody,
+    duplex: "half",
+  });
+  const startedAt = Date.now();
+  const stalled = ceremony.handle(request);
+  assert.equal((await ceremony.handle(privateCeremonyRequest(
+    "/v1/selection/prepare",
+    {
+      authorizationExpiresAt: NOW + 30,
+      request: privateRequest,
+      reservationToken: id("saturated-private-ceremony-token").toLowerCase(),
+    },
+  ))).status, 400);
+  assert.equal(cancelled, false);
+  assert.equal((await stalled).status, 400);
+  assert.ok(Date.now() - startedAt < 2_000);
+  assert.equal(cancelled, true);
+  assert.equal(ceremony.status().requestsInFlight, 0);
+  data.deployment.abort();
+  assert.equal(ceremony.status().state, "stopped");
+  assert.equal(data.selectionReservation.status().state, "stopped");
+  assert.equal((await ceremony.handle(privateCeremonyRequest(
+    "/v1/selection/prepare",
+    {
+      authorizationExpiresAt: NOW + 30,
+      request: privateRequest,
+      reservationToken: id("stopped-private-ceremony-token").toLowerCase(),
+    },
+  ))).status, 400);
 });
 
 test("hands one original selection into user-authorized durable reservation without bearer-token griefing", async (t) => {
@@ -1697,6 +2018,71 @@ test("keeps quote ingress factories, execution modes, and methods provenance-bou
     selectionReservation: productionSelectionReservation,
     signal: deployment.signal,
   }), /matching factory-created quote reader/);
+  assert.throws(() => createRfqPrivateCeremonyRoute({
+    policy: privateCeremonyPolicy,
+    selectionReservation: testSelectionReservation,
+    signal: deployment.signal,
+  }), /matching factory-created reservation service/);
+  assert.throws(() => createTestRfqPrivateCeremonyRoute({
+    policy: privateCeremonyPolicy,
+    selectionReservation: productionSelectionReservation,
+    signal: deployment.signal,
+  }), /matching factory-created reservation service/);
+  assert.throws(() => createRfqPrivateCeremonyRoute({
+    policy: privateCeremonyPolicy,
+    selectionReservation: productionSelectionReservation,
+    signal: new AbortController().signal,
+  }), /share one deployment lifecycle/);
+  let policyAccessorRead = false;
+  const accessorPolicy = { ...privateCeremonyPolicy };
+  Object.defineProperty(accessorPolicy, "apiOrigin", {
+    enumerable: true,
+    get() {
+      policyAccessorRead = true;
+      return CEREMONY_API_ORIGIN;
+    },
+  });
+  assert.throws(() => createTestRfqPrivateCeremonyRoute({
+    policy: accessorPolicy,
+    selectionReservation: testSelectionReservation,
+    signal: deployment.signal,
+  }), /enumerable data properties/);
+  assert.equal(policyAccessorRead, false);
+  let policyCoercionRead = false;
+  assert.throws(() => createTestRfqPrivateCeremonyRoute({
+    policy: {
+      ...privateCeremonyPolicy,
+      apiOrigin: {
+        toString() {
+          policyCoercionRead = true;
+          return CEREMONY_API_ORIGIN;
+        },
+      },
+    },
+    selectionReservation: testSelectionReservation,
+    signal: deployment.signal,
+  }), /canonical HTTPS origin/);
+  assert.equal(policyCoercionRead, false);
+  const ceremonyRoute = createRfqPrivateCeremonyRoute({
+    policy: privateCeremonyPolicy,
+    selectionReservation: productionSelectionReservation,
+    signal: deployment.signal,
+  });
+  assert.equal(isRfqPrivateCeremonyRoute(ceremonyRoute), true);
+  assert.throws(
+    () => productionSelectionReservation.prepare({}),
+    /ceremony is route-owned/,
+  );
+  const copiedCeremony = { ...ceremonyRoute };
+  await assert.rejects(
+    copiedCeremony.handle(privateCeremonyRequest("/v1/selection/prepare", {})),
+    /factory provenance/,
+  );
+  const extractedCeremony = ceremonyRoute.handle;
+  await assert.rejects(
+    extractedCeremony(privateCeremonyRequest("/v1/selection/prepare", {})),
+    /factory provenance/,
+  );
   assert.throws(() => createRfqQuoteIngressRoute({
     policy: quoteIngressPolicy,
     quoteReader: productionReader,

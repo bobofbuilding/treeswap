@@ -1,6 +1,6 @@
 # Authenticated RFQ quote ingress
 
-Status: the repository contains an authority-free browser/API handler, strict private SQLite replay store, concrete lifecycle-bound production RFQ reader, and same-process selected-quote reservation service. They are locally tested but are not attached to a network listener, private signing endpoint, deployed persistent volumes, live evidence providers, independently operated paths, or funded coordinator. Funded operation remains closed.
+Status: the repository contains an authority-free browser/API handler, strict private SQLite replay store, concrete lifecycle-bound production RFQ reader, same-process selected-quote reservation service, and a separate credential-free private signing-ceremony route. They are locally tested but are not attached to network listeners, deployed persistent volumes, live evidence providers, independently operated paths, or a funded coordinator. Funded operation remains closed.
 
 ## Boundary
 
@@ -25,7 +25,7 @@ The ingress does not calculate an executable price from the 100-sat reference. C
 
 The reservation service hashes the bearer token before its in-memory lookup, reuses the replay store's keyed HMAC identity commitment instead of deriving a guessable wallet hash, requires the exact original selected quote and the exact original capability used to validate it, snapshots the admission policy, and binds one factory-opened coordinator store. Its preparation call accepts the exact private RFQ request and returns the EIP-712 selection-authorization payload the wallet must inspect and sign. Preparation is deliberately stateless: possession of a leaked token can reveal the selected signable terms, but it cannot reserve inventory or lock a different beneficiary into the ceremony. A later confirmation independently rebuilds the private request, verifies the exact user's short-lived signature, rechecks unmodified coordinator methods, records the verified capacity snapshot, admits the public RFQ, and atomically creates the durable firm-offer reservation. The response remains an acknowledgment; the module-private selection, verified authorization, and reservation objects never cross the boundary. Exact replay is idempotent, while copied selection/capability/service objects, changed requests, wrong signers, accessors, method substitution, expiry, shutdown, and token replay with different signed terms fail closed.
 
-The signable payload necessarily reveals the selected solver and exact economics to the authenticated wallet so the user can authorize them. It is private ceremony data, not a public quote response. The future HTTPS adapter must keep it and both bearer tokens out of logs, analytics, URLs, storage, email, and receipts. This local service has no listener, signer, solver packet transport, funding key, settlement authority, or restart-recovery authority.
+The signable payload necessarily reveals the selected solver and exact economics to the authenticated wallet so the user can authorize them. It is private ceremony data, not a public quote response. `lib/rfq-private-ceremony.mjs` claims the preparation and confirmation methods through a second one-use, lifecycle-matched lease. Retained service handles can no longer prepare, reserve, or stop the route-owned service. The route accepts bearer tokens only inside bounded JSON POST bodies, returns generic errors and `no-store` / `no-referrer` responses, and exposes only identifier-free aggregate status. It has no listener, signer, solver packet transport, funding key, settlement authority, or restart-recovery authority.
 
 ## HTTP rules
 
@@ -36,6 +36,8 @@ JSON requests require `Cache-Control: no-store`, identity encoding, an exact can
 The only accepted CORS preflight requests `POST` with exactly `cache-control` and `content-type`. Private-network requests and credentialed preflights reject. All responses bind `Access-Control-Allow-Origin` to the configured browser, omit credential permission, disable storage, and include no-index, no-sniff, frame-denial, referrer, and content-security headers.
 
 An HTTP adapter must preserve the network-derived content length when it constructs the Web `Request`. It must not add cookies, bearer credentials, compression, permissive CORS, alternate routes, or a second body parser in front of this boundary.
+
+The private ceremony uses a separate canonical HTTPS API origin and only `POST /v1/selection/prepare` or `POST /v1/selection/reserve`, with no query, fragment, cookie, or `Authorization` header. Its preflight permits only `POST` plus `cache-control` and `content-type`; private-network preflights reject. Request bodies must disable storage and use strict identity JSON, canonical unambiguous framing when a length is supplied, fatal UTF-8, a fixed byte limit, one total deadline, and a fixed concurrent-request ceiling. All failures return the same bounded body without reflecting a token, wallet, request, signature, solver, or reason. A deployment adapter must preserve these rules and exclude both bodies and responses from access logs, tracing, analytics, crash reports, email, and receipts.
 
 ## Durable replay and quotas
 
@@ -55,6 +57,6 @@ This checkpoint deliberately provides no port, TLS listener, process manager, fu
 2. provision, safeguard, back up, and restore the identity key and private SQLite volume, then design and review any future key-rotation ceremony without resetting replay history;
 3. automate controlled reader/route restart from fresh independently reviewed capability, inventory/finality, and price-signal evidence without persisting quote authority;
 4. add a reviewed ERC-1271 path or explicitly exclude contract wallets from quote-request authentication;
-5. mount the preparation and confirmation methods behind a separate reviewed private HTTPS ceremony adapter without logging tokens or signable terms, then connect the retained module-private reservation to the authenticated selected-solver packet/finalization path;
+5. deploy the implemented preparation and confirmation route behind its separate reviewed private HTTPS origin without logging tokens or signable terms, then connect the retained module-private reservation to the authenticated selected-solver packet/finalization path;
 6. test browser-wallet compatibility, stolen-token preparation, exact retry, restart burn and durable-liability cleanup, quota exhaustion, rollback, disk-full, process death, failover, CORS, load, alerting, evidence rotation, and deletion on deployed infrastructure; and
 7. retain evidence from independently operated relays, solvers, and price/state providers. Global quote completeness remains unprovable, so the product must continue to say “Best received quote.”

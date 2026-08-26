@@ -113,6 +113,7 @@ jobs:
       - run: node --check lib/rfq-quote-ingress-store.mjs
       - run: node --check lib/rfq-quote-ingress-reader.mjs
       - run: node --check lib/rfq-selection-reservation.mjs
+      - run: node --check lib/rfq-private-ceremony.mjs
       - run: node --check lib/rfq-quote-ingress.mjs
       - run: node --check lib/solver-capacity-readers.mjs
       - run: node --check lib/lightning-capacity-protocol.mjs
