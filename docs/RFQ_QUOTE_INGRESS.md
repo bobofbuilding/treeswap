@@ -1,6 +1,6 @@
 # Authenticated RFQ quote ingress
 
-Status: the repository contains an authority-free browser/API handler, strict private SQLite replay store, concrete lifecycle-bound production RFQ reader, same-process selected-quote reservation service, and separate credential-free private routes for both user-signing stages. The second route now carries the original reservation through authenticated selected-solver finalization and exact execution authorization with ambiguity-safe retry. They are locally tested but are not attached to network listeners, deployed persistent volumes, live evidence providers, independently operated paths, or a funded coordinator. Funded operation remains closed.
+Status: the repository contains an authority-free browser/API handler, strict private SQLite replay store, concrete lifecycle-bound production RFQ reader, same-process selected-quote reservation service, and separate credential-free private routes for both user-signing stages. The second route now carries the original reservation through authenticated selected-solver finalization and exact execution authorization with ambiguity-safe retry, then returns success only after the authorization and non-dispatching settlement commit atomically. They are locally tested but are not attached to network listeners, deployed persistent volumes, live evidence providers, independently operated paths, or a funded coordinator. Funded operation remains closed.
 
 ## Boundary
 

@@ -10,7 +10,7 @@ The coordinator database retains only the non-secret commitments already needed 
 
 - reserved, before an executable quote is durably bound;
 - finalized, after the executable quote is bound but before the second user authorization;
-- authorized, after the second user authorization but before settlement handoff; or
+- authorized, after a lower-level second-authorization write but before settlement handoff; or
 - settlement-owned, after any durable settlement has selected the offer.
 
 The first three states have lost their browser authority. They remain neutral capacity commitments until the exact signed firm-offer expiry. At or after that boundary, a bounded atomic sweep records `EXPIRED_UNEXERCISED`, releases both BIT and Lightning capacity, and does not count a solver failure. It cannot release early, invoke a provider, contact Lightning, create an invoice, fund a pool, dispatch settlement, or recover private request data.
@@ -27,7 +27,7 @@ Every later sweep is capped at 1,000 expired offers. An unexpired burned ceremon
 
 The status surface is aggregate-only. It reports phase counts, the earliest pending expiry, cleanup counts, settlement-owned counts, and a digest over those aggregates. It contains no wallet, solver, RFQ, offer, settlement, invoice, payment hash, endpoint, token, or private failure detail, and every authority flag is false.
 
-An authorized offer without a durable settlement is still classified as browser-abandoned. That release is safe only if the product never enables the separate Lightning or EVM asset action until the exact authorized result has been accepted into the durable settlement workflow. The reservation-to-settlement consumer and that UI ordering remain release gates; the current prototype cannot fund or dispatch either leg.
+An authorized offer without a durable settlement is still classified as browser-abandoned. The production high-level path now skips that crash window: it binds the exact second authorization and inserts the settlement in one transaction, then returns browser success only after commit. The lower-level authorization method remains an infrastructure/test boundary, so restart still handles a standalone authorized row defensively. No Lightning or EVM asset action may exist before the durable settlement is accepted. The next release gate is the settlement-to-contract-intent/private-packet consumer; the current prototype cannot reserve or dispatch either asset leg. See [RFQ settlement handoff](./RFQ_SETTLEMENT_HANDOFF.md).
 
 Production orchestration must:
 

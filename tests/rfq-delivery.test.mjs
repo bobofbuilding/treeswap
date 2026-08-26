@@ -2121,15 +2121,34 @@ test("carries one durable reservation through authenticated solver finalization 
     reservationToken: handoff.reservationToken,
     signature: secondSignature,
   });
+  assert.equal(ack.schema, "treeswap.selected-solver-authorization-ack.v2");
   assert.equal(ack.status, "authorized");
+  assert.equal(ack.settlementStatus, "accepted");
+  assert.equal(ack.settlementId, privateRequest.requestId);
   assert.equal(ack.invoice, solverInvoice);
   assert.equal(ack.paymentHash, id("private-payment-0"));
+  assert.equal(ack.evmReservationAuthority, false);
+  assert.equal(ack.lightningDispatchAuthority, false);
   assert.equal(ack.settlementDispatchAuthority, false);
   assert.equal(service.status().executionAuthorizationsCompleted, 1);
   assert.equal(
     coordinatorStore.getFirmOffer(selection.selected.offer.offerId).executionAuthorizationDigest,
     secondPrompt.digest,
   );
+  const settlement = coordinatorStore.getSettlement(privateRequest.requestId);
+  assert.equal(settlement.state, "INTENT_ACCEPTED");
+  assert.equal(settlement.pricingId, selection.pricingId);
+  assert.equal(settlement.nonceAuthorityDigest, firstPrompt.digest);
+  assert.equal(settlement.intentNonce, privateRequest.nonce.toString());
+  assert.equal(settlement.intentDigest, secondPrompt.digest);
+  assert.equal(settlement.paymentHash, id("private-payment-0"));
+  assert.equal(settlement.invoiceDigest, secondPrompt.message.invoiceDigest);
+  assert.equal(settlement.quoteReceiptDigest, selection.receivedSetDigest);
+  assert.equal(settlement.selectedSetDigest, selection.selectedBlindOfferDigest);
+  assert.equal(settlement.selectedOfferId, selection.selected.offer.offerId);
+  assert.equal(settlement.recordDigest, ack.settlementRecordDigest);
+  assert.equal(settlement.reservationId, null);
+  assert.deepEqual(coordinatorStore.listSettlementActions(settlement.settlementId), []);
   assert.deepEqual(await finalizationLease.finalize({
     invoice: "",
     request: privateRequest,
@@ -2228,9 +2247,18 @@ test("keeps the user's BIT-to-Lightning invoice fixed through selected-solver fi
     signature: await user.signTypedData(secondPrompt.domain, secondPrompt.types, secondPrompt.message),
   });
   assert.equal(ack.direction, "bit-to-lightning");
+  assert.equal(ack.settlementStatus, "accepted");
+  assert.equal(ack.settlementId, bitToLightningRequest.requestId);
   assert.equal(ack.invoice, userInvoice);
   assert.equal(ack.invoiceDigest, bitToLightningRequest.invoiceDigest);
   assert.equal(ack.paymentHash, bitToLightningRequest.paymentHash);
+  const settlement = coordinatorStore.getSettlement(bitToLightningRequest.requestId);
+  assert.equal(settlement.state, "INTENT_ACCEPTED");
+  assert.equal(settlement.amountSats, bitToLightningRequest.exactLightningOutputSats.toString());
+  assert.equal(settlement.quoteReceiptDigest, selection.receivedSetDigest);
+  assert.equal(settlement.selectedSetDigest, selection.selectedBlindOfferDigest);
+  assert.equal(settlement.reservationId, null);
+  assert.deepEqual(coordinatorStore.listSettlementActions(settlement.settlementId), []);
 });
 
 test("serves selected-solver finalization and exact second authorization through the private browser route", async (t) => {
@@ -2299,10 +2327,19 @@ test("serves selected-solver finalization and exact second authorization through
   ));
   assert.equal(authorized.status, 200);
   const ack = await authorized.json();
-  assert.equal(ack.schema, "treeswap.selected-solver-authorization-ack.v1");
+  assert.equal(ack.schema, "treeswap.selected-solver-authorization-ack.v2");
   assert.equal(ack.status, "authorized");
+  assert.equal(ack.settlementStatus, "accepted");
+  assert.equal(ack.settlementId, privateRequest.requestId);
   assert.equal(ack.invoice, data.invoice);
+  assert.equal(ack.evmReservationAuthority, false);
+  assert.equal(ack.lightningDispatchAuthority, false);
   assert.equal(ack.settlementDispatchAuthority, false);
+  const acceptedSettlement = data.coordinatorStore.getSettlement(privateRequest.requestId);
+  assert.equal(acceptedSettlement.state, "INTENT_ACCEPTED");
+  assert.equal(acceptedSettlement.recordDigest, ack.settlementRecordDigest);
+  assert.equal(acceptedSettlement.reservationId, null);
+  assert.deepEqual(data.coordinatorStore.listSettlementActions(ack.settlementId), []);
 
   const replay = await data.route.handle(privateCeremonyRequest(
     "/v1/selection/finalize",
@@ -2374,9 +2411,13 @@ test("preserves the user invoice through the BIT-to-Lightning browser finalizati
   assert.equal(authorized.status, 200);
   const ack = await authorized.json();
   assert.equal(ack.direction, "bit-to-lightning");
+  assert.equal(ack.settlementStatus, "accepted");
+  assert.equal(ack.settlementId, bitToLightningRequest.requestId);
   assert.equal(ack.invoice, userInvoice);
   assert.equal(ack.invoiceDigest, bitToLightningRequest.invoiceDigest);
   assert.equal(ack.paymentHash, bitToLightningRequest.paymentHash);
+  assert.equal(data.coordinatorStore.getSettlement(ack.settlementId).state, "INTENT_ACCEPTED");
+  assert.equal(data.coordinatorStore.getSettlement(ack.settlementId).reservationId, null);
 });
 
 test("rejects an invalid user invoice before disclosing it to the selected solver", async (t) => {
@@ -3311,6 +3352,14 @@ test("atomically reserves authenticated blind competition before private disclos
   assert.equal(intent.receivedSetDigest, book.receiptDigest);
   assert.notEqual(intent.pricingId, intent.requestId);
   const finalizationDb = new DatabaseSync(path);
+  finalizationDb.prepare("UPDATE settlements SET payment_hash = ? WHERE settlement_id = ?")
+    .run(id("tampered-durable-settlement-payment"), privateRequest.requestId);
+  assert.throws(
+    () => verifiedFinalizedExecutableQuote(authorized, { now: NOW }),
+    /durable settlement payment hash changed/,
+  );
+  finalizationDb.prepare("UPDATE settlements SET payment_hash = ? WHERE settlement_id = ?")
+    .run(intent.paymentHash, privateRequest.requestId);
   finalizationDb.prepare("UPDATE firm_offer_commitments SET finalized_at = ? WHERE offer_id = ?")
     .run(NOW + 1, reservation.selectedOfferId);
   finalizationDb.close();

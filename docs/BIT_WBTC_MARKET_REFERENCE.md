@@ -6,6 +6,8 @@ Status: repository verifier and fail-closed price-source identity checks impleme
 
 TreeSwap remains a Lightning ↔ BIT intent bridge. A future BIT/WBTC pool is a market-observation venue that helps solvers price BIT in bitcoin terms; it is not the bridge settlement path, a protocol-owned redemption promise, or a replacement for competing signed solver quotes.
 
+Rollout priority is bridge correctness first: competing Lightning/BIT quotes, atomic intent acceptance, escrow construction, both-direction settlement recovery, and capped public-testnet evidence are launch-critical. Creating the BIT/WBTC pool is a separate rollout workstream and cannot delay those non-funded bridge controls or silently widen their authority.
+
 The bridge does not wait for this pool to be created before development, local qualification, or closed testnet work continues. The pool is helpful rather than mandatory for the eventual market quorum: three other independently operated executable BIT venues may satisfy the same reviewed risk gate. In either case, an absent or ineligible pool never causes a silent fallback to the 100-sat reference.
 
 The launch order is deliberately narrow:

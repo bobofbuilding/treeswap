@@ -862,6 +862,107 @@ test("binds only one executable quote to a firm offer across coordinator connect
   }
 });
 
+test("atomically binds exact user authorization and accepts its settlement before any asset action", async () => {
+  const store = await CoordinatorStore.open(":memory:", { allowMemory: true });
+  const rfq = request("atomic-settlement-handoff", 2);
+  try {
+    store.admitRfq({ identity: identity(), request: rfq, policy: policy(), now: NOW });
+    store.recordSolverCapacity(snapshot());
+    const firm = store.reserveVerifiedFirmOffer(reservation(rfq, "atomic-settlement-handoff"));
+    const executable = store.bindFirmOfferExecution({
+      offerId: firm.offerId,
+      privateRequestDigest: hash("atomic-settlement-private-request"),
+      executableOfferDigest: hash("atomic-settlement-executable-offer"),
+      finalizedAt: NOW + 2,
+    });
+    const authorization = {
+      offerId: firm.offerId,
+      executionBindingDigest: executable.executionBindingDigest,
+      executionAuthorizationDigest: hash("atomic-settlement-execution-authorization"),
+      authorizationExpiresAt: NOW + 20,
+      authorizedAt: NOW + 3,
+    };
+    const settlement = {
+      settlementId: hash("atomic-settlement-id"),
+      pricingId: rfq.requestId,
+      direction: rfq.direction,
+      nonceAuthorityDigest: firm.selectionAuthorizationDigest,
+      intentNonce: rfq.nonce,
+      intentDigest: authorization.executionAuthorizationDigest,
+      paymentHash: hash("atomic-settlement-payment"),
+      invoiceDigest: hash("atomic-settlement-invoice"),
+      amountSats: rfq.notionalSats,
+      quoteReceiptDigest: hash("atomic-settlement-received-set"),
+      selectedSetDigest: firm.offerDigest,
+      selectedOfferId: firm.offerId,
+      capacityEpoch: firm.capacityEpoch,
+      createdAt: authorization.authorizedAt,
+    };
+
+    store.acceptSettlement({
+      ...settlement,
+      settlementId: hash("atomic-settlement-collision"),
+      pricingId: hash("atomic-settlement-unrelated-pricing"),
+      nonceAuthorityDigest: hash("atomic-settlement-unrelated-authority"),
+      intentNonce: "99",
+      intentDigest: hash("atomic-settlement-unrelated-intent"),
+      quoteReceiptDigest: hash("atomic-settlement-unrelated-receipt"),
+      selectedSetDigest: hash("atomic-settlement-unrelated-set"),
+      selectedOfferId: hash("atomic-settlement-unrelated-offer"),
+    });
+    assert.throws(
+      () => store.acceptAuthorizedFirmOfferSettlement({ ...authorization, settlement }),
+      /existing nonce, intent, or payment hash/,
+    );
+    assert.equal(store.getFirmOffer(firm.offerId).executionAuthorizationDigest, null);
+    assert.equal(store.getSettlement(settlement.settlementId), null);
+
+    const safeSettlement = { ...settlement, paymentHash: hash("atomic-settlement-safe-payment") };
+    for (const changed of [
+      { nonceAuthorityDigest: hash("atomic-settlement-wrong-authority") },
+      { intentDigest: hash("atomic-settlement-wrong-authorization") },
+      { selectedSetDigest: hash("atomic-settlement-wrong-offer-digest") },
+      { amountSats: "10001" },
+      { capacityEpoch: firm.capacityEpoch + 1 },
+      { createdAt: authorization.authorizedAt + 1 },
+    ]) {
+      assert.throws(
+        () => store.acceptAuthorizedFirmOfferSettlement({
+          ...authorization,
+          settlement: { ...safeSettlement, ...changed },
+        }),
+        /does not match its exact firm-offer commitments/,
+      );
+      assert.equal(store.getFirmOffer(firm.offerId).executionAuthorizationDigest, null);
+    }
+
+    const accepted = store.acceptAuthorizedFirmOfferSettlement({
+      ...authorization,
+      settlement: safeSettlement,
+    });
+    assert.equal(accepted.offer.executionAuthorizationDigest, authorization.executionAuthorizationDigest);
+    assert.equal(accepted.settlement.state, "INTENT_ACCEPTED");
+    assert.equal(accepted.settlement.intentDigest, authorization.executionAuthorizationDigest);
+    assert.equal(accepted.settlement.nonceAuthorityDigest, firm.selectionAuthorizationDigest);
+    assert.equal(accepted.settlement.selectedSetDigest, firm.offerDigest);
+    assert.equal(accepted.settlement.reservationId, null);
+    assert.deepEqual(store.listSettlementActions(accepted.settlement.settlementId), []);
+    assert.deepEqual(
+      store.acceptAuthorizedFirmOfferSettlement({ ...authorization, settlement: safeSettlement }),
+      accepted,
+    );
+    assert.throws(
+      () => store.acceptAuthorizedFirmOfferSettlement({
+        ...authorization,
+        settlement: { ...safeSettlement, invoiceDigest: hash("atomic-settlement-changed-invoice") },
+      }),
+      /different terms/,
+    );
+  } finally {
+    store.close();
+  }
+});
+
 test("binds a settlement once to its reviewed release, risk policy, evidence policy, and selected capability", async () => {
   const store = await CoordinatorStore.open(":memory:", { allowMemory: true });
   const rfq = request("execution-policy-binding", 2);

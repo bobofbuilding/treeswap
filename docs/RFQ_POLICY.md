@@ -1,6 +1,6 @@
 # TreeSwap RFQ and quote-selection policy
 
-Status: blind multipath quote discovery, deterministic signed-offer selection, two-stage exact user authorization, atomic dual-resource reservation before disclosure, one-use durable executable-quote binding, selected-solver private finalization, open cryptographic repository admission, authenticated endpoint transport, and concrete capacity-reader protocols are implemented locally. Independently operated endpoints/readers, encrypted disclosure deployment, shared persistence, wallet integration, and independent solver/relay operation remain testnet deployment gates. Funded operation is closed.
+Status: blind multipath quote discovery, deterministic signed-offer selection, two-stage exact user authorization, atomic dual-resource reservation before disclosure, one-use durable executable-quote binding, atomic non-dispatching settlement acceptance, selected-solver private finalization, open cryptographic repository admission, authenticated endpoint transport, and concrete capacity-reader protocols are implemented locally. Independently operated endpoints/readers, encrypted disclosure deployment, shared persistence, wallet integration, and independent solver/relay operation remain testnet deployment gates. Funded operation is closed.
 
 ## Two-stage quote boundary
 
@@ -59,7 +59,7 @@ No contract or client can prove that an untrusted relay delivered every quote th
 - refuses to label a result “global best” or “market best”;
 - displays “Best received quote” with verified solver and path counts;
 - lets the user inspect and choose the signed blind offer;
-- requires an exact matching private finalization plus its second user authorization before settlement; and
+- requires an exact matching private finalization plus its second user authorization, then atomically commits that authorization with the non-dispatching settlement before browser success; and
 - excludes order-book rewards from v1.
 
 The combined receipt makes the client's observed delivery and offer set reproducible. It does not turn that set into global availability proof.
