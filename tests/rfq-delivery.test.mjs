@@ -52,11 +52,18 @@ import {
   isRfqDeliveryClient,
   queryTestVerifiedRfqDelivery,
   queryVerifiedRfqDelivery,
+  rfqDeliveryClientLifecycleState,
   rfqDeliveryClientTransportMode,
   rfqDeliveryPayloadDigest,
   rfqDeliveryResponseDigest,
   verifiedRfqDeliveryCollection,
 } from "../lib/rfq-delivery.mjs";
+import {
+  isProductionRfqDeliveryService,
+  isRfqDeliveryService,
+  startRfqDeliveryService,
+  startTestRfqDeliveryService,
+} from "../lib/rfq-delivery-service.mjs";
 import {
   bitRiskPolicyDigest,
   buildBitRiskAttestation,
@@ -1661,6 +1668,169 @@ test("cancels every in-flight RFQ path on caller abort or client shutdown", asyn
     );
     client.close();
   }
+});
+
+test("binds one production RFQ client to one authority-free service lifecycle", async () => {
+  const data = await fixture();
+  const configuration = {
+    paths: data.paths,
+    policy: deliveryPolicy,
+    requestTtlSeconds: 15,
+    timeoutMs: 5_000,
+    maximumResponseBytes: 262_144,
+  };
+  const productionClient = createRfqDeliveryClient(configuration);
+  const deploymentController = new AbortController();
+  let getterCalls = 0;
+  const accessorInput = { client: productionClient, signal: deploymentController.signal };
+  Object.defineProperty(accessorInput, "client", {
+    enumerable: true,
+    get() {
+      getterCalls += 1;
+      return productionClient;
+    },
+  });
+  assert.throws(() => startRfqDeliveryService(accessorInput), /enumerable data properties/);
+  assert.equal(getterCalls, 0);
+
+  const service = startRfqDeliveryService({
+    client: productionClient,
+    signal: deploymentController.signal,
+  });
+  assert.equal(rfqDeliveryClientLifecycleState(productionClient), "owned");
+  assert.throws(() => productionClient.collect({
+    requestId: pricing.pricingId,
+    requestDigest: rfqDeliveryPayloadDigest(pricing),
+    rfq: pricing,
+    signal: new AbortController().signal,
+  }), (error) => error.code === "CLIENT_OWNED");
+  assert.throws(() => productionClient.close(), (error) => error.code === "CLIENT_OWNED");
+  assert.equal(isRfqDeliveryService(service), true);
+  assert.equal(isProductionRfqDeliveryService(service), true);
+  assert.deepEqual(service.status(), {
+    schema: "treeswap.rfq-delivery-service-status.v1",
+    state: "active",
+    transportMode: "fixed-public-node-https",
+    requestsStarted: 0,
+    requestsCompleted: 0,
+    requestsCancelled: 0,
+    requestsFailed: 0,
+    requestsInFlight: 0,
+    fundingAuthorization: false,
+    settlementAuthorization: false,
+    networkListener: false,
+  });
+  assert.equal(isRfqDeliveryService({ ...service }), false);
+  assert.throws(() => ({ ...service }).status(), /factory provenance/);
+  assert.throws(() => startRfqDeliveryService({
+    client: productionClient,
+    signal: new AbortController().signal,
+  }), /already owned/);
+
+  const testClient = createTestRfqDeliveryClient({
+    ...configuration,
+    requestImpl: data.responder,
+    nowSeconds: () => NOW,
+    randomBytesImpl: () => Buffer.alloc(32, 4),
+  });
+  assert.throws(() => startRfqDeliveryService({
+    client: testClient,
+    signal: new AbortController().signal,
+  }), /fixed public Node HTTPS/);
+  const testService = startTestRfqDeliveryService({
+    client: testClient,
+    signal: new AbortController().signal,
+  });
+  assert.equal(isProductionRfqDeliveryService(testService), false);
+  testService.stop();
+
+  const preExistingClient = createTestRfqDeliveryClient({
+    ...configuration,
+    requestImpl: data.responder,
+    nowSeconds: () => NOW,
+    randomBytesImpl: () => Buffer.alloc(32, 5),
+  });
+  const preExistingCall = preExistingClient.collect({
+    requestId: pricing.pricingId,
+    requestDigest: rfqDeliveryPayloadDigest(pricing),
+    rfq: pricing,
+    signal: new AbortController().signal,
+  });
+  assert.throws(() => startTestRfqDeliveryService({
+    client: preExistingClient,
+    signal: new AbortController().signal,
+  }), /active unowned request/);
+  await preExistingCall;
+  const claimedAfterSettle = startTestRfqDeliveryService({
+    client: preExistingClient,
+    signal: new AbortController().signal,
+  });
+  claimedAfterSettle.stop();
+
+  const stopped = service.stop();
+  assert.equal(stopped.state, "stopped");
+  assert.equal(stopped.fundingAuthorization, false);
+  assert.equal(rfqDeliveryClientLifecycleState(productionClient), "closed");
+  assert.throws(() => startRfqDeliveryService({
+    client: productionClient,
+    signal: new AbortController().signal,
+  }), /already closed|already owned/);
+});
+
+test("collects without identifier-bearing health and cancels through either lifecycle", async () => {
+  const data = await fixture();
+  let hanging = false;
+  const client = createTestRfqDeliveryClient({
+    paths: data.paths,
+    policy: deliveryPolicy,
+    requestTtlSeconds: 15,
+    timeoutMs: 30_000,
+    maximumResponseBytes: 262_144,
+    requestImpl: async (...args) => (hanging ? new Promise(() => {}) : data.responder(...args)),
+    nowSeconds: () => NOW,
+    randomBytesImpl: () => Buffer.alloc(32, 3),
+  });
+  const deploymentController = new AbortController();
+  const service = startTestRfqDeliveryService({ client, signal: deploymentController.signal });
+  const firstController = new AbortController();
+  const call = {
+    requestId: pricing.pricingId,
+    requestDigest: rfqDeliveryPayloadDigest(pricing),
+    rfq: pricing,
+    signal: firstController.signal,
+  };
+  const collection = await service.collect(call);
+  assert.equal(verifiedRfqDeliveryCollection(collection), collection);
+  const completed = service.status();
+  assert.equal(completed.state, "active");
+  assert.equal(completed.requestsStarted, 1);
+  assert.equal(completed.requestsCompleted, 1);
+  assert.equal(completed.requestsInFlight, 0);
+  assert.doesNotMatch(JSON.stringify(completed), new RegExp(pricing.pricingId.slice(2), "i"));
+
+  hanging = true;
+  const callerController = new AbortController();
+  const callerPending = service.collect({ ...call, signal: callerController.signal });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(service.status().requestsInFlight, 1);
+  callerController.abort();
+  await assert.rejects(callerPending, (error) => error.code === "CANCELLED");
+  const callerCancelled = service.status();
+  assert.equal(callerCancelled.state, "active");
+  assert.equal(callerCancelled.requestsCancelled, 1);
+
+  const deploymentPending = service.collect({ ...call, signal: new AbortController().signal });
+  await new Promise((resolve) => setImmediate(resolve));
+  deploymentController.abort();
+  await assert.rejects(deploymentPending, (error) => error.code === "CANCELLED");
+  const stopped = service.status();
+  assert.equal(stopped.state, "stopped");
+  assert.equal(stopped.requestsStarted, 3);
+  assert.equal(stopped.requestsCompleted, 1);
+  assert.equal(stopped.requestsCancelled, 2);
+  assert.equal(stopped.requestsFailed, 0);
+  assert.equal(stopped.requestsInFlight, 0);
+  await assert.rejects(service.collect(call), (error) => error.code === "SERVICE_STOPPED");
 });
 
 test("rejects accessor and coercion RFQ inputs without executing caller code", async () => {

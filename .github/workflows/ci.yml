@@ -107,6 +107,7 @@ jobs:
       - run: node --check lib/lnd-node-signature.mjs
       - run: node --check lib/solver-endpoint-transport.mjs
       - run: node --check lib/rfq-delivery.mjs
+      - run: node --check lib/rfq-delivery-service.mjs
       - run: node --check lib/blind-rfq.mjs
       - run: node --check lib/solver-capacity-readers.mjs
       - run: node --check lib/lightning-capacity-protocol.mjs
