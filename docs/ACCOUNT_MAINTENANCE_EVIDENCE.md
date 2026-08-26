@@ -12,6 +12,8 @@ One D1 transactional batch deletes at most 100 expired rows from each of `siwe_n
 
 This endpoint is an owner exercise, not a scheduler. A production schedule must use a separately reviewed Cloudflare scheduled invocation or equivalently authenticated operator path, retain every aggregate result, alert on failures and sustained backlog, and never introduce a reusable browser credential.
 
+The repository's [account storage monitor](./ACCOUNT_STORAGE_MONITORING.md) now defines bounded D1 backlog probes, maintenance freshness, access-audit observations, and dual-route escalation. It does not create that schedule or any live collector.
+
 ## Live exercise
 
 After publishing and privately deploying the exact clean `main` commit, run:

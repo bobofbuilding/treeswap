@@ -113,6 +113,7 @@ const campaigns = [
   ["coordinator:evm-faults", "npm", ["run", "test:coordinator-evm"]],
   ["evm:outbox-finality-and-provider-faults", "npm", ["run", "test:evm-outbox-faults"]],
   ["operations:safety-monitor", "npm", ["run", "test:safety-monitor"]],
+  ["operations:account-storage-monitor", "npm", ["run", "test:account-storage-monitor"]],
   ["operations:retained-release-custody", "node", [
     "--test",
     "tests/release-retention-custody.test.mjs",

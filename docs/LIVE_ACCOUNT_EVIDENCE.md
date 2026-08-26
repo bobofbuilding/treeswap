@@ -46,6 +46,8 @@ Passing live evidence does not authorize swaps, deposits, public account access,
 
 These remain release blockers in the [launch checklist](./LAUNCH_CHECKLIST.md).
 
+The repository now defines the aggregate-only fail-closed monitor and dual-route escalation semantics in [Account storage monitoring](./ACCOUNT_STORAGE_MONITORING.md). That protocol does not supply the missing deployed collectors, schedule, platform audit integration, paging delivery, retained window, or independent review.
+
 ## Retained checkpoint
 
 The version 11 run passed all 13 exact checks. Its ignored mode-`0600` record independently reconstructs to:

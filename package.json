@@ -29,6 +29,7 @@
     "test:coordinator-evm": "bash scripts/run-coordinator-evm-smoke.sh",
     "test:evm-outbox-faults": "bash scripts/run-evm-outbox-fault-smoke.sh",
     "test:safety-monitor": "bash scripts/run-safety-monitor-smoke.sh",
+    "test:account-storage-monitor": "node --test tests/account-storage-monitor.test.mjs",
     "test:deployment-rehearsal": "bash scripts/run-deployment-rehearsal-smoke.sh",
     "test:coordinator-runtime": "bash scripts/run-coordinator-runtime-smoke.sh",
     "coordinator:supervision-status": "node infra/coordinator/supervision-status.mjs",
