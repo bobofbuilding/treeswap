@@ -1,6 +1,6 @@
 # Authenticated RFQ quote ingress
 
-Status: the repository contains an authority-free browser/API handler and strict private SQLite replay store. They are locally tested but are not attached to a network listener, production RFQ reader, deployed persistent volume, or funded coordinator. Funded operation remains closed.
+Status: the repository contains an authority-free browser/API handler, strict private SQLite replay store, and concrete lifecycle-bound production RFQ reader. They are locally tested but are not attached to a network listener, deployed persistent volume, live evidence providers, independently operated paths, or funded coordinator. Funded operation remains closed.
 
 ## Boundary
 
@@ -13,7 +13,11 @@ Status: the repository contains an authority-free browser/API handler and strict
 
 This signature authenticates and rate-limits quote collection only. It is not either of the two later swap authorizations, is not a token allowance, cannot reserve inventory, and cannot fund or settle a swap. The current verifier supports canonical 65-byte EOA signatures only. ERC-1271 quote-request authentication requires a separately reviewed fixed-provider verifier before contract-wallet production use; the escrows' existing ERC-1271 settlement support does not silently extend to this HTTP boundary.
 
-The handler passes only the normalized public pricing projection and an abort signal to its factory-created RFQ reader. It never forwards the wallet, signature, nonce, session token, or browser origin to a relay or solver. The reader must return an original mode-matched client-safe preview session. A copied, injected-test/production-crossed, expired, or otherwise unbranded session rejects; a genuine session returned through the wrong mode is closed.
+The handler passes only the normalized public pricing projection and an abort signal to its factory-created RFQ reader. It never forwards the wallet, signature, nonce, session token, or browser origin to a relay or solver. The route takes exclusive ownership of that reader through a one-use lease, so a retained reader handle cannot collect outside the bound route. Route or deployment shutdown closes the lease and in-flight work.
+
+`lib/rfq-quote-ingress-reader.mjs` removes the former arbitrary production callback. Its production constructor accepts only one original active production RFQ delivery service, original locally verified solver capabilities, an exact blind policy, an exact deployment market-risk policy and inventory/finality snapshot, original verifier-branded price signals, and one deployment abort signal. It snapshots the plain policy and state inputs, binds the blind policy to the exact market-risk digest and chain, rejects copied capabilities or price signals, permits at most one request-bound future BIT/WBTC pool signal, and binds one service to one reader. For each request it collects through the service, independently validates every offer, derives an exact risk request, builds same-process attestations only for safe offers, constructs the authenticated blind book, and creates the opaque preview. Stale state, insufficient direction-specific capabilities, unavailable price quorum, policy mismatch, service shutdown, cancellation, copied provenance, and later caller mutation fail closed. The fixed snapshot intentionally makes evidence rotation a controlled reader-and-route restart rather than an unreviewed callback.
+
+The reader must return an original mode-matched client-safe preview session. A copied, injected-test/production-crossed, expired, or otherwise unbranded session rejects; a genuine session returned through the wrong mode is closed. An explicit test-only service reader owns injected time, entropy, and delivery transport; an arbitrary callback remains available only through the separately branded test constructor and cannot satisfy the production route.
 
 The ingress does not calculate an executable price from the 100-sat reference. Competing solver RFQs remain the primary Lightning/BIT price. After the planned BIT/WBTC pool exists and has passed its separate maturity gate, a request-sized pool observation may contribute one independent market-risk signal; it cannot satisfy venue quorum by itself, select a solver, route settlement, or enable a silent fixed-par fallback.
 
@@ -43,10 +47,10 @@ The session token is a short-lived bearer secret returned only in the `no-store`
 
 This checkpoint deliberately provides no port, TLS listener, process manager, funding key, settlement signer, Lightning credential, or action dispatcher. Before public testnet quote use, TreeSwap must:
 
-1. compose the production ingress reader with the deployment-owned RFQ lifecycle and opaque preview in one process;
-2. deploy the handler behind a preserving HTTPS adapter and exact browser origin;
-3. provision, safeguard, back up, and restore the identity key and private SQLite volume, then design and review any future key-rotation ceremony without resetting replay history;
+1. deploy the handler and concrete reader behind a preserving HTTPS adapter and exact browser origin;
+2. provision, safeguard, back up, and restore the identity key and private SQLite volume, then design and review any future key-rotation ceremony without resetting replay history;
+3. automate controlled reader/route restart from fresh independently reviewed capability, inventory/finality, and price-signal evidence without persisting quote authority;
 4. add a reviewed ERC-1271 path or explicitly exclude contract wallets from quote-request authentication;
 5. connect the selected module-private object to the existing private reservation ceremony without adding a serialization shortcut;
-6. test browser-wallet compatibility, restart burn behavior, quota exhaustion, rollback, disk-full, process death, failover, CORS, load, alerting, and deletion on deployed infrastructure; and
-7. retain evidence from independently operated relays and solvers. Global quote completeness remains unprovable, so the product must continue to say “Best received quote.”
+6. test browser-wallet compatibility, restart burn behavior, quota exhaustion, rollback, disk-full, process death, failover, CORS, load, alerting, evidence rotation, and deletion on deployed infrastructure; and
+7. retain evidence from independently operated relays, solvers, and price/state providers. Global quote completeness remains unprovable, so the product must continue to say “Best received quote.”

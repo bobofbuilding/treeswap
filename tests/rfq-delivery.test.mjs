@@ -71,6 +71,7 @@ import {
   createRfqQuoteIngressReader,
   createRfqQuoteIngressRoute,
   createTestRfqQuoteIngressReader,
+  createTestRfqQuoteIngressServiceReader,
   createTestRfqQuoteIngressRoute,
   isRfqQuoteIngressRoute,
   rfqQuoteIngressPolicyDigest,
@@ -463,6 +464,26 @@ function marketSignal(index, direction, offerId, validUntil = NOW + 90) {
   });
 }
 
+function currentMarketRiskSnapshot(policy = marketRiskPolicy) {
+  return {
+    chainId: 1,
+    observedAt: NOW,
+    proxyAddress: policy.proxyAddress,
+    implementation: policy.expectedImplementation,
+    proxyCodeHash: policy.expectedProxyCodeHash,
+    implementationCodeHash: policy.expectedImplementationCodeHash,
+    decimals: 18,
+    paused: false,
+    latestBlock: 1_000,
+    finalizedBlock: 970,
+    epochBitVolumeWei: 0n,
+    availableBitWei: 100_000n * BIT,
+    bitCapacityWei: 100_000n * BIT,
+    availableLightningSats: 10_000_000n,
+    lightningCapacitySats: 10_000_000n,
+  };
+}
+
 function marketRiskAttestationForOffer(rawOffer, {
   validUntil = NOW + 90,
   policyOverrides = {},
@@ -481,23 +502,7 @@ function marketRiskAttestationForOffer(rawOffer, {
     (_signer, index) => marketSignal(index, direction, rawOffer.offerId, validUntil),
   );
   const policy = { ...marketRiskPolicy, ...policyOverrides };
-  const snapshot = {
-    chainId: 1,
-    observedAt: NOW,
-    proxyAddress: policy.proxyAddress,
-    implementation: policy.expectedImplementation,
-    proxyCodeHash: policy.expectedProxyCodeHash,
-    implementationCodeHash: policy.expectedImplementationCodeHash,
-    decimals: 18,
-    paused: false,
-    latestBlock: 1_000,
-    finalizedBlock: 970,
-    epochBitVolumeWei: 0n,
-    availableBitWei: 100_000n * BIT,
-    bitCapacityWei: 100_000n * BIT,
-    availableLightningSats: 10_000_000n,
-    lightningCapacitySats: 10_000_000n,
-  };
+  const snapshot = currentMarketRiskSnapshot(policy);
   const request = {
     now: NOW,
     direction,
@@ -1107,12 +1112,220 @@ test("authenticates quote ingress, exposes only opaque competition, and consumes
   });
 });
 
+test("composes quote ingress through the owned RFQ service and reviewed evidence", async (t) => {
+  const data = await fixture();
+  const deployment = new AbortController();
+  const client = createTestRfqDeliveryClient({
+    paths: data.paths,
+    policy: deliveryPolicy,
+    requestTtlSeconds: 15,
+    timeoutMs: 5_000,
+    maximumResponseBytes: 262_144,
+    requestImpl: data.responder,
+    nowSeconds: () => NOW,
+    randomBytesImpl: () => Buffer.alloc(32, 12),
+  });
+  const service = startTestRfqDeliveryService({ client, signal: deployment.signal });
+  let previewEntropy = 20;
+  const reader = createTestRfqQuoteIngressServiceReader({
+    blindPolicy,
+    capabilityVerifications: data.verifications,
+    deliveryService: service,
+    marketRiskPolicy,
+    marketRiskSnapshot: currentMarketRiskSnapshot(),
+    nowSeconds: () => NOW,
+    priceSignals: marketSigners.map((_signer, index) => (
+      marketSignal(index, "lightning-to-bit", id(`ingress-service-reader-${index}`))
+    )),
+    randomBytesImpl: () => Buffer.alloc(32, ++previewEntropy),
+    signal: deployment.signal,
+  });
+  t.after(() => deployment.abort());
+  const session = await reader.read({ pricing, signal: new AbortController().signal });
+  assert.equal(isClientSafeBlindQuoteSession(session), true);
+  assert.equal(isProductionClientSafeBlindQuoteSession(session), false);
+  assert.equal(session.preview().pricingId, pricing.pricingId);
+  assert.equal(session.preview().quoteCount, 2);
+  assert.equal(service.status().requestsCompleted, 1);
+  assert.deepEqual(reader.status(), {
+    schema: "treeswap.rfq-quote-ingress-reader-status.v1",
+    state: "active",
+    mode: "injected-test",
+    source: "delivery-service",
+    requestsStarted: 1,
+    requestsCompleted: 1,
+    requestsFailed: 0,
+    requestsInFlight: 0,
+    fundingAuthorization: false,
+    settlementAuthorization: false,
+    signingAuthorization: false,
+    networkListener: false,
+  });
+  session.close();
+  assert.throws(() => createTestRfqQuoteIngressServiceReader({
+    blindPolicy,
+    capabilityVerifications: data.verifications,
+    deliveryService: service,
+    marketRiskPolicy,
+    marketRiskSnapshot: currentMarketRiskSnapshot(),
+    nowSeconds: () => NOW,
+    priceSignals: [],
+    randomBytesImpl: () => Buffer.alloc(32, 21),
+    signal: deployment.signal,
+  }), /already bound/);
+});
+
+test("fails closed on substituted, mutable, or stale ingress-reader evidence", async (t) => {
+  const data = await fixture();
+  const deployment = new AbortController();
+  const client = createTestRfqDeliveryClient({
+    paths: data.paths,
+    policy: deliveryPolicy,
+    requestTtlSeconds: 15,
+    timeoutMs: 5_000,
+    maximumResponseBytes: 262_144,
+    requestImpl: data.responder,
+    nowSeconds: () => NOW,
+    randomBytesImpl: () => Buffer.alloc(32, 31),
+  });
+  const service = startTestRfqDeliveryService({ client, signal: deployment.signal });
+  const signals = marketSigners.map((_signer, index) => (
+    marketSignal(index, "lightning-to-bit", id(`ingress-evidence-${index}`))
+  ));
+  const base = {
+    blindPolicy: { ...blindPolicy },
+    capabilityVerifications: [...data.verifications],
+    deliveryService: service,
+    marketRiskPolicy: {
+      ...marketRiskPolicy,
+      allowedPriceSourcePolicyDigests: [...marketRiskPolicy.allowedPriceSourcePolicyDigests],
+    },
+    marketRiskSnapshot: currentMarketRiskSnapshot(),
+    nowSeconds: () => NOW,
+    priceSignals: signals,
+    randomBytesImpl: () => Buffer.alloc(32, 32),
+    signal: deployment.signal,
+  };
+  t.after(() => deployment.abort());
+
+  let getterCalls = 0;
+  const accessorInput = { ...base };
+  Object.defineProperty(accessorInput, "blindPolicy", {
+    enumerable: true,
+    get() {
+      getterCalls += 1;
+      return blindPolicy;
+    },
+  });
+  assert.throws(
+    () => createTestRfqQuoteIngressServiceReader(accessorInput),
+    /enumerable data properties/,
+  );
+  assert.equal(getterCalls, 0);
+  let coercionCalls = 0;
+  assert.throws(() => createTestRfqQuoteIngressServiceReader({
+    ...base,
+    blindPolicy: {
+      ...blindPolicy,
+      chainId: {
+        valueOf() {
+          coercionCalls += 1;
+          return 1;
+        },
+      },
+    },
+  }), /primitive data value/);
+  assert.equal(coercionCalls, 0);
+  assert.throws(() => createTestRfqQuoteIngressServiceReader({
+    ...base,
+    capabilityVerifications: [{ ...data.verifications[0] }, data.verifications[1]],
+  }), /locally verified capability/);
+  assert.throws(() => createTestRfqQuoteIngressServiceReader({
+    ...base,
+    priceSignals: [{ ...signals[0] }, signals[1], signals[2]],
+  }), /original verifier provenance/);
+  assert.throws(() => createTestRfqQuoteIngressServiceReader({
+    ...base,
+    blindPolicy: { ...blindPolicy, marketRiskPolicyDigest: id("another-market-risk-policy") },
+  }), /exact market-risk policy/);
+
+  let entropy = 33;
+  const reader = createTestRfqQuoteIngressServiceReader({
+    ...base,
+    randomBytesImpl: () => Buffer.alloc(32, ++entropy),
+  });
+  base.blindPolicy.minimumIndependentSolvers = 16;
+  base.marketRiskPolicy.allowedPriceSourcePolicyDigests.length = 0;
+  base.marketRiskSnapshot.observedAt = 0;
+  const session = await reader.read({ pricing, signal: new AbortController().signal });
+  assert.equal(session.preview().quoteCount, 2);
+  session.close();
+  service.stop();
+  assert.equal(reader.status().state, "stopped");
+
+  const staleDeployment = new AbortController();
+  const staleClient = createTestRfqDeliveryClient({
+    paths: data.paths,
+    policy: deliveryPolicy,
+    requestTtlSeconds: 15,
+    timeoutMs: 5_000,
+    maximumResponseBytes: 262_144,
+    requestImpl: data.responder,
+    nowSeconds: () => NOW,
+    randomBytesImpl: () => Buffer.alloc(32, 35),
+  });
+  const staleService = startTestRfqDeliveryService({ client: staleClient, signal: staleDeployment.signal });
+  let staleEntropy = 40;
+  const staleReader = createTestRfqQuoteIngressServiceReader({
+    ...base,
+    blindPolicy,
+    deliveryService: staleService,
+    marketRiskPolicy,
+    marketRiskSnapshot: { ...currentMarketRiskSnapshot(), observedAt: NOW - 121 },
+    priceSignals: signals,
+    randomBytesImpl: () => Buffer.alloc(32, ++staleEntropy),
+    signal: staleDeployment.signal,
+  });
+  t.after(() => staleDeployment.abort());
+  await assert.rejects(
+    staleReader.read({ pricing, signal: new AbortController().signal }),
+    /not enough independent valid blind solver offers/,
+  );
+  assert.equal(staleReader.status().requestsFailed, 1);
+});
+
 test("keeps quote ingress factories, execution modes, and methods provenance-bound", async (t) => {
+  const data = await fixture();
   const store = await quoteIngressStore();
   const deployment = new AbortController();
-  const productionReader = createRfqQuoteIngressReader({ read: async () => null });
+  const productionClient = createRfqDeliveryClient({
+    paths: data.paths,
+    policy: deliveryPolicy,
+    requestTtlSeconds: 15,
+    timeoutMs: 5_000,
+    maximumResponseBytes: 262_144,
+  });
+  const productionService = startRfqDeliveryService({
+    client: productionClient,
+    signal: deployment.signal,
+  });
+  assert.throws(() => createRfqQuoteIngressReader({ read: async () => null }), /fields are not exact/);
+  const productionReader = createRfqQuoteIngressReader({
+    blindPolicy,
+    capabilityVerifications: data.verifications,
+    deliveryService: productionService,
+    marketRiskPolicy,
+    marketRiskSnapshot: currentMarketRiskSnapshot(),
+    priceSignals: marketSigners.map((_signer, index) => (
+      marketSignal(index, "lightning-to-bit", id(`production-ingress-reader-${index}`))
+    )),
+    signal: deployment.signal,
+  });
   const testReader = createTestRfqQuoteIngressReader({ read: async () => null });
-  t.after(() => { try { store.close(); } catch {} });
+  t.after(() => {
+    deployment.abort();
+    try { store.close(); } catch {}
+  });
   assert.throws(() => createRfqQuoteIngressRoute({
     policy: quoteIngressPolicy,
     quoteReader: testReader,
@@ -1127,12 +1340,19 @@ test("keeps quote ingress factories, execution modes, and methods provenance-bou
     replayStore: store,
     signal: deployment.signal,
   }), /matching factory-created quote reader/);
+  assert.throws(() => createRfqQuoteIngressRoute({
+    policy: quoteIngressPolicy,
+    quoteReader: productionReader,
+    replayStore: store,
+    signal: new AbortController().signal,
+  }), /share one deployment lifecycle/);
   const route = createRfqQuoteIngressRoute({
     policy: quoteIngressPolicy,
     quoteReader: productionReader,
     replayStore: store,
     signal: deployment.signal,
   });
+  await assert.rejects(productionReader.read({}), /route-owned/);
   assert.equal(isRfqQuoteIngressRoute(route), true);
   const copied = { ...route };
   await assert.rejects(copied.handle(quoteIngressRequest("/v1/quotes", {})), /factory provenance/);
