@@ -831,7 +831,7 @@ test("requires original current market evidence through every retained offer exp
   };
   assert.throws(
     () => buildMultipathBlindQuoteBook(input),
-    /current market-risk attestations/,
+    /blind quote-book input fields are not exact/,
   );
 
   const current = marketRiskAttestationsForCollection(collection);
@@ -866,6 +866,178 @@ test("requires original current market evidence through every retained offer exp
   assert.equal(book.rejected.length, 0);
   assert.equal(book.marketRiskPolicyDigest, bitRiskPolicyDigest(marketRiskPolicy));
   assert.ok(book.offers.every((offer) => offer.marketRiskValidUntil >= BigInt(offer.offer.expiresAt)));
+});
+
+test("rejects non-data blind competition authority without accessors or coercion", async () => {
+  const { collection, offers, verifications } = await collect();
+  const marketRiskAttestations = marketRiskAttestationsForCollection(collection);
+  const base = {
+    pricing,
+    collection,
+    capabilityVerifications: verifications,
+    marketRiskAttestations,
+    now: NOW,
+    policy: blindPolicy,
+  };
+  let getterCalls = 0;
+  let coercionCalls = 0;
+
+  const outerAccessor = { ...base };
+  Object.defineProperty(outerAccessor, "pricing", {
+    enumerable: true,
+    get() {
+      getterCalls += 1;
+      return pricing;
+    },
+  });
+  assert.throws(
+    () => buildMultipathBlindQuoteBook(outerAccessor),
+    /enumerable data properties/,
+  );
+
+  const policyAccessor = { ...blindPolicy };
+  Object.defineProperty(policyAccessor, "marketRiskPolicyDigest", {
+    enumerable: true,
+    get() {
+      getterCalls += 1;
+      return blindPolicy.marketRiskPolicyDigest;
+    },
+  });
+  assert.throws(
+    () => buildMultipathBlindQuoteBook({ ...base, policy: policyAccessor }),
+    /enumerable data properties/,
+  );
+
+  const amountCoercion = {
+    toString() {
+      coercionCalls += 1;
+      return pricing.exactOutput;
+    },
+  };
+  assert.throws(
+    () => buildMultipathBlindQuoteBook({
+      ...base,
+      pricing: { ...pricing, exactOutput: amountCoercion },
+    }),
+    /canonical bounded unsigned integer/,
+  );
+
+  const attestationAccessor = {};
+  Object.defineProperty(attestationAccessor, "requestDigest", {
+    enumerable: true,
+    get() {
+      getterCalls += 1;
+      return marketRiskAttestations[0].requestDigest;
+    },
+  });
+  assert.throws(
+    () => buildMultipathBlindQuoteBook({
+      ...base,
+      marketRiskAttestations: [attestationAccessor, ...marketRiskAttestations.slice(1)],
+    }),
+    /requestDigest must be an enumerable data property/,
+  );
+
+  const envelopeAccessor = {};
+  Object.defineProperty(envelopeAccessor, "offer", {
+    enumerable: true,
+    get() {
+      getterCalls += 1;
+      return offers[0].envelope.offer;
+    },
+  });
+  Object.defineProperty(envelopeAccessor, "signature", {
+    enumerable: true,
+    value: offers[0].envelope.signature,
+  });
+  const accessorResult = validateBlindSolverOffer({
+    pricing,
+    envelope: envelopeAccessor,
+    capabilityVerification: verifications[0],
+    now: NOW,
+    policy: blindPolicy,
+  });
+  assert.equal(accessorResult.valid, false);
+  assert.match(accessorResult.reasons[0], /enumerable data properties/);
+
+  const signatureCoercion = {
+    toString() {
+      coercionCalls += 1;
+      return offers[0].envelope.signature;
+    },
+  };
+  const coercionResult = validateBlindSolverOffer({
+    pricing,
+    envelope: { offer: offers[0].envelope.offer, signature: signatureCoercion },
+    capabilityVerification: verifications[0],
+    now: NOW,
+    policy: blindPolicy,
+  });
+  assert.equal(coercionResult.valid, false);
+  assert.match(coercionResult.reasons[0], /signature must be a string/);
+  assert.equal(getterCalls, 0);
+  assert.equal(coercionCalls, 0);
+});
+
+test("rejects hidden, symbolic, inherited, sparse, and decorated blind competition authority", async () => {
+  const { collection, verifications } = await collect();
+  const marketRiskAttestations = marketRiskAttestationsForCollection(collection);
+  const base = {
+    pricing,
+    collection,
+    capabilityVerifications: verifications,
+    marketRiskAttestations,
+    now: NOW,
+    policy: blindPolicy,
+  };
+
+  const hiddenPricing = { ...pricing };
+  Object.defineProperty(hiddenPricing, "preferredSolver", { enumerable: false, value: solvers[0].address });
+  assert.throws(
+    () => buildMultipathBlindQuoteBook({ ...base, pricing: hiddenPricing }),
+    /outside policy/,
+  );
+
+  const symbolicPolicy = { ...blindPolicy };
+  symbolicPolicy[Symbol("fallback")] = true;
+  assert.throws(
+    () => buildMultipathBlindQuoteBook({ ...base, policy: symbolicPolicy }),
+    /outside policy/,
+  );
+
+  const inheritedPolicy = Object.create(blindPolicy);
+  assert.throws(
+    () => buildMultipathBlindQuoteBook({ ...base, policy: inheritedPolicy }),
+    /plain data object/,
+  );
+
+  const sparseCapabilities = [...verifications];
+  delete sparseCapabilities[1];
+  assert.throws(
+    () => buildMultipathBlindQuoteBook({ ...base, capabilityVerifications: sparseCapabilities }),
+    /dense/,
+  );
+
+  const decoratedCapabilities = [...verifications];
+  decoratedCapabilities.preferred = solvers[0].address;
+  assert.throws(
+    () => buildMultipathBlindQuoteBook({ ...base, capabilityVerifications: decoratedCapabilities }),
+    /dense/,
+  );
+
+  const sparseAttestations = [...marketRiskAttestations];
+  delete sparseAttestations[0];
+  assert.throws(
+    () => buildMultipathBlindQuoteBook({ ...base, marketRiskAttestations: sparseAttestations }),
+    /dense/,
+  );
+
+  const decoratedAttestations = [...marketRiskAttestations];
+  Object.defineProperty(decoratedAttestations, "fallback", { enumerable: false, value: "reference-par" });
+  assert.throws(
+    () => buildMultipathBlindQuoteBook({ ...base, marketRiskAttestations: decoratedAttestations }),
+    /dense/,
+  );
 });
 
 test("reserves outbound Lightning plus routing headroom before disclosing the user invoice", async (t) => {
