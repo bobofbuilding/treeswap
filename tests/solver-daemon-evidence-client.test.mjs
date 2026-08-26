@@ -24,6 +24,7 @@ import {
 } from "../lib/solver-daemon-evidence.mjs";
 import { executeSolverDaemonStep } from "../lib/solver-daemon-runtime.mjs";
 import { CoordinatorStore } from "../lib/coordinator-store.mjs";
+import { bindTestContractIntent } from "./helpers/contract-intent-fixture.mjs";
 
 const NOW = 2_100_000_000;
 const LIGHTNING_OPERATOR = new Wallet(`0x${"51".repeat(32)}`);
@@ -59,6 +60,7 @@ function settlement(direction = "bit-to-lightning", { observed = true } = {}) {
   return {
     settlementId: hash(`${direction}:settlement`),
     intentDigest: hash(`${direction}:intent`),
+    contractIntentDigest: hash(`${direction}:contract-intent`),
     direction,
     reservationId: observed ? hash(`${direction}:reservation`) : null,
     reservationTxHash: observed ? hash(`${direction}:reservation-tx`) : null,
@@ -322,12 +324,10 @@ test("collects both distinct route approvals for every daemon control and return
 
 test("plugs into the daemon reservation boundary without an injected evidence callback", async (t) => {
   const evidencePolicy = policy("lightning-to-bit");
-  const harness = routeHarness({ evidencePolicy });
-  const controls = controlsWithHarness(harness, evidencePolicy);
   const pending = settlement("lightning-to-bit", { observed: false });
   const store = await CoordinatorStore.open(":memory:", { allowMemory: true });
   t.after(() => store.close());
-  store.acceptSettlement({
+  const acceptedInput = {
     settlementId: pending.settlementId,
     pricingId: hash("integration pricing"),
     direction: pending.direction,
@@ -342,7 +342,21 @@ test("plugs into the daemon reservation boundary without an injected evidence ca
     selectedOfferId: hash("integration selected offer"),
     capacityEpoch: 9,
     createdAt: NOW,
+  };
+  store.acceptSettlement(acceptedInput);
+  const contractBound = bindTestContractIntent(store, acceptedInput, {
+    chainId: evidencePolicy.chainId,
+    settlementContractCodeHash: evidencePolicy.settlementContractCodeHash,
+    verifyingContract: evidencePolicy.settlementContract,
   });
+  const harness = routeHarness({
+    evidencePolicy,
+    mutateRecord: ({ record }) => ({
+      ...record,
+      reservationId: contractBound.contractQuoteId,
+    }),
+  });
+  const controls = controlsWithHarness(harness, evidencePolicy);
   const result = await executeSolverDaemonStep({
     store,
     settlementId: pending.settlementId,
@@ -353,7 +367,7 @@ test("plugs into the daemon reservation boundary without an injected evidence ca
   assert.equal(result.outcome, "RESERVATION_RECORDED");
   assert.equal(
     store.getSettlement(pending.settlementId).reservationId,
-    hash(`${pending.settlementId}:discovered-reservation`),
+    contractBound.contractQuoteId,
   );
   assert.deepEqual(harness.calls.map(({ role }) => role).sort(), ["lightningOperator", "securityReviewer"]);
 });

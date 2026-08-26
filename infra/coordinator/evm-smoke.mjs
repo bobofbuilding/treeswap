@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ContractFactory, HDNodeWallet, JsonRpcProvider, id, keccak256, sha256 } from "ethers";
 import { CoordinatorStore, coordinatorCommitmentDigest } from "../../lib/coordinator-store.mjs";
+import { bindSmokeContractIntent } from "./contract-intent-smoke-fixture.mjs";
 import {
   dispatchEvmClaimAction,
   evmClaimActionCommitment,
@@ -127,17 +128,26 @@ try {
     capacityEpoch: settlement.capacityEpoch,
     plannedAt: now + 2,
   };
-  action.payloadDigest = evmClaimActionCommitment(action, operation, signer.address);
-
   store = await CoordinatorStore.open(databasePath);
   store.acceptSettlement(settlement);
+  const boundSettlement = await bindSmokeContractIntent({
+    store,
+    settlement,
+    quoteId,
+    chainId: "31337",
+    verifyingContract: contract,
+    settlementContractCodeHash: contractCodeHash,
+    userWallet: signer,
+  });
+  action.intentDigest = boundSettlement.contractIntentDigest;
+  action.payloadDigest = evmClaimActionCommitment(action, operation, signer.address);
   store.recordReservation({
     settlementId: settlement.settlementId,
     reservationId: quoteId,
     reservationTxHash: digest("reservation-transaction"),
     reservationBlockNumber: 1,
     reservationBlockHash: digest("reservation-block"),
-    reservationIntentDigest: settlement.intentDigest,
+    reservationIntentDigest: boundSettlement.contractIntentDigest,
     observedAt: now + 1,
   });
   await prepareEvmClaimAction({

@@ -19,7 +19,7 @@ The package uses `treeswap.retained-release-custody.v1`. Its directory and every
 
 The top-level package contains:
 
-- a verified schema-v9 coordinator backup;
+- a verified schema-v10 coordinator backup, including every nonterminal settlement's independently revalidated signed contract-intent record;
 - the host and process instance commitments at sealing time;
 - a bounded two-to-five-witness policy with at least two distinct signer and organization commitments; and
 - one canonically ordered release entry for every and only release represented by a nonterminal settlement.

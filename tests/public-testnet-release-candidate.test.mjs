@@ -123,6 +123,10 @@ import {
   verifyRetainedReleaseRecoveryDrill,
   verifyRetainedReleaseRecoveryReadiness,
 } from "../lib/release-retention-custody.mjs";
+import {
+  TEST_CONTRACT_USER,
+  bindTestContractIntent,
+} from "./helpers/contract-intent-fixture.mjs";
 
 const ZERO = `0x${"00".repeat(32)}`;
 const LIGHTNING_OPERATOR = new Wallet(`0x${"55".repeat(32)}`);
@@ -1213,7 +1217,7 @@ test("activates funding only after same-process evidence, approvals, reconciliat
     direction: solverBinding.direction,
     nonceAuthorityDigest: id("active wrapper nonce authority").toLowerCase(),
     intentNonce: "1",
-    intentDigest: id("active wrapper intent").toLowerCase(),
+    intentDigest: id("active wrapper user authorization").toLowerCase(),
     paymentHash: id("active wrapper payment hash").toLowerCase(),
     invoiceDigest: id("active wrapper invoice").toLowerCase(),
     amountSats: "10000",
@@ -1248,11 +1252,11 @@ test("activates funding only after same-process evidence, approvals, reconciliat
     identity: {
       authenticated: true,
       commitment: id("active wrapper identity").toLowerCase(),
-      key: "active-wrapper-user",
+      key: TEST_CONTRACT_USER,
     },
     request: {
       requestId: waitingSettlement.pricingId,
-      user: "active-wrapper-user",
+      user: TEST_CONTRACT_USER,
       direction: waitingSettlement.direction,
       notionalSats: waitingSettlement.amountSats,
       nonce: "1",
@@ -1299,6 +1303,14 @@ test("activates funding only after same-process evidence, approvals, reconciliat
     authorizedAt: now + 2,
   });
   waitingStore.acceptSettlement(waitingSettlement);
+  const waitingContractBound = bindTestContractIntent(waitingStore, waitingSettlement, {
+    bitAmount: firm.bitAmountWei,
+    chainId: solverBinding.chainId,
+    quoteExpiresAt: now + 20,
+    settlementContractCodeHash: solverBinding.settlementContractCodeHash,
+    solverPrivateKey: solverCapability.solver.privateKey,
+    verifyingContract: solverBinding.settlementContract,
+  });
   let serviceNow = (now + 3) * 1_000;
   const serviceLease = await acquireCoordinatorServiceLease(normalizeCoordinatorServiceConfig({
     COORDINATOR_DATABASE_PATH: join(serviceRoot, "data", "coordinator.sqlite"),
@@ -1382,7 +1394,7 @@ test("activates funding only after same-process evidence, approvals, reconciliat
     const rotatedRecoveryAuthority = verifiedSolverRecoveryAuthority(rotatedRecoverySolverCapability.verification);
     const custodyManifest = {
       schema: "treeswap.retained-release-custody.v1",
-      coordinatorSchema: "treeswap.coordinator.v9",
+      coordinatorSchema: "treeswap.coordinator.v10",
       createdAt: now + 3,
       sealedHostInstanceId: id("retained original host").toLowerCase(),
       sealedProcessInstanceId: id("retained original process").toLowerCase(),
@@ -1431,7 +1443,7 @@ test("activates funding only after same-process evidence, approvals, reconciliat
         }],
         runtime: {
           sourceCommit: candidate.record.reviewedBuildCommit,
-          coordinatorSchema: "treeswap.coordinator.v9",
+          coordinatorSchema: "treeswap.coordinator.v10",
           nodeVersion: process.version,
           archive: await retainedFileReference(runtimeArchivePath, serviceRoot),
         },
@@ -1968,11 +1980,11 @@ test("activates funding only after same-process evidence, approvals, reconciliat
       assert.equal(JSON.stringify(waitingCycle).includes(wrapperSettlementId), false);
       restoredStore.recordReservation({
         settlementId: wrapperSettlementId,
-        reservationId: id("restored wrapper reservation").toLowerCase(),
+        reservationId: waitingContractBound.contractQuoteId,
         reservationTxHash: id("restored wrapper reservation transaction").toLowerCase(),
         reservationBlockNumber: 100,
         reservationBlockHash: id("restored wrapper reservation block").toLowerCase(),
-        reservationIntentDigest: waitingSettlement.intentDigest,
+        reservationIntentDigest: waitingContractBound.contractIntentDigest,
         observedAt: now + 3,
       });
       assert.throws(() => createCoordinatorRecoveryActionLoop({
@@ -1992,7 +2004,7 @@ test("activates funding only after same-process evidence, approvals, reconciliat
         method: "/invoicesrpc.Invoices/SettleInvoice",
         requestId: id("restored wrapper action request").toLowerCase(),
         payloadDigest: id("restored wrapper action payload").toLowerCase(),
-        intentDigest: waitingSettlement.intentDigest,
+        intentDigest: waitingContractBound.contractIntentDigest,
         paymentHash: waitingSettlement.paymentHash,
         invoiceDigest: waitingSettlement.invoiceDigest,
         amountSats: waitingSettlement.amountSats,
@@ -2407,11 +2419,11 @@ test("activates funding only after same-process evidence, approvals, reconciliat
       identity: {
         authenticated: true,
         commitment: id("unmatched active lifecycle identity").toLowerCase(),
-        key: "unmatched-active-lifecycle-user",
+        key: TEST_CONTRACT_USER,
       },
       request: {
         requestId: unmatchedRequestId,
-        user: "unmatched-active-lifecycle-user",
+        user: TEST_CONTRACT_USER,
         direction: unmatchedBinding.direction,
         notionalSats: "4000",
         nonce: "1",
@@ -2457,13 +2469,13 @@ test("activates funding only after same-process evidence, approvals, reconciliat
       authorizationExpiresAt: now + 25,
       authorizedAt: now + 15,
     });
-    waitingStore.acceptSettlement({
+    const unmatchedSettlementInput = {
       settlementId: unmatchedSettlementId,
       pricingId: unmatchedRequestId,
       direction: unmatchedBinding.direction,
       nonceAuthorityDigest: id("unmatched active lifecycle nonce authority").toLowerCase(),
       intentNonce: "1",
-      intentDigest: id("unmatched active lifecycle intent").toLowerCase(),
+      intentDigest: id("unmatched active lifecycle authorization").toLowerCase(),
       paymentHash: id("unmatched active lifecycle payment hash").toLowerCase(),
       invoiceDigest: id("unmatched active lifecycle invoice").toLowerCase(),
       amountSats: "4000",
@@ -2472,6 +2484,15 @@ test("activates funding only after same-process evidence, approvals, reconciliat
       selectedOfferId: unmatchedOfferId,
       capacityEpoch: unmatchedBinding.capacityEpoch,
       createdAt: now + 15,
+    };
+    waitingStore.acceptSettlement(unmatchedSettlementInput);
+    const unmatchedContractBound = bindTestContractIntent(waitingStore, unmatchedSettlementInput, {
+      bitAmount: unmatchedOffer.bitAmountWei,
+      chainId: unmatchedBinding.chainId,
+      quoteExpiresAt: unmatchedOffer.selectionAuthorizationExpiresAt,
+      settlementContractCodeHash: unmatchedBinding.settlementContractCodeHash,
+      solverPrivateKey: unmatchedSolverCapability.solver.privateKey,
+      verifyingContract: unmatchedBinding.settlementContract,
     });
     const unmatchedActivation = await activatePublicTestnetRelease({
       candidate,
@@ -2543,11 +2564,11 @@ test("activates funding only after same-process evidence, approvals, reconciliat
     }), /original same-process execution fence/);
     waitingStore.recordReservation({
       settlementId: wrapperSettlementId,
-      reservationId: id("active wrapper reservation").toLowerCase(),
+      reservationId: waitingContractBound.contractQuoteId,
       reservationTxHash: id("active wrapper reservation transaction").toLowerCase(),
       reservationBlockNumber: 100,
       reservationBlockHash: id("active wrapper reservation block").toLowerCase(),
-      reservationIntentDigest: waitingSettlement.intentDigest,
+      reservationIntentDigest: waitingContractBound.contractIntentDigest,
       observedAt: now + 3,
     });
     waitingStore.planAction({
@@ -2556,7 +2577,7 @@ test("activates funding only after same-process evidence, approvals, reconciliat
       method: "/invoicesrpc.Invoices/SettleInvoice",
       requestId: id("active wrapper action request").toLowerCase(),
       payloadDigest: id("active wrapper action payload").toLowerCase(),
-      intentDigest: waitingSettlement.intentDigest,
+      intentDigest: waitingContractBound.contractIntentDigest,
       paymentHash: waitingSettlement.paymentHash,
       invoiceDigest: waitingSettlement.invoiceDigest,
       amountSats: waitingSettlement.amountSats,
@@ -2651,11 +2672,11 @@ test("activates funding only after same-process evidence, approvals, reconciliat
     });
     waitingStore.recordReservation({
       settlementId: unmatchedSettlementId,
-      reservationId: id("unmatched active lifecycle reservation").toLowerCase(),
+      reservationId: unmatchedContractBound.contractQuoteId,
       reservationTxHash: id("unmatched active lifecycle reservation transaction").toLowerCase(),
       reservationBlockNumber: 101,
       reservationBlockHash: id("unmatched active lifecycle reservation block").toLowerCase(),
-      reservationIntentDigest: unmatchedSettlement.intentDigest,
+      reservationIntentDigest: unmatchedContractBound.contractIntentDigest,
       observedAt: now + 15,
     });
     waitingStore.planAction({
@@ -2664,7 +2685,7 @@ test("activates funding only after same-process evidence, approvals, reconciliat
       method: "evm:claim",
       requestId: id("unmatched active lifecycle incompatible EVM request").toLowerCase(),
       payloadDigest: id("unmatched active lifecycle incompatible EVM payload").toLowerCase(),
-      intentDigest: unmatchedSettlement.intentDigest,
+      intentDigest: unmatchedContractBound.contractIntentDigest,
       paymentHash: unmatchedSettlement.paymentHash,
       invoiceDigest: unmatchedSettlement.invoiceDigest,
       amountSats: unmatchedSettlement.amountSats,

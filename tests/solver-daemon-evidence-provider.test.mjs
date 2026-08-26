@@ -66,6 +66,7 @@ function settlement({ observed = false, direction = "bit-to-lightning" } = {}) {
     settlementId: hash("settlement"),
     direction,
     intentDigest: hash("intent"),
+    contractIntentDigest: hash("contract intent"),
     reservationId: observed ? hash("reservation") : null,
     reservationTxHash: observed ? hash("reservation transaction") : null,
     reservationBlockNumber: observed ? 9 : null,

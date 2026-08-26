@@ -6,10 +6,15 @@ import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { id } from "ethers";
 import { CoordinatorStore } from "../lib/coordinator-store.mjs";
+import {
+  TEST_CONTRACT_SOLVER,
+  TEST_CONTRACT_USER,
+  bindTestContractIntent,
+} from "./helpers/contract-intent-fixture.mjs";
 
 const NOW = 2_000_000_000;
-const USER = "0x1111111111111111111111111111111111111111";
-const SOLVER = "0x2222222222222222222222222222222222222222";
+const USER = TEST_CONTRACT_USER;
+const SOLVER = TEST_CONTRACT_SOLVER;
 const SOLVER_TWO = "0x3333333333333333333333333333333333333333";
 const BIT = 10n ** 18n;
 const SEND_PAYMENT = "/routerrpc.Router/SendPaymentV2";
@@ -106,10 +111,11 @@ function completeSelectedSettlement(store, firmOffer, label, proofDigest) {
     executableOfferDigest: hash(`executable-offer:${label}`),
     finalizedAt: boundAt,
   });
+  const executionAuthorizationDigest = hash(`execution-authorization:${label}`);
   store.bindFirmOfferUserAuthorization({
     offerId: firmOffer.offerId,
     executionBindingDigest: executable.executionBindingDigest,
-    executionAuthorizationDigest: hash(`execution-authorization:${label}`),
+    executionAuthorizationDigest,
     authorizationExpiresAt: firmOffer.selectionAuthorizationExpiresAt,
     authorizedAt: boundAt,
   });
@@ -119,7 +125,7 @@ function completeSelectedSettlement(store, firmOffer, label, proofDigest) {
     direction: firmOffer.direction,
     nonceAuthorityDigest: hash(`nonce-authority:${label}`),
     intentNonce: String(100 + firmOffer.capacityEpoch),
-    intentDigest: hash(`intent:${label}`),
+    intentDigest: executionAuthorizationDigest,
     paymentHash: hash(`payment:${label}`),
     invoiceDigest: hash(`invoice:${label}`),
     amountSats: firmOffer.lightningAmountSats,
@@ -130,13 +136,17 @@ function completeSelectedSettlement(store, firmOffer, label, proofDigest) {
     createdAt: boundAt,
   };
   store.acceptSettlement(settlement);
+  const contractBound = bindTestContractIntent(store, settlement, {
+    bitAmount: firmOffer.bitAmountWei === "0" ? "1000000" : firmOffer.bitAmountWei,
+    quoteExpiresAt: firmOffer.selectionAuthorizationExpiresAt,
+  });
   store.recordReservation({
     settlementId: settlement.settlementId,
-    reservationId: hash(`reservation:${label}`),
+    reservationId: contractBound.contractQuoteId,
     reservationTxHash: hash(`reservation-tx:${label}`),
     reservationBlockNumber: 20_000_000,
     reservationBlockHash: hash(`reservation-block:${label}`),
-    reservationIntentDigest: settlement.intentDigest,
+    reservationIntentDigest: contractBound.contractIntentDigest,
     observedAt: boundAt + 1,
   });
   const action = store.planAction({
@@ -145,7 +155,7 @@ function completeSelectedSettlement(store, firmOffer, label, proofDigest) {
     method: firmOffer.direction === "bit-to-lightning" ? SEND_PAYMENT : SETTLE_INVOICE,
     requestId: hash(`action-request:${label}`),
     payloadDigest: hash(`action-payload:${label}`),
-    intentDigest: settlement.intentDigest,
+    intentDigest: contractBound.contractIntentDigest,
     paymentHash: settlement.paymentHash,
     invoiceDigest: settlement.invoiceDigest,
     amountSats: settlement.amountSats,
@@ -989,7 +999,7 @@ test("binds a settlement once to its reviewed release, risk policy, evidence pol
       direction: rfq.direction,
       nonceAuthorityDigest: hash("execution-policy-nonce-authority"),
       intentNonce: "22",
-      intentDigest: hash("execution-policy-intent"),
+      intentDigest: hash("execution-policy-user-authorization"),
       paymentHash: hash("execution-policy-payment"),
       invoiceDigest: hash("execution-policy-invoice"),
       amountSats: rfq.notionalSats,
@@ -1000,6 +1010,10 @@ test("binds a settlement once to its reviewed release, risk policy, evidence pol
       createdAt: NOW + 2,
     };
     store.acceptSettlement(value);
+    bindTestContractIntent(store, value, {
+      bitAmount: firm.bitAmountWei,
+      quoteExpiresAt: NOW + 20,
+    });
     const authority = {
       settlementId: value.settlementId,
       releaseRecordDigest: hash("execution-policy-release"),
@@ -1034,7 +1048,7 @@ test("binds a settlement once to its reviewed release, risk policy, evidence pol
       bound.executionPolicyBindingDigest,
     );
     const boundLiabilities = store.releaseLiabilitySnapshot();
-    assert.equal(boundLiabilities.coordinatorSchema, "treeswap.coordinator.v9");
+    assert.equal(boundLiabilities.coordinatorSchema, "treeswap.coordinator.v10");
     assert.equal(boundLiabilities.totalNonterminalSettlementCount, 1);
     assert.equal(boundLiabilities.unboundNonterminalSettlementCount, 0);
     assert.equal(boundLiabilities.releases.length, 1);
@@ -1066,13 +1080,14 @@ test("binds a settlement once to its reviewed release, risk policy, evidence pol
       selectedOfferId: hash("execution-policy-late-offer"),
     };
     store.acceptSettlement(late);
+    const lateContractBound = bindTestContractIntent(store, late);
     store.recordReservation({
       settlementId: late.settlementId,
-      reservationId: hash("execution-policy-late-reservation"),
+      reservationId: lateContractBound.contractQuoteId,
       reservationTxHash: hash("execution-policy-late-transaction"),
       reservationBlockNumber: 20_000_001,
       reservationBlockHash: hash("execution-policy-late-block"),
-      reservationIntentDigest: late.intentDigest,
+      reservationIntentDigest: lateContractBound.contractIntentDigest,
       observedAt: NOW + 3,
     });
     const unsafeLiabilities = store.releaseLiabilitySnapshot();
@@ -1082,7 +1097,7 @@ test("binds a settlement once to its reviewed release, risk policy, evidence pol
     assert.notEqual(unsafeLiabilities.snapshotDigest, boundLiabilities.snapshotDigest);
     assert.throws(
       () => store.bindSettlementExecutionPolicy({ ...authority, settlementId: late.settlementId }),
-      /must bind before reservation, actions, or closure/,
+      /requires the contract intent before reservation, actions, or closure/,
     );
   } finally {
     store.close();

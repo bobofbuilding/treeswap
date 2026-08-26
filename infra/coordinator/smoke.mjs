@@ -2,6 +2,7 @@ import { createHash, createPrivateKey, createPublicKey, generateKeyPairSync, ran
 import { readFile } from "node:fs/promises";
 import { readConfirmedLightningPaymentProof } from "../../lib/coordinator-action-runner.mjs";
 import { CoordinatorStore, coordinatorCommitmentDigest } from "../../lib/coordinator-store.mjs";
+import { bindSmokeContractIntent } from "./contract-intent-smoke-fixture.mjs";
 import { invoiceDigest } from "../../lib/lnd-rest-client.mjs";
 import {
   SOLVER_DAEMON_EVIDENCE_POLICY_SCHEMA,
@@ -91,13 +92,15 @@ const settlement = {
 const databasePath = required("COORDINATOR_DATABASE_PATH");
 let store = await CoordinatorStore.open(databasePath);
 store.acceptSettlement(settlement);
+const quoteId = randomHash();
+const boundSettlement = await bindSmokeContractIntent({ store, settlement, quoteId });
 const observedReservation = {
   settlementId: settlement.settlementId,
-  reservationId: randomHash(),
+  reservationId: quoteId,
   reservationTxHash: randomHash(),
   reservationBlockNumber: 1,
   reservationBlockHash: randomHash(),
-  reservationIntentDigest: settlement.intentDigest,
+  reservationIntentDigest: boundSettlement.contractIntentDigest,
   observedAt: now + 1,
 };
 store.recordReservation(observedReservation);

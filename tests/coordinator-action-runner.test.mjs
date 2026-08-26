@@ -13,6 +13,11 @@ import {
 import { CoordinatorStore } from "../lib/coordinator-store.mjs";
 import { signLightningAdapterResponseEnvelope } from "../lib/lightning-adapter-response.mjs";
 import { lightningAuthorizationEnvelopeDigest } from "../lib/lightning-authorization-envelope.mjs";
+import {
+  bindTestContractIntent,
+  testContractIntentDigest,
+  testContractQuoteId,
+} from "./helpers/contract-intent-fixture.mjs";
 
 const NOW = 2_000_000_000;
 const PREIMAGE = id("coordinator-runner-preimage").toLowerCase();
@@ -65,11 +70,11 @@ function settlement(label) {
 function reservation(value) {
   return {
     settlementId: value.settlementId,
-    reservationId: hash(`${value.settlementId}:reservation`),
+    reservationId: value.contractQuoteId ?? testContractQuoteId(value),
     reservationTxHash: hash(`${value.settlementId}:tx`),
     reservationBlockNumber: 20_000_000,
     reservationBlockHash: hash(`${value.settlementId}:block`),
-    reservationIntentDigest: value.intentDigest,
+    reservationIntentDigest: value.contractIntentDigest ?? testContractIntentDigest(value),
     observedAt: NOW + 10,
   };
 }
@@ -85,7 +90,7 @@ function pendingAction(value, op = operation()) {
     method: "/routerrpc.Router/SendPaymentV2",
     requestId: hash(`${value.settlementId}:request`),
     payloadDigest: hash("placeholder"),
-    intentDigest: value.intentDigest,
+    intentDigest: value.contractIntentDigest ?? testContractIntentDigest(value),
     paymentHash: value.paymentHash,
     invoiceDigest: value.invoiceDigest,
     amountSats: value.amountSats,
@@ -99,6 +104,7 @@ async function setup(label) {
   const store = await CoordinatorStore.open(":memory:", { allowMemory: true });
   const value = settlement(label);
   store.acceptSettlement(value);
+  bindTestContractIntent(store, value);
   store.recordReservation(reservation(value));
   const action = pendingAction(value);
   store.planAction(action);
@@ -130,7 +136,7 @@ async function makeUnknownInvoice(label) {
     method: "/invoicesrpc.Invoices/SettleInvoice",
     requestId: hash(`${label}:settle-request`),
     payloadDigest: hash("placeholder"),
-    intentDigest: value.intentDigest,
+    intentDigest: testContractIntentDigest(value),
     paymentHash: value.paymentHash,
     invoiceDigest: value.invoiceDigest,
     amountSats: value.amountSats,
@@ -139,6 +145,7 @@ async function makeUnknownInvoice(label) {
   };
   const action = { ...draft, payloadDigest: lightningActionCommitment(draft, settleOperation) };
   store.acceptSettlement(value);
+  bindTestContractIntent(store, value);
   store.recordReservation(reservation(value));
   store.planAction(action);
   await assert.rejects(() => dispatchLightningAction({
@@ -921,7 +928,7 @@ test("reconciles an unknown invoice settlement through a preimage-free lookup", 
     method: "/invoicesrpc.Invoices/SettleInvoice",
     requestId: hash("reconcile-invoice:settle-request"),
     payloadDigest: hash("placeholder"),
-    intentDigest: value.intentDigest,
+    intentDigest: testContractIntentDigest(value),
     paymentHash: value.paymentHash,
     invoiceDigest: value.invoiceDigest,
     amountSats: value.amountSats,
@@ -930,6 +937,7 @@ test("reconciles an unknown invoice settlement through a preimage-free lookup", 
   };
   const action = { ...draft, payloadDigest: lightningActionCommitment(draft, settleOperation) };
   store.acceptSettlement(value);
+  bindTestContractIntent(store, value);
   store.recordReservation(reservation(value));
   store.planAction(action);
   try {

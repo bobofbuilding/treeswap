@@ -13,6 +13,7 @@ import {
   sha256,
 } from "ethers";
 import { CoordinatorStore, coordinatorCommitmentDigest } from "../../lib/coordinator-store.mjs";
+import { bindSmokeContractIntent } from "../coordinator/contract-intent-smoke-fixture.mjs";
 import {
   dispatchEvmClaimAction,
   EvmProviderQuorumError,
@@ -191,15 +192,25 @@ async function prepareClaim({ label, signer, nonce = null }) {
     capacityEpoch: settlement.capacityEpoch,
     plannedAt: settlement.createdAt + 2,
   };
-  action.payloadDigest = evmClaimActionCommitment(action, operation, signer.address);
   store.acceptSettlement(settlement);
+  const boundSettlement = await bindSmokeContractIntent({
+    store,
+    settlement,
+    quoteId,
+    chainId: CHAIN_ID.toString(),
+    verifyingContract: contract,
+    settlementContractCodeHash: contractCodeHash,
+    userWallet: signer,
+  });
+  action.intentDigest = boundSettlement.contractIntentDigest;
+  action.payloadDigest = evmClaimActionCommitment(action, operation, signer.address);
   store.recordReservation({
     settlementId: settlement.settlementId,
     reservationId: quoteId,
     reservationTxHash: digest(`${label}:reservation-transaction`),
     reservationBlockNumber: 1,
     reservationBlockHash: digest(`${label}:reservation-block`),
-    reservationIntentDigest: settlement.intentDigest,
+    reservationIntentDigest: boundSettlement.contractIntentDigest,
     observedAt: settlement.createdAt + 1,
   });
   await prepareEvmClaimAction({

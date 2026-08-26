@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
-import { id, TypedDataEncoder, Wallet } from "ethers";
+import { id, Signature, TypedDataEncoder, Wallet } from "ethers";
 import {
   createClientSafeBlindQuoteSession,
   createTestClientSafeBlindQuoteSession,
@@ -80,6 +80,7 @@ import {
 } from "../lib/rfq-quote-ingress.mjs";
 import {
   authorizeFinalizedContractIntent,
+  persistAuthorizedContractIntent,
   prepareFinalizedContractIntent,
   verifiedAuthorizedContractIntent,
 } from "../lib/rfq-contract-intent.mjs";
@@ -1060,6 +1061,25 @@ test("turns an authorized Lightning-to-BIT RFQ into the exact dual-signed vault 
     solverSignature,
     userSignature,
   }), /original prepared RFQ artifact/);
+  assert.throws(() => authorizeFinalizedContractIntent({
+    now: NOW,
+    prepared,
+    solverSignature: Signature.from(solverSignature).compactSerialized,
+    userSignature,
+  }), /canonical 65-byte ECDSA signature/);
+  let signatureCoercionInvoked = false;
+  assert.throws(() => authorizeFinalizedContractIntent({
+    now: NOW,
+    prepared,
+    solverSignature: {
+      toString() {
+        signatureCoercionInvoked = true;
+        return solverSignature;
+      },
+    },
+    userSignature,
+  }), /canonical 65-byte ECDSA signature/);
+  assert.equal(signatureCoercionInvoked, false);
   const authorized = authorizeFinalizedContractIntent({
     now: NOW,
     prepared,
@@ -1075,6 +1095,23 @@ test("turns an authorized Lightning-to-BIT RFQ into the exact dual-signed vault 
   assert.equal(authorized.transaction.data.slice(0, 10), "0x688ff634");
   assert.equal(authorized.walletDispatchAuthority, false);
   assert.equal(authorized.lightningDispatchAuthority, false);
+  const persisted = persistAuthorizedContractIntent(authorized, { now: NOW + 1 });
+  assert.equal(persisted.state, "CONTRACT_INTENT_BOUND");
+  assert.equal(persisted.intentDigest, authorized.userAuthorizationDigest);
+  assert.equal(persisted.contractIntentDigest, authorized.contractIntentDigest);
+  assert.equal(persisted.contractQuoteId, authorized.quoteId);
+  assert.equal(persisted.contractCalldata, authorized.transaction.data);
+  assert.equal(persisted.contractCalldataDigest, authorized.transaction.dataDigest);
+  assert.equal(persisted.contractToAddress, LIGHTNING_TO_BIT.toLowerCase());
+  assert.equal(persisted.contractUserSignature, authorized.userSignature.toLowerCase());
+  assert.equal(
+    persistAuthorizedContractIntent(authorized, { now: NOW + 2 }).contractIntentRecordDigest,
+    persisted.contractIntentRecordDigest,
+  );
+  assert.throws(
+    () => persistAuthorizedContractIntent({ ...authorized }, { now: NOW + 2 }),
+    /lacks verified RFQ and signature provenance/,
+  );
   assert.equal(verifiedAuthorizedContractIntent(authorized, { now: NOW + 1 }), authorized);
   assert.throws(
     () => verifiedAuthorizedContractIntent({ ...authorized }, { now: NOW + 1 }),
@@ -1127,6 +1164,12 @@ test("turns an authorized BIT-to-Lightning RFQ into a solver-signed user escrow 
   assert.equal(authorized.transaction.to, BIT_TO_LIGHTNING);
   assert.equal(authorized.transaction.data.slice(0, 10), "0xcd83331b");
   assert.equal(authorized.walletDispatchAuthority, false);
+  const persisted = persistAuthorizedContractIntent(authorized, { now: NOW + 1 });
+  assert.equal(persisted.state, "CONTRACT_INTENT_BOUND");
+  assert.equal(persisted.contractIntentDigest, authorized.contractIntentDigest);
+  assert.equal(persisted.contractQuoteId, authorized.quoteId);
+  assert.equal(persisted.contractToAddress, BIT_TO_LIGHTNING.toLowerCase());
+  assert.equal(persisted.contractUserSignature, null);
   assert.throws(() => prepareFinalizedContractIntent({
     bitcoinHeight: 900_000,
     finalization: fixture.authorized,

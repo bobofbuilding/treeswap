@@ -37,6 +37,7 @@ function settlement(label = "provider") {
     reservationId: hash(`${label}:reservation`),
     direction: "bit-to-lightning",
     intentDigest: hash(`${label}:intent`),
+    contractIntentDigest: hash(`${label}:contract-intent`),
     paymentHash: hash(`${label}:payment`),
     invoiceDigest: invoiceDigest(paymentRequest),
     quoteReceiptDigest: hash(`${label}:quote`),

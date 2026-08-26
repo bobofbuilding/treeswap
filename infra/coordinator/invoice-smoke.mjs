@@ -6,6 +6,7 @@ import {
   reconcileLightningAction,
 } from "../../lib/coordinator-action-runner.mjs";
 import { CoordinatorStore, coordinatorCommitmentDigest } from "../../lib/coordinator-store.mjs";
+import { bindSmokeContractIntent } from "./contract-intent-smoke-fixture.mjs";
 
 const BYTES32 = /^0x[0-9a-f]{64}$/;
 
@@ -98,17 +99,23 @@ const actionDraft = {
   capacityEpoch: settlement.capacityEpoch,
   plannedAt: now + 1,
 };
-const action = { ...actionDraft, payloadDigest: lightningActionCommitment(actionDraft, operation) };
 const databasePath = required("COORDINATOR_DATABASE_PATH");
 let store = await CoordinatorStore.open(databasePath);
 store.acceptSettlement(settlement);
+const quoteId = randomHash();
+const boundSettlement = await bindSmokeContractIntent({ store, settlement, quoteId });
+const boundActionDraft = { ...actionDraft, intentDigest: boundSettlement.contractIntentDigest };
+const action = {
+  ...boundActionDraft,
+  payloadDigest: lightningActionCommitment(boundActionDraft, operation),
+};
 store.recordReservation({
   settlementId: settlement.settlementId,
-  reservationId: randomHash(),
+  reservationId: quoteId,
   reservationTxHash: randomHash(),
   reservationBlockNumber: 1,
   reservationBlockHash: randomHash(),
-  reservationIntentDigest: settlement.intentDigest,
+  reservationIntentDigest: boundSettlement.contractIntentDigest,
   observedAt: now + 1,
 });
 store.planAction(action);

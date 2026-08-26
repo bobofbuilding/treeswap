@@ -26,6 +26,11 @@ import {
 } from "../lib/solver-daemon-runtime.mjs";
 import { nextSolverDaemonStep } from "../lib/solver-daemon-planner.mjs";
 import { buildSignedPrivatePacketResponse } from "../lib/solver-private-packet.mjs";
+import {
+  bindTestContractIntent,
+  testContractIntentDigest,
+  testContractQuoteId,
+} from "./helpers/contract-intent-fixture.mjs";
 
 const NOW = 2_000_000_000;
 const SEND_PAYMENT = "/routerrpc.Router/SendPaymentV2";
@@ -73,19 +78,32 @@ function settlement(label, direction) {
 function reservation(value) {
   return {
     settlementId: value.settlementId,
-    reservationId: hash(`${value.settlementId}:reservation`),
+    reservationId: value.contractQuoteId ?? testContractQuoteId(value, {
+      chainId: CHAIN_ID.toString(),
+      settlementContractCodeHash: CONTRACT_CODE_HASH,
+      verifyingContract: CONTRACT,
+    }),
     reservationTxHash: hash(`${value.settlementId}:reservation-transaction`),
     reservationBlockNumber: 100,
     reservationBlockHash: hash(`${value.settlementId}:reservation-block`),
-    reservationIntentDigest: value.intentDigest,
+    reservationIntentDigest: value.contractIntentDigest ?? testContractIntentDigest(value, {
+      chainId: CHAIN_ID.toString(),
+      settlementContractCodeHash: CONTRACT_CODE_HASH,
+      verifyingContract: CONTRACT,
+    }),
     observedAt: NOW + 1,
   };
 }
 
 async function openStore(label, direction, { path = ":memory:" } = {}) {
   const store = await CoordinatorStore.open(path, { allowMemory: path === ":memory:" });
-  const value = settlement(label, direction);
-  store.acceptSettlement(value);
+  const input = settlement(label, direction);
+  store.acceptSettlement(input);
+  const value = bindTestContractIntent(store, input, {
+    chainId: CHAIN_ID.toString(),
+    settlementContractCodeHash: CONTRACT_CODE_HASH,
+    verifyingContract: CONTRACT,
+  });
   store.recordReservation(reservation(value));
   return { store, value };
 }
@@ -292,7 +310,7 @@ function baseEvidence(kind, settlementValue, overrides = {}) {
       reservationBlockNumber: settlementValue.reservationBlockNumber,
       reservationBlockHash: settlementValue.reservationBlockHash,
       actionId: dispatch ? hash(`${settlementValue.settlementId}:placeholder-action`) : SOLVER_DAEMON_ZERO_BYTES32,
-      intentDigest: settlementValue.intentDigest,
+      intentDigest: settlementValue.contractIntentDigest,
       packetResponseDigest: dispatch ? hash(`${settlementValue.settlementId}:placeholder-packet`) : SOLVER_DAEMON_ZERO_BYTES32,
       quoteExpiresAt: dispatch ? NOW + 1_500 : 0,
       lightningActionDeadline: dispatch ? NOW + 1_000 : 0,
@@ -667,7 +685,7 @@ test("recovers an unbound EVM action, broadcasts exact bytes, reconciles finalit
     method: "evm:claim",
     requestId: hash("payment-flow:claim-request"),
     payloadDigest: hash("placeholder"),
-    intentDigest: fixture.value.intentDigest,
+    intentDigest: fixture.value.contractIntentDigest,
     paymentHash: fixture.value.paymentHash,
     invoiceDigest: fixture.value.invoiceDigest,
     amountSats: fixture.value.amountSats,
@@ -774,8 +792,13 @@ test("records only original dual-signed reservation evidence and rejects a nomin
     t.after(() => store.close());
     const value = settlement(`reservation-evidence-${valid}`, "lightning-to-bit");
     store.acceptSettlement(value);
-    const observed = reservation(value);
-    const bound = { ...value, ...observed };
+    const contractBound = bindTestContractIntent(store, value, {
+      chainId: CHAIN_ID.toString(),
+      settlementContractCodeHash: CONTRACT_CODE_HASH,
+      verifyingContract: CONTRACT,
+    });
+    const observed = reservation(contractBound);
+    const bound = { ...contractBound, ...observed };
     const controls = {
       observeReservation: async () => {
         const evidence = baseEvidence("RESERVATION", bound, { proofDigest: hash(`reservation-proof-${valid}`) });
@@ -891,7 +914,12 @@ test("recovers only the interrupted action owned by the selected settlement", as
   second.paymentHash = hash("scoped-second:unique-payment-hash");
   for (const value of [first, second]) {
     store.acceptSettlement(value);
-    store.recordReservation(reservation(value));
+    const contractBound = bindTestContractIntent(store, value, {
+      chainId: CHAIN_ID.toString(),
+      settlementContractCodeHash: CONTRACT_CODE_HASH,
+      verifyingContract: CONTRACT,
+    });
+    store.recordReservation(reservation(contractBound));
     const operation = { preimage: PREIMAGE };
     const action = {
       actionId: hash(`${value.settlementId}:settle-action`),
@@ -899,7 +927,7 @@ test("recovers only the interrupted action owned by the selected settlement", as
       method: SETTLE_INVOICE,
       requestId: hash(`${value.settlementId}:request`),
       payloadDigest: hash(`${value.settlementId}:payload`),
-      intentDigest: value.intentDigest,
+      intentDigest: contractBound.contractIntentDigest,
       paymentHash: value.paymentHash,
       invoiceDigest: value.invoiceDigest,
       amountSats: value.amountSats,

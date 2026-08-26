@@ -84,7 +84,7 @@ async function emptyCustodyPackage(t, { withUnboundSettlement = false } = {}) {
   store.close();
   const manifest = {
     schema: "treeswap.retained-release-custody.v1",
-    coordinatorSchema: "treeswap.coordinator.v9",
+    coordinatorSchema: "treeswap.coordinator.v10",
     createdAt: NOW,
     sealedHostInstanceId: hash("sealed host"),
     sealedProcessInstanceId: hash("sealed process"),

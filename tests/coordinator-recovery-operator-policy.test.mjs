@@ -576,7 +576,7 @@ test("inspects custody and then requires the fixed public capability endpoint be
   const manifestPath = join(root, "custody.json");
   await writeFile(manifestPath, `${JSON.stringify({
     schema: "treeswap.retained-release-custody.v1",
-    coordinatorSchema: "treeswap.coordinator.v9",
+    coordinatorSchema: "treeswap.coordinator.v10",
     createdAt: NOW,
     sealedHostInstanceId: id("composition sealed host").toLowerCase(),
     sealedProcessInstanceId: id("composition sealed process").toLowerCase(),

@@ -9,6 +9,12 @@ import { DatabaseSync } from "node:sqlite";
 import { id } from "ethers";
 import { buildCoordinatorActiveExecutionBootstrapStatus } from "../lib/coordinator-service-state.mjs";
 import { CoordinatorStore, coordinatorCommitmentDigest } from "../lib/coordinator-store.mjs";
+import {
+  bindTestContractIntent,
+  testContractIntentBinding,
+  testContractIntentDigest,
+  testContractQuoteId,
+} from "./helpers/contract-intent-fixture.mjs";
 
 const NOW = 2_000_000_000;
 const SEND_PAYMENT = "/routerrpc.Router/SendPaymentV2";
@@ -42,11 +48,11 @@ function settlement(label = "one", overrides = {}) {
 function reservation(value, overrides = {}) {
   return {
     settlementId: value.settlementId,
-    reservationId: hash(`${value.settlementId}:reservation`),
+    reservationId: value.contractQuoteId ?? testContractQuoteId(value),
     reservationTxHash: hash(`${value.settlementId}:transaction`),
     reservationBlockNumber: 20_000_000,
     reservationBlockHash: hash(`${value.settlementId}:block`),
-    reservationIntentDigest: value.intentDigest,
+    reservationIntentDigest: value.contractIntentDigest ?? testContractIntentDigest(value),
     observedAt: NOW + 10,
     ...overrides,
   };
@@ -59,7 +65,7 @@ function action(value, label = "send", overrides = {}) {
     method: SEND_PAYMENT,
     requestId: hash(`${value.settlementId}:${label}:request`),
     payloadDigest: hash(`${value.settlementId}:${label}:payload`),
-    intentDigest: value.intentDigest,
+    intentDigest: value.contractIntentDigest ?? testContractIntentDigest(value),
     paymentHash: value.paymentHash,
     invoiceDigest: value.invoiceDigest,
     amountSats: value.amountSats,
@@ -338,11 +344,111 @@ test("atomically binds one private settlement to its nonce, payment hash, quote 
   }
 });
 
+test("persists one independently verified escrow intent before reservations or actions can use its digest", async () => {
+  const store = await CoordinatorStore.open(":memory:", { allowMemory: true });
+  const value = settlement("contract-intent-boundary");
+  try {
+    store.acceptSettlement(value);
+    const binding = testContractIntentBinding(value);
+    assert.throws(
+      () => store.recordReservation({
+        ...reservation(value),
+        reservationId: binding.message.quoteId,
+        reservationIntentDigest: value.intentDigest,
+      }),
+      /durable contract intent/,
+    );
+    assert.throws(
+      () => store.bindContractIntent({
+        binding: {
+          ...binding,
+          transaction: { ...binding.transaction, data: `0xff${binding.transaction.data.slice(4)}` },
+        },
+        boundAt: NOW,
+      }),
+      /calldata|signature|encode/i,
+    );
+    const bound = store.bindContractIntent({ binding, boundAt: NOW });
+    assert.equal(bound.state, "CONTRACT_INTENT_BOUND");
+    assert.equal(bound.intentDigest, value.intentDigest);
+    assert.equal(bound.contractQuoteId, binding.message.quoteId);
+    assert.equal(bound.contractIntentDigest, testContractIntentDigest(value));
+    assert.notEqual(bound.contractIntentDigest, bound.intentDigest);
+    assert.equal(bound.contractCalldata, binding.transaction.data);
+    assert.equal(bound.contractCalldataDigest, binding.transaction.dataDigest);
+    assert.equal(bound.contractTransactionValue, "0x0");
+    assert.equal(bound.contractIntentBoundAt, NOW);
+    assert.match(bound.contractIntentRecordDigest, /^0x[0-9a-f]{64}$/);
+    assert.equal(store.bindContractIntent({ binding: structuredClone(binding), boundAt: NOW + 1 }).version, bound.version);
+
+    assert.throws(
+      () => store.recordReservation({
+        ...reservation(value),
+        reservationIntentDigest: value.intentDigest,
+      }),
+      /contract intent digest does not match/,
+    );
+    assert.throws(
+      () => store.recordReservation({
+        ...reservation(value),
+        reservationId: hash("wrong-contract-quote-id"),
+      }),
+      /quote ID does not match/,
+    );
+    store.recordReservation(reservation(value));
+    assert.throws(
+      () => store.planAction(action(value, "offchain-digest", { intentDigest: value.intentDigest })),
+      /terms do not match/,
+    );
+    assert.equal(store.planAction(action(value)).intentDigest, bound.contractIntentDigest);
+
+    const collision = settlement("contract-intent-quote-collision");
+    store.acceptSettlement(collision);
+    assert.throws(
+      () => store.bindContractIntent({
+        binding: testContractIntentBinding(collision, { quoteId: bound.contractQuoteId }),
+        boundAt: NOW,
+      }),
+      /conflicts with an existing quote/,
+    );
+  } finally {
+    store.close();
+  }
+});
+
+test("refuses to reopen a coordinator whose signed escrow calldata changed on disk", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "treeswap-contract-intent-integrity-"));
+  const path = join(directory, "coordinator.sqlite");
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const value = settlement("contract-intent-integrity");
+  const store = await CoordinatorStore.open(path);
+  store.acceptSettlement(value);
+  bindTestContractIntent(store, value);
+  store.close();
+
+  const database = new DatabaseSync(path);
+  const row = database.prepare(`
+    SELECT contract_calldata FROM settlements WHERE settlement_id = ?
+  `).get(value.settlementId);
+  const finalNibble = row.contract_calldata.at(-1);
+  const changedCalldata = `${row.contract_calldata.slice(0, -1)}${finalNibble === "0" ? "1" : "0"}`;
+  database.prepare(`
+    UPDATE settlements SET contract_calldata = ? WHERE settlement_id = ?
+  `).run(changedCalldata, value.settlementId);
+  database.close();
+
+  await assert.rejects(
+    CoordinatorStore.open(path),
+    /contract intent record failed cryptographic verification/,
+  );
+});
+
 test("persists reservation and outbox action before exactly one dispatch, then permits only one terminal outcome", async () => {
   const store = await CoordinatorStore.open(":memory:", { allowMemory: true });
   const value = settlement("successful");
   try {
     store.acceptSettlement(value);
+    bindTestContractIntent(store, value);
     assert.throws(() => store.planAction(action(value)), /observed reservation/);
     const observed = store.recordReservation(reservation(value));
     assert.equal(observed.state, "RESERVATION_OBSERVED");
@@ -419,6 +525,7 @@ test("turns a process crash into UNKNOWN and requires read-only reconciliation b
 
   const first = await CoordinatorStore.open(path);
   first.acceptSettlement(value);
+  bindTestContractIntent(first, value);
   first.recordReservation(reservation(value));
   first.planAction(planned);
   first.claimAction(planned.actionId, NOW + 21);
@@ -465,6 +572,7 @@ test("halts on an impossible reconciliation result and never treats it as a retr
   const cancel = action(value, "cancel", { method: CANCEL_INVOICE });
   try {
     store.acceptSettlement(value);
+    bindTestContractIntent(store, value);
     store.planAction(cancel);
     store.claimAction(cancel.actionId, NOW + 21);
     store.recordActionResult({
@@ -508,6 +616,7 @@ test("stores only commitments and exposes aggregate metrics without cross-networ
   const value = settlement("privacy", { direction: "lightning-to-bit" });
   const store = await CoordinatorStore.open(path);
   store.acceptSettlement(value);
+  bindTestContractIntent(store, value);
   store.planAction(action(value, "hold", {
     method: "/invoicesrpc.Invoices/AddHoldInvoice",
     payloadDigest: coordinatorCommitmentDigest({ privateInvoice, privatePreimage }),
@@ -538,12 +647,12 @@ test("creates a verified private backup and restores it only to a fresh path", a
     store.acceptSettlement(value);
     assert.deepEqual(store.integrityCheck({ full: true }), {
       check: "integrity_check",
-      schema: "treeswap.coordinator.v9",
+      schema: "treeswap.coordinator.v10",
       status: "ok",
     });
     const backup = await store.createVerifiedBackup(backupPath);
     assert.equal(backup.check, "integrity_check");
-    assert.equal(backup.schema, "treeswap.coordinator.v9");
+    assert.equal(backup.schema, "treeswap.coordinator.v10");
     assert.equal(backup.status, "ok");
     assert.ok(Number(backup.pages) > 0);
     assert.equal((await stat(backupPath)).mode & 0o777, 0o600);
@@ -561,7 +670,7 @@ test("creates a verified private backup and restores it only to a fresh path", a
   const restore = await CoordinatorStore.restoreVerifiedBackup(backupPath, restoredPath);
   assert.deepEqual(restore, {
     check: "integrity_check",
-    schema: "treeswap.coordinator.v9",
+    schema: "treeswap.coordinator.v10",
     status: "ok",
     restoredToFreshPath: true,
   });
@@ -578,18 +687,18 @@ test("creates a verified private backup and restores it only to a fresh path", a
   }
 });
 
-test("refuses v8 migration with recoverable work and permits only terminal history", async (t) => {
-  const directory = await mkdtemp(join(tmpdir(), "treeswap-coordinator-v8-migration-"));
+test("refuses v9 migration with recoverable work and permits only terminal history", async (t) => {
+  const directory = await mkdtemp(join(tmpdir(), "treeswap-coordinator-v9-migration-"));
   const blockedPath = join(directory, "blocked.sqlite");
   const terminalPath = join(directory, "terminal.sqlite");
   t.after(() => rm(directory, { recursive: true, force: true }));
 
-  const openValue = settlement("v8-open");
+  const openValue = settlement("v9-open");
   const blocked = await CoordinatorStore.open(blockedPath);
   blocked.acceptSettlement(openValue);
   blocked.close();
   const blockedLegacy = new DatabaseSync(blockedPath);
-  blockedLegacy.prepare("UPDATE coordinator_meta SET value = 'treeswap.coordinator.v8' WHERE key = 'schema'").run();
+  blockedLegacy.prepare("UPDATE coordinator_meta SET value = 'treeswap.coordinator.v9' WHERE key = 'schema'").run();
   blockedLegacy.close();
   await assert.rejects(
     CoordinatorStore.open(blockedPath),
@@ -598,27 +707,27 @@ test("refuses v8 migration with recoverable work and permits only terminal histo
   const blockedRead = new DatabaseSync(blockedPath, { readOnly: true });
   assert.equal(
     blockedRead.prepare("SELECT value FROM coordinator_meta WHERE key = 'schema'").get().value,
-    "treeswap.coordinator.v8",
+    "treeswap.coordinator.v9",
   );
   blockedRead.close();
 
-  const terminalValue = settlement("v8-terminal");
+  const terminalValue = settlement("v9-terminal");
   const terminal = await CoordinatorStore.open(terminalPath);
   terminal.acceptSettlement(terminalValue);
   terminal.recordTerminal({
     settlementId: terminalValue.settlementId,
     terminalState: "REFUNDED",
-    proofDigest: hash("v8-terminal-proof"),
+    proofDigest: hash("v9-terminal-proof"),
     assetsReconciled: true,
     recordedAt: NOW + 1,
   });
   terminal.close();
   const terminalLegacy = new DatabaseSync(terminalPath);
-  terminalLegacy.prepare("UPDATE coordinator_meta SET value = 'treeswap.coordinator.v8' WHERE key = 'schema'").run();
+  terminalLegacy.prepare("UPDATE coordinator_meta SET value = 'treeswap.coordinator.v9' WHERE key = 'schema'").run();
   terminalLegacy.close();
   const migrated = await CoordinatorStore.open(terminalPath);
   try {
-    assert.equal(migrated.integrityCheck().schema, "treeswap.coordinator.v9");
+    assert.equal(migrated.integrityCheck().schema, "treeswap.coordinator.v10");
     assert.equal(migrated.getSettlement(terminalValue.settlementId).executionPolicyBindingDigest, null);
   } finally {
     migrated.close();
@@ -687,13 +796,13 @@ test("refuses an unsupported schema without migrating or mutating it", async (t)
   t.after(() => rm(directory, { recursive: true, force: true }));
   const database = new DatabaseSync(path);
   database.exec("CREATE TABLE coordinator_meta (key TEXT PRIMARY KEY NOT NULL, value TEXT NOT NULL) STRICT");
-  database.prepare("INSERT INTO coordinator_meta(key, value) VALUES ('schema', 'treeswap.coordinator.v999')").run();
+  database.prepare("INSERT INTO coordinator_meta(key, value) VALUES ('schema', 'treeswap.coordinator.v1099')").run();
   database.close();
 
   await assert.rejects(CoordinatorStore.open(path), /schema is unsupported/);
   const unchanged = new DatabaseSync(path, { readOnly: true });
   try {
-    assert.equal(unchanged.prepare("SELECT value FROM coordinator_meta WHERE key = 'schema'").get().value, "treeswap.coordinator.v999");
+    assert.equal(unchanged.prepare("SELECT value FROM coordinator_meta WHERE key = 'schema'").get().value, "treeswap.coordinator.v1099");
     assert.equal(unchanged.prepare("SELECT COUNT(*) AS count FROM sqlite_schema WHERE name = 'settlements'").get().count, 0);
   } finally {
     unchanged.close();

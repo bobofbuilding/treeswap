@@ -18,6 +18,10 @@ import {
   reconcileEvmClaimAction,
   reconcileEvmClaimActionWithQuorum,
 } from "../lib/evm-action-runner.mjs";
+import {
+  bindTestContractIntent,
+  testContractIntentDigest,
+} from "./helpers/contract-intent-fixture.mjs";
 
 const NOW = 2_000_000_000;
 const CHAIN_ID = 31_337n;
@@ -216,7 +220,12 @@ function reservation(value) {
     reservationTxHash: hash(`${value.settlementId}:reservation-transaction`),
     reservationBlockNumber: 100,
     reservationBlockHash: hash(`${value.settlementId}:reservation-block`),
-    reservationIntentDigest: value.intentDigest,
+    reservationIntentDigest: value.contractIntentDigest ?? testContractIntentDigest(value, {
+      chainId: CHAIN_ID.toString(),
+      quoteId: QUOTE_ID,
+      settlementContractCodeHash: CONTRACT_CODE_HASH,
+      verifyingContract: CONTRACT,
+    }),
     observedAt: NOW + 1,
   };
 }
@@ -244,7 +253,12 @@ function action(value, op = operation()) {
     method: "evm:claim",
     requestId: hash(`${value.settlementId}:claim-request`),
     payloadDigest: hash("placeholder"),
-    intentDigest: value.intentDigest,
+    intentDigest: value.contractIntentDigest ?? testContractIntentDigest(value, {
+      chainId: CHAIN_ID.toString(),
+      quoteId: QUOTE_ID,
+      settlementContractCodeHash: CONTRACT_CODE_HASH,
+      verifyingContract: CONTRACT,
+    }),
     paymentHash: value.paymentHash,
     invoiceDigest: value.invoiceDigest,
     amountSats: value.amountSats,
@@ -303,6 +317,12 @@ async function preparedStore(t, label = "evm") {
   const op = operation();
   const planned = action(value, op);
   store.acceptSettlement(value);
+  bindTestContractIntent(store, value, {
+    chainId: CHAIN_ID.toString(),
+    quoteId: QUOTE_ID,
+    settlementContractCodeHash: CONTRACT_CODE_HASH,
+    verifyingContract: CONTRACT,
+  });
   store.recordReservation(reservation(value));
   await prepareEvmClaimAction({
     store,
