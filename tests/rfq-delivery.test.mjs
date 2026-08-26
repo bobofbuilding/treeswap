@@ -102,6 +102,15 @@ import {
 import { ContractIntentWalletStore } from "../lib/contract-intent-wallet-store.mjs";
 import { createContractIntentWalletDispatcherForTests } from "../lib/contract-intent-wallet-dispatcher.mjs";
 import {
+  buildContractIntentWalletGatewayClaimRequest,
+  buildContractIntentWalletGatewayOutcomeRequest,
+  createContractIntentWalletGatewayForTests,
+  verifiedContractIntentWalletGatewayClaimResponse,
+  verifiedContractIntentWalletGatewayOutcomeResponse,
+  verifyContractIntentWalletGatewayClaimResponse,
+  verifyContractIntentWalletGatewayOutcomeResponse,
+} from "../lib/contract-intent-wallet-gateway.mjs";
+import {
   SolverContractSigningProviderStore,
   createSolverContractSigningProviderRoute,
   createTestSolverContractSigner,
@@ -846,6 +855,25 @@ function privateCeremonyRequest(path, value, overrides = {}) {
     method: overrides.method ?? "POST",
     headers,
     body: overrides.method === "GET" || overrides.method === "OPTIONS" ? undefined : body,
+    signal: overrides.signal,
+  });
+}
+
+function walletGatewayRequest(path, value, overrides = {}) {
+  const body = Buffer.isBuffer(value) || value instanceof Uint8Array
+    ? Buffer.from(value)
+    : Buffer.from(typeof value === "string" ? value : JSON.stringify(value), "utf8");
+  const headers = new Headers({
+    "cache-control": "no-store",
+    "content-length": String(body.length),
+    "content-type": "application/json",
+    ...overrides.headers,
+  });
+  if (overrides.omitContentLength) headers.delete("content-length");
+  return new Request(`${overrides.origin ?? "https://wallet-gateway.internal"}${path}`, {
+    method: overrides.method ?? "POST",
+    headers,
+    body: overrides.method === "GET" ? undefined : body,
     signal: overrides.signal,
   });
 }
@@ -2072,6 +2100,412 @@ for (const direction of ["lightning-to-bit", "bit-to-lightning"]) {
     assert.equal(declinedConfirmationCalls, 1);
     assert.equal(declinedProviderCalls, 0);
     declinedDispatcherStore.close();
+
+    const gatewayRequesterKeys = generateKeyPairSync("ed25519");
+    const gatewayResponseKeys = generateKeyPairSync("ed25519");
+    const gatewayDatabasePath = join(directory, `wallet-gateway-${direction}.sqlite`);
+    let gatewayStore = await ContractIntentWalletStore.open({
+      allowMemory: false,
+      initialize: true,
+      maximumIntents: 8,
+      path: gatewayDatabasePath,
+    });
+    const gatewayDeployment = new AbortController();
+    let gatewayEntropy = direction === "lightning-to-bit" ? 31 : 61;
+    const gatewayOptions = (overrides = {}) => ({
+      apiOrigin: "https://wallet-gateway.internal",
+      clock: () => NOW,
+      maximumInFlightRequests: 8,
+      maximumProcessingMilliseconds: 1_000,
+      maximumRequestBytes: 65_536,
+      maximumResponseBytes: 524_288,
+      randomBytes: () => Buffer.alloc(32, ++gatewayEntropy),
+      requesterPublicKey: gatewayRequesterKeys.publicKey,
+      responsePrivateKey: gatewayResponseKeys.privateKey,
+      signal: gatewayDeployment.signal,
+      store: gatewayStore,
+      ...overrides,
+    });
+    assert.throws(
+      () => createContractIntentWalletGatewayForTests(gatewayOptions({
+        apiOrigin: "https://wallet-gateway.public.example",
+      })),
+      /private production HTTPS/,
+    );
+    assert.throws(
+      () => createContractIntentWalletGatewayForTests(gatewayOptions({
+        responsePrivateKey: gatewayRequesterKeys.privateKey,
+      })),
+      /keys must be separate/,
+    );
+    const gateway = createContractIntentWalletGatewayForTests(gatewayOptions());
+    assert.deepEqual(gateway.stage(preflight, { now: NOW }), {
+      schema: "treeswap.contract-intent-wallet-gateway-stage.v1",
+      requestDigest: preflight.requestDigest,
+      expiresAt: preflight.expiresAt,
+      browserClaimAuthority: false,
+      walletDispatchAuthority: false,
+      lightningDispatchAuthority: false,
+      fundingAuthorization: false,
+    });
+    const sessionDigest = id(`wallet-gateway-session:${direction}`).toLowerCase();
+    const claimRequest = buildContractIntentWalletGatewayClaimRequest({
+      expiresAt: NOW + 10,
+      requestDigest: preflight.requestDigest,
+      requestedAt: NOW,
+      requesterPrivateKey: gatewayRequesterKeys.privateKey,
+      sessionDigest,
+      wallet: user.address,
+    });
+    let walletAccessorReads = 0;
+    const accessorClaimInput = {
+      expiresAt: NOW + 10,
+      requestDigest: preflight.requestDigest,
+      requestedAt: NOW,
+      requesterPrivateKey: gatewayRequesterKeys.privateKey,
+      sessionDigest,
+      wallet: user.address,
+    };
+    Object.defineProperty(accessorClaimInput, "wallet", {
+      enumerable: true,
+      get() {
+        walletAccessorReads += 1;
+        return user.address;
+      },
+    });
+    assert.throws(
+      () => buildContractIntentWalletGatewayClaimRequest(accessorClaimInput),
+      /enumerable data properties/,
+    );
+    assert.equal(walletAccessorReads, 0);
+    const extractedGatewayStage = gateway.stage;
+    assert.throws(
+      () => extractedGatewayStage(preflight, { now: NOW }),
+      /original active gateway/,
+    );
+    await assert.rejects(
+      () => gateway.handle.call({ ...gateway }, walletGatewayRequest(
+        "/v1/wallet-intent/claim",
+        claimRequest,
+      )),
+      /original gateway/,
+    );
+    assert.equal((await gateway.handle(walletGatewayRequest(
+      "/v1/wallet-intent/claim",
+      claimRequest,
+      { omitContentLength: true },
+    ))).status, 400);
+    assert.equal((await gateway.handle(walletGatewayRequest(
+      "/v1/wallet-intent/claim",
+      claimRequest,
+      { headers: { origin: "https://app.treeswap.example" } },
+    ))).status, 400);
+    assert.equal((await gateway.handle(walletGatewayRequest(
+      "/v1/wallet-intent/claim",
+      claimRequest,
+      { headers: { cookie: "must-not-reach-private-gateway=1" } },
+    ))).status, 400);
+    assert.equal((await gateway.handle(walletGatewayRequest(
+      "/v1/wallet-intent/claim",
+      claimRequest,
+      { origin: "https://another-private-gateway.internal" },
+    ))).status, 400);
+    const otherRequesterKeys = generateKeyPairSync("ed25519");
+    const wrongKeyClaimRequest = buildContractIntentWalletGatewayClaimRequest({
+      expiresAt: NOW + 10,
+      requestDigest: preflight.requestDigest,
+      requestedAt: NOW,
+      requesterPrivateKey: otherRequesterKeys.privateKey,
+      sessionDigest,
+      wallet: user.address,
+    });
+    assert.equal((await gateway.handle(walletGatewayRequest(
+      "/v1/wallet-intent/claim",
+      wrongKeyClaimRequest,
+    ))).status, 400);
+    const wrongWalletClaimRequest = buildContractIntentWalletGatewayClaimRequest({
+      expiresAt: NOW + 10,
+      requestDigest: preflight.requestDigest,
+      requestedAt: NOW,
+      requesterPrivateKey: gatewayRequesterKeys.privateKey,
+      sessionDigest,
+      wallet: solvers[0].address,
+    });
+    assert.equal((await gateway.handle(walletGatewayRequest(
+      "/v1/wallet-intent/claim",
+      wrongWalletClaimRequest,
+    ))).status, 400);
+    const tamperedClaimRequest = {
+      ...claimRequest,
+      signature: `${claimRequest.signature[0] === "A" ? "B" : "A"}${claimRequest.signature.slice(1)}`,
+    };
+    assert.equal((await gateway.handle(walletGatewayRequest(
+      "/v1/wallet-intent/claim",
+      tamperedClaimRequest,
+    ))).status, 400);
+    const expiredClaimRequest = buildContractIntentWalletGatewayClaimRequest({
+      expiresAt: NOW - 10,
+      requestDigest: preflight.requestDigest,
+      requestedAt: NOW - 40,
+      requesterPrivateKey: gatewayRequesterKeys.privateKey,
+      sessionDigest,
+      wallet: user.address,
+    });
+    assert.equal((await gateway.handle(walletGatewayRequest(
+      "/v1/wallet-intent/claim",
+      expiredClaimRequest,
+    ))).status, 400);
+    const claimResponses = await Promise.all([
+      gateway.handle(walletGatewayRequest("/v1/wallet-intent/claim", claimRequest)),
+      gateway.handle(walletGatewayRequest("/v1/wallet-intent/claim", claimRequest)),
+    ]);
+    assert.deepEqual(claimResponses.map((response) => response.status).sort(), [200, 400]);
+    const claimResponse = await claimResponses.find((response) => response.status === 200).json();
+    const verifiedClaim = verifyContractIntentWalletGatewayClaimResponse({
+      now: NOW,
+      preflight,
+      request: claimRequest,
+      response: claimResponse,
+      responsePublicKey: gatewayResponseKeys.publicKey,
+    });
+    assert.equal(verifiedContractIntentWalletGatewayClaimResponse(verifiedClaim), verifiedClaim);
+    assert.throws(
+      () => verifiedContractIntentWalletGatewayClaimResponse({ ...verifiedClaim }),
+      /verified provenance/,
+    );
+    assert.throws(
+      () => verifyContractIntentWalletGatewayClaimResponse({
+        now: NOW,
+        preflight,
+        request: { ...claimRequest },
+        response: claimResponse,
+        responsePublicKey: gatewayResponseKeys.publicKey,
+      }),
+      /original locally built claim request/,
+    );
+    assert.throws(
+      () => verifyContractIntentWalletGatewayClaimResponse({
+        now: NOW,
+        preflight,
+        request: claimRequest,
+        response: { ...claimResponse, contractIntentDigest: id("substituted-contract-intent") },
+        responsePublicKey: gatewayResponseKeys.publicKey,
+      }),
+      /signature is invalid|changed the expected preflight/,
+    );
+    assert.equal(gateway.status().activeClaims, 1);
+    assert.equal(gateway.status().stagedPreflights, 0);
+    assert.equal(gateway.status().claimTokensInStatus, false);
+    assert.doesNotMatch(JSON.stringify(gateway.status()), new RegExp(verifiedClaim.claimToken));
+    assert.doesNotMatch(JSON.stringify(gateway.status()), new RegExp(sessionDigest.slice(2)));
+
+    const reportedGatewayHash = id(`wallet-gateway-reported:${direction}`).toLowerCase();
+    const outcomeInput = {
+      beforeAccounts: [user.address],
+      beforeChainId: "0x1",
+      claimToken: verifiedClaim.claimToken,
+      contextObservedAt: NOW,
+      expiresAt: NOW + 10,
+      outcome: {
+        errorCode: null,
+        status: "reported",
+        transactionHash: reportedGatewayHash,
+      },
+      outcomeObservedAt: NOW,
+      postAccounts: [user.address],
+      postChainId: "0x1",
+      requestDigest: preflight.requestDigest,
+      requestedAt: NOW,
+      requesterPrivateKey: gatewayRequesterKeys.privateKey,
+      sessionDigest,
+      wallet: user.address,
+    };
+    assert.throws(
+      () => buildContractIntentWalletGatewayOutcomeRequest({
+        ...outcomeInput,
+        beforeAccounts: new Array(1),
+      }),
+      /undecorated dense array/,
+    );
+    const outcomeRequest = buildContractIntentWalletGatewayOutcomeRequest(outcomeInput);
+    const wrongSessionOutcomeRequest = buildContractIntentWalletGatewayOutcomeRequest({
+      ...outcomeInput,
+      sessionDigest: id(`wrong-wallet-gateway-session:${direction}`).toLowerCase(),
+    });
+    assert.equal((await gateway.handle(walletGatewayRequest(
+      "/v1/wallet-intent/outcome",
+      wrongSessionOutcomeRequest,
+    ))).status, 400);
+    const wrongTokenOutcomeRequest = buildContractIntentWalletGatewayOutcomeRequest({
+      ...outcomeInput,
+      claimToken: "ab".repeat(32),
+    });
+    assert.equal((await gateway.handle(walletGatewayRequest(
+      "/v1/wallet-intent/outcome",
+      wrongTokenOutcomeRequest,
+    ))).status, 400);
+    const wrongContextOutcomeRequest = buildContractIntentWalletGatewayOutcomeRequest({
+      ...outcomeInput,
+      beforeChainId: "0x2",
+    });
+    assert.equal((await gateway.handle(walletGatewayRequest(
+      "/v1/wallet-intent/outcome",
+      wrongContextOutcomeRequest,
+    ))).status, 400);
+    const outcomeResponseHttp = await gateway.handle(walletGatewayRequest(
+      "/v1/wallet-intent/outcome",
+      outcomeRequest,
+    ));
+    assert.equal(outcomeResponseHttp.status, 200);
+    const outcomeResponse = await outcomeResponseHttp.json();
+    const verifiedOutcome = verifyContractIntentWalletGatewayOutcomeResponse({
+      claim: verifiedClaim,
+      request: outcomeRequest,
+      response: outcomeResponse,
+      responsePublicKey: gatewayResponseKeys.publicKey,
+    });
+    assert.equal(verifiedOutcome.state, "SUBMISSION_REPORTED");
+    assert.equal(verifiedOutcome.transactionHash, reportedGatewayHash);
+    assert.equal(verifiedOutcome.retryAuthorized, false);
+    assert.equal(verifiedContractIntentWalletGatewayOutcomeResponse(verifiedOutcome), verifiedOutcome);
+    assert.throws(
+      () => verifiedContractIntentWalletGatewayOutcomeResponse({ ...verifiedOutcome }),
+      /verified provenance/,
+    );
+    assert.throws(
+      () => verifyContractIntentWalletGatewayOutcomeResponse({
+        claim: { ...verifiedClaim },
+        request: outcomeRequest,
+        response: outcomeResponse,
+        responsePublicKey: gatewayResponseKeys.publicKey,
+      }),
+      /original verified claim response/,
+    );
+    assert.throws(
+      () => verifyContractIntentWalletGatewayOutcomeResponse({
+        claim: verifiedClaim,
+        request: { ...outcomeRequest },
+        response: outcomeResponse,
+        responsePublicKey: gatewayResponseKeys.publicKey,
+      }),
+      /original locally built outcome request/,
+    );
+    assert.throws(
+      () => verifyContractIntentWalletGatewayOutcomeResponse({
+        claim: verifiedClaim,
+        request: outcomeRequest,
+        response: { ...outcomeResponse, state: "SUBMISSION_UNKNOWN" },
+        responsePublicKey: gatewayResponseKeys.publicKey,
+      }),
+      /signature is invalid|changed the submitted outcome|authority or state is invalid/,
+    );
+    const replayedOutcomeResponse = await gateway.handle(walletGatewayRequest(
+      "/v1/wallet-intent/outcome",
+      outcomeRequest,
+    ));
+    assert.equal(replayedOutcomeResponse.status, 200);
+    assert.deepEqual(await replayedOutcomeResponse.json(), outcomeResponse);
+    const conflictingOutcomeRequest = buildContractIntentWalletGatewayOutcomeRequest({
+      ...outcomeInput,
+      outcome: { errorCode: null, status: "ambiguous", transactionHash: null },
+    });
+    assert.equal((await gateway.handle(walletGatewayRequest(
+      "/v1/wallet-intent/outcome",
+      conflictingOutcomeRequest,
+    ))).status, 400);
+    assert.equal(gateway.status().outcomesRecorded, 1);
+    gatewayDeployment.abort();
+    assert.equal(gateway.status().state, "stopped");
+    gatewayStore.close();
+    const gatewayDatabaseBytes = await readFile(gatewayDatabasePath);
+    assert.equal(gatewayDatabaseBytes.includes(Buffer.from(verifiedClaim.claimToken, "utf8")), false);
+    assert.equal(gatewayDatabaseBytes.includes(Buffer.from(sessionDigest, "utf8")), false);
+    gatewayStore = await ContractIntentWalletStore.open({
+      allowMemory: false,
+      initialize: false,
+      maximumIntents: 8,
+      path: gatewayDatabasePath,
+    });
+    const gatewayRecovery = gatewayStore.recover({ limit: 8, now: NOW + 1 });
+    assert.equal(gatewayRecovery[0].state, "SUBMISSION_REPORTED");
+    assert.equal(gatewayRecovery[0].transactionHash, reportedGatewayHash);
+    assert.equal(gatewayRecovery[0].action, "RECONCILE_TRANSACTION_NO_RESEND");
+    assert.equal(gatewayRecovery[0].retryAuthorized, false);
+    gatewayStore.close();
+
+    const lostGatewayDatabasePath = join(directory, `wallet-gateway-lost-${direction}.sqlite`);
+    let lostGatewayStore = await ContractIntentWalletStore.open({
+      allowMemory: false,
+      initialize: true,
+      maximumIntents: 8,
+      path: lostGatewayDatabasePath,
+    });
+    const lostGatewayDeployment = new AbortController();
+    const lostGateway = createContractIntentWalletGatewayForTests({
+      ...gatewayOptions(),
+      randomBytes: () => Buffer.alloc(32, direction === "lightning-to-bit" ? 93 : 113),
+      signal: lostGatewayDeployment.signal,
+      store: lostGatewayStore,
+    });
+    lostGateway.stage(preflight, { now: NOW });
+    const lostSessionDigest = id(`lost-wallet-gateway-session:${direction}`).toLowerCase();
+    const lostClaimRequest = buildContractIntentWalletGatewayClaimRequest({
+      expiresAt: NOW + 10,
+      requestDigest: preflight.requestDigest,
+      requestedAt: NOW,
+      requesterPrivateKey: gatewayRequesterKeys.privateKey,
+      sessionDigest: lostSessionDigest,
+      wallet: user.address,
+    });
+    const lostClaimHttp = await lostGateway.handle(walletGatewayRequest(
+      "/v1/wallet-intent/claim",
+      lostClaimRequest,
+    ));
+    assert.equal(lostClaimHttp.status, 200);
+    const lostClaimBody = await lostClaimHttp.json();
+    assert.equal((await lostGateway.handle(walletGatewayRequest(
+      "/v1/wallet-intent/claim",
+      lostClaimRequest,
+    ))).status, 400);
+    assert.equal(lostGateway.status().activeClaims, 1);
+    lostGatewayDeployment.abort();
+    lostGatewayStore.close();
+    lostGatewayStore = await ContractIntentWalletStore.open({
+      allowMemory: false,
+      initialize: false,
+      maximumIntents: 8,
+      path: lostGatewayDatabasePath,
+    });
+    const restartedGatewayDeployment = new AbortController();
+    const restartedGateway = createContractIntentWalletGatewayForTests({
+      ...gatewayOptions(),
+      randomBytes: () => Buffer.alloc(32, direction === "lightning-to-bit" ? 123 : 143),
+      signal: restartedGatewayDeployment.signal,
+      store: lostGatewayStore,
+    });
+    const lostOutcomeRequest = buildContractIntentWalletGatewayOutcomeRequest({
+      ...outcomeInput,
+      claimToken: lostClaimBody.claimToken,
+      requestedAt: NOW + 1,
+      expiresAt: NOW + 11,
+      outcomeObservedAt: NOW + 1,
+      sessionDigest: lostSessionDigest,
+    });
+    assert.equal((await restartedGateway.handle(walletGatewayRequest(
+      "/v1/wallet-intent/outcome",
+      lostOutcomeRequest,
+    ))).status, 400);
+    const lostRecovery = lostGatewayStore.recover({ limit: 8, now: NOW + 2 });
+    assert.equal(lostRecovery.length, 1);
+    assert.equal(lostRecovery[0].state, "WALLET_REQUEST_CLAIMED");
+    assert.equal(lostRecovery[0].action, "SEARCH_QUOTE_NO_RESEND");
+    assert.equal(lostRecovery[0].transactionHash, null);
+    assert.equal(lostRecovery[0].retryAuthorized, false);
+    restartedGatewayDeployment.abort();
+    lostGatewayStore.close();
+    const lostGatewayDatabaseBytes = await readFile(lostGatewayDatabasePath);
+    assert.equal(lostGatewayDatabaseBytes.includes(Buffer.from(lostClaimBody.claimToken, "utf8")), false);
+    assert.equal(lostGatewayDatabaseBytes.includes(Buffer.from(lostSessionDigest, "utf8")), false);
 
     const walletSymlinkPath = join(directory, `wallet-link-${direction}.sqlite`);
     await symlink(ambiguousWalletDatabasePath, walletSymlinkPath);

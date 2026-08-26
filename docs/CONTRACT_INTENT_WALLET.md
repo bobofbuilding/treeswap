@@ -1,6 +1,6 @@
 # Contract-intent wallet boundary
 
-Status: a repository core prepares and reviews the exact user-wallet transaction for either TreeSwap escrow, records the wallet outcome without authorizing retry, verifies a reported or same-nonce replacement transaction, and classifies its receipt, reservation event, finality, mismatch, revert, disappearance, or reorg. A strict private SQLite journal durably claims the attempt and records each original core artifact. A fixed same-process dispatcher now requires fresh explicit confirmation, the original preflight, an original journal claim, and an exact chain/account check before making one EIP-1193 request; every uncertain result becomes reconciliation-only work. This is local repository evidence, not a deployed browser/coordinator integration. It calls no Lightning node and its two-observation result does not prove independent provider operation or authorize funds. Funded operation remains closed.
+Status: a repository core prepares and reviews the exact user-wallet transaction for either TreeSwap escrow, records the wallet outcome without authorizing retry, verifies a reported or same-nonce replacement transaction, and classifies its receipt, reservation event, finality, mismatch, revert, disappearance, or reorg. A strict private SQLite journal durably claims the attempt and records each original core artifact. A fixed same-process dispatcher requires fresh explicit confirmation, the original preflight, an original journal claim, and an exact chain/account check before making one EIP-1193 request; every uncertain result becomes reconciliation-only work. A separate Node-only gateway core now authenticates short-lived edge requests, issues one non-replayable claim only after that durable journal transition, and records an exact wallet outcome idempotently. This is local repository evidence, not a deployed SIWE edge, browser adapter, HTTPS listener, or coordinator integration. It calls no Lightning node and its two-observation result does not prove independent provider operation or authorize funds. Funded operation remains closed.
 
 ## Pricing and settlement scope
 
@@ -81,11 +81,33 @@ The production factory has no injected clock or timeout. A separately named test
 
 This module cannot prove that a callback represented a human gesture, prevent unrelated application code from directly calling an injected provider, or bridge the Node-only journal into a remote browser by itself. Those are deployment and architecture gates, not properties claimed by this checkpoint.
 
+## Authenticated wallet gateway core
+
+`createContractIntentWalletGateway` is a Node-only route core for the private hop between a SIWE-authenticated web edge and the persistent coordinator. It does not accept a SIWE cookie, bearer authorization header, browser `Origin`, wallet provider, or arbitrary callback. The edge and coordinator use separate Ed25519 request and response keys. The configured API origin must be private HTTPS on port 443, request bodies use exact bounded JSON and unambiguous framing, and all failures return the same identifier-free rejection.
+
+The intended two-hop sequence is:
+
+1. the web edge verifies the live SIWE session, exact wallet, CSRF/user gesture, request ownership, and application rate limit;
+2. the edge signs a claim containing the preflight digest, wallet, opaque session digest, requester-key ID, and a window of at most 30 seconds;
+3. the coordinator matches the claim to one original in-memory staged preflight and atomically writes `WALLET_REQUEST_CLAIMED` before returning anything;
+4. the coordinator returns a separately signed response containing the exact request and review, a random 256-bit claim token, the dispatch expiry, and a bounded report deadline;
+5. the edge verifies that response against the original locally built claim and preflight before relaying the exact material to the browser;
+6. only the browser's separately implemented explicit-confirmation path may make one wallet request; and
+7. the edge signs the observed before/after context and exact reported, rejected, or ambiguous result back to the private coordinator route.
+
+The claim is deliberately not idempotent. Concurrent or later requests cannot receive a second claim token. If the first claim response is lost, the durable attempt remains claimed and startup recovery says `SEARCH_QUOTE_NO_RESEND`; neither the edge nor the coordinator may ask the wallet again. The claim token and session digest exist only in process memory and are never added to the wallet journal or aggregate status.
+
+Outcome recording has the opposite retry rule: the exact same signed outcome request may be repeated and returns the exact cached signed response, while any competing outcome, token, session, wallet, preflight, requester key, or context rejects. The response verifier independently binds the coordinator signature to the original verified claim, expected preflight, token, session, chain/account context, transaction hash, and derived journal state. Restart destroys claim-token provenance, so a late outcome cannot be accepted after restart; the durable claim still forbids resend and must be reconciled independently.
+
+Local adversarial tests cover both swap directions, simultaneous claim requests, a lost claim response, restart between claim and outcome, exact outcome replay, conflicting outcomes, wrong key/session/token/origin/framing, stale and changed signatures, copied provenance, accessor and sparse-array inputs, response substitution, bounded responses, and raw-database exclusion of the claim token and session digest.
+
+This core intentionally has no listener, SIWE/session store, CSRF control, browser wallet provider, human-gesture proof, cross-process claim recovery, distributed lock, transaction broadcaster, Ethereum reader, Lightning credential, settlement authority, or funding authority. A deployment must keep the edge requester key out of the browser, keep the coordinator response key out of the edge, suppress request/response-body logging and tracing, bind one SIWE session to one wallet and preflight, demonstrate process-kill and volume-failure behavior, and remain single-replica until a separately reviewed shared fence exists.
+
 ## Remaining release gates
 
 This checkpoint intentionally leaves the production checklist open. Before either asset can move, TreeSwap still needs:
 
-1. an authenticated deployed browser-to-coordinator claim/outcome route that makes the fixed dispatcher the only wallet path, demonstrates a real user gesture, and never turns a process or network retry into another wallet request;
+1. deploy the implemented private gateway behind a SIWE-authenticated, CSRF-protected, rate-limited edge and a reviewed browser adapter that makes the exact one-shot dispatcher the only wallet path, demonstrates a real user gesture, retains no claim/body logs, and never turns a process or network retry into another wallet request;
 2. composition of the journal into the persistent coordinator plus process-kill, disk-full, backup/restore, and multi-replica conflict drills;
 3. fixed authenticated Ethereum clients that project raw responses into this core, prove two genuinely independent providers, and bind the finalized reservation to the durable coordinator settlement;
 4. deployed testnet evidence for both directions and common wallet types, including rejection, disconnect, dropped response, speed-up, cancellation, nonce contention, revert, provider disagreement/outage, and reorg before and after finality;
