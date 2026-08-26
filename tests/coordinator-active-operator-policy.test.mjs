@@ -257,7 +257,7 @@ async function testCapabilityClient({ requestImpl: requestOverride = null } = {}
         endpointPrivateKey: endpointKeys.privateKey,
       })), {
         status: 200,
-        headers: { "content-type": "application/json" },
+        headers: { "cache-control": "no-store", "content-type": "application/json" },
       });
     }),
     nowSeconds: () => NOW,

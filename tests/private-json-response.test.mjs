@@ -52,6 +52,20 @@ test("rejects compression, ambiguous framing, noncanonical length, and truncatio
     read(strictResponse('{"safe":true}', { "content-length": "14" })),
     /length changed/,
   );
+  await assert.rejects(
+    read(new Response('{"safe":true}', {
+      headers: {
+        "cache-control": "no-store",
+        "content-type": "application/json",
+        "transfer-encoding": "gzip",
+      },
+    })),
+    /framing is ambiguous/,
+  );
+  await assert.rejects(
+    read(strictResponse('{"safe":true}', { "content-type": "application/json; charset=utf-16" })),
+    /content type is invalid/,
+  );
 });
 
 test("enforces the declared and received byte ceilings before parsing", async () => {
@@ -114,4 +128,43 @@ test("rejects malformed streams and an already-aborted read", async () => {
   const pending = read(stalled, { signal: activeController.signal });
   queueMicrotask(() => activeController.abort());
   await assert.rejects(pending, /was interrupted/);
+});
+
+test("cancels rejected bodies without awaiting responder-controlled teardown", async () => {
+  let earlyCancels = 0;
+  const earlyRejected = {
+    headers: new Headers({
+      "cache-control": "no-store",
+      "content-type": "text/plain",
+    }),
+    body: {
+      cancel() {
+        earlyCancels += 1;
+        return new Promise(() => {});
+      },
+    },
+  };
+  await assert.rejects(read(earlyRejected), /content type is invalid/);
+  assert.equal(earlyCancels, 1);
+
+  let lockedCancels = 0;
+  const invalidChunk = {
+    headers: new Headers({
+      "cache-control": "no-store",
+      "content-type": "application/json",
+    }),
+    body: {
+      getReader() {
+        return {
+          read: async () => ({ done: false, value: "not bytes" }),
+          cancel() {
+            lockedCancels += 1;
+            return new Promise(() => {});
+          },
+        };
+      },
+    },
+  };
+  await assert.rejects(read(invalidChunk), /body chunk is invalid/);
+  assert.equal(lockedCancels, 1);
 });

@@ -44,6 +44,7 @@ import {
   RfqDeliveryError,
   buildSignedRfqDeliveryResponse,
   collectVerifiedRfqDeliveries,
+  queryVerifiedRfqDelivery,
   rfqDeliveryPayloadDigest,
   rfqDeliveryResponseDigest,
   verifiedRfqDeliveryCollection,
@@ -533,7 +534,11 @@ function responseKey(pathId) {
 function jsonResponse(value, options = {}) {
   return new Response(typeof value === "string" ? value : JSON.stringify(value), {
     status: options.status ?? 200,
-    headers: { "content-type": options.contentType ?? "application/json", ...options.headers },
+    headers: {
+      "cache-control": "no-store",
+      "content-type": options.contentType ?? "application/json",
+      ...options.headers,
+    },
   });
 }
 
@@ -1335,6 +1340,96 @@ test("rejects an RFQ payload mismatch before transport", async () => {
     nowSeconds: () => NOW,
   }), /does not match its request digest/);
   assert.equal(requests, 0);
+});
+
+test("bounds strict RFQ response framing under the complete transport deadline", async () => {
+  const data = await fixture();
+  const args = {
+    path: data.paths[0],
+    requestId: pricing.pricingId,
+    requestDigest: rfqDeliveryPayloadDigest(pricing),
+    rfq: pricing,
+    policy: deliveryPolicy,
+    nowSeconds: () => NOW,
+    randomBytesImpl: () => Buffer.alloc(32, 7),
+  };
+  const framed = (headers) => async (url, options, pathId) => {
+    const valid = await data.responder(url, options, pathId);
+    return new Response(await valid.text(), {
+      headers: {
+        "cache-control": "no-store",
+        "content-type": "application/json",
+        ...headers,
+      },
+    });
+  };
+  for (const headers of [
+    { "cache-control": "" },
+    { "content-encoding": "gzip" },
+    { "content-length": "01" },
+    { "content-length": "2", "transfer-encoding": "chunked" },
+    { "content-length": "1" },
+    { "content-type": "application/json; charset=utf-16" },
+    { "transfer-encoding": "gzip" },
+  ]) {
+    await assert.rejects(queryVerifiedRfqDelivery({
+      ...args,
+      requestImpl: framed(headers),
+    }), (error) => error.code === "INVALID_RESPONSE" && error.ambiguous === false);
+  }
+
+  let stalledCancelled = 0;
+  await assert.rejects(queryVerifiedRfqDelivery({
+    ...args,
+    timeoutMs: 5,
+    requestImpl: async () => new Response(new ReadableStream({
+      pull: () => new Promise(() => {}),
+      cancel() {
+        stalledCancelled += 1;
+      },
+    }), {
+      headers: { "cache-control": "no-store", "content-type": "application/json" },
+    }),
+  }), (error) => error.code === "TRANSPORT_FAILED" && error.ambiguous === false);
+  assert.equal(stalledCancelled, 1);
+});
+
+test("cancels malformed and rejected RFQ bodies without trusting teardown", async () => {
+  const data = await fixture();
+  const args = {
+    path: data.paths[0],
+    requestId: pricing.pricingId,
+    requestDigest: rfqDeliveryPayloadDigest(pricing),
+    rfq: pricing,
+    policy: deliveryPolicy,
+    nowSeconds: () => NOW,
+    randomBytesImpl: () => Buffer.alloc(32, 7),
+  };
+  let cancelled = 0;
+  for (const response of [
+    { status: 200, redirected: false, contentType: "text/plain", code: "INVALID_RESPONSE" },
+    { status: 503, redirected: false, contentType: "application/json", code: "HTTP_REJECTED" },
+    { status: 200, redirected: true, contentType: "application/json", code: "REDIRECT_REFUSED" },
+  ]) {
+    await assert.rejects(queryVerifiedRfqDelivery({
+      ...args,
+      requestImpl: async () => ({
+        status: response.status,
+        redirected: response.redirected,
+        headers: new Headers({
+          "cache-control": "no-store",
+          "content-type": response.contentType,
+        }),
+        body: new ReadableStream({
+          cancel() {
+            cancelled += 1;
+            return new Promise(() => {});
+          },
+        }),
+      }),
+    }), (error) => error.code === response.code && error.ambiguous === false);
+  }
+  assert.equal(cancelled, 3);
 });
 
 test("rejects relay rewriting while retaining valid offers from two other relay paths", async () => {

@@ -343,7 +343,7 @@ async function capabilityClient({ injected = false } = {}) {
       endpointPrivateKey: endpointKeys.privateKey,
     })), {
       status: 200,
-      headers: { "content-type": "application/json" },
+      headers: { "cache-control": "no-store", "content-type": "application/json" },
     }),
     nowSeconds: () => NOW,
     randomBytesImpl: () => Buffer.alloc(32, 0x85),

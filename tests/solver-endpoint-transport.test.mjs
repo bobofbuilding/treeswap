@@ -121,7 +121,11 @@ function responseFor(envelope, request, overrides = {}) {
 function jsonResponse(value, options = {}) {
   return new Response(typeof value === "string" ? value : JSON.stringify(value), {
     status: options.status ?? 200,
-    headers: { "content-type": options.contentType ?? "application/json", ...options.headers },
+    headers: {
+      "cache-control": "no-store",
+      "content-type": options.contentType ?? "application/json",
+      ...options.headers,
+    },
   });
 }
 
@@ -262,10 +266,70 @@ test("bounds and cancels the complete capability response body under the transpo
       },
     }), {
       status: 200,
-      headers: { "content-type": "application/json" },
+      headers: { "cache-control": "no-store", "content-type": "application/json" },
     }),
   })), (error) => error.code === "TRANSPORT_FAILED" && error.ambiguous === false);
   assert.equal(bodyCancelled, true);
+});
+
+test("requires strict non-cacheable capability response framing", async () => {
+  const envelope = await capabilityEnvelope();
+  const cases = [
+    { "cache-control": "" },
+    { "content-encoding": "gzip" },
+    { "content-length": "01" },
+    { "content-length": "2", "transfer-encoding": "chunked" },
+    { "content-length": "1" },
+    { "content-type": "application/json; charset=utf-16" },
+    { "transfer-encoding": "gzip" },
+  ];
+  for (const headers of cases) {
+    await assert.rejects(queryVerifiedSolverCapability(queryOptions({
+      requestImpl: async (_url, options) => jsonResponse(
+        responseFor(envelope, JSON.parse(options.body)),
+        { headers },
+      ),
+    })), (error) => error.code === "INVALID_RESPONSE" && error.ambiguous === false);
+  }
+
+  let cancelled = 0;
+  await assert.rejects(queryVerifiedSolverCapability(queryOptions({
+    requestImpl: async () => ({
+      status: 200,
+      redirected: false,
+      headers: new Headers({ "cache-control": "no-store", "content-type": "text/plain" }),
+      body: new ReadableStream({
+        cancel() {
+          cancelled += 1;
+          return new Promise(() => {});
+        },
+      }),
+    }),
+  })), (error) => error.code === "INVALID_RESPONSE" && error.ambiguous === false);
+  assert.equal(cancelled, 1);
+});
+
+test("cancels rejected capability response bodies without trusting teardown", async () => {
+  let cancelled = 0;
+  for (const response of [
+    { status: 503, redirected: false },
+    { status: 200, redirected: true },
+  ]) {
+    await assert.rejects(queryVerifiedSolverCapability(queryOptions({
+      requestImpl: async () => ({
+        ...response,
+        headers: new Headers({ "cache-control": "no-store", "content-type": "application/json" }),
+        body: new ReadableStream({
+          cancel() {
+            cancelled += 1;
+            return new Promise(() => {});
+          },
+        }),
+      }),
+    })), (error) => (error.code === "HTTP_REJECTED" || error.code === "REDIRECT_REFUSED")
+      && error.ambiguous === false);
+  }
+  assert.equal(cancelled, 2);
 });
 
 test("cancels capability proof verification when active preparation shuts down", async () => {
@@ -353,6 +417,31 @@ test("pins the resolved public address while preserving the TLS and HTTP hostnam
     }),
     /outside the public network/,
   );
+});
+
+test("bounds the live pinned public response stream before JSON parsing", async () => {
+  let incoming;
+  const response = await pinnedPublicHttpsRequest(`${ORIGIN}/v1/capability`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: "{}",
+  }, {
+    maximumResponseBytes: 2,
+    lookupImpl: async () => [{ address: "8.8.8.8", family: 4 }],
+    httpsRequestImpl: (_options, callback) => {
+      const request = new EventEmitter();
+      request.end = () => {
+        incoming = Readable.from([Buffer.from("oversized")]);
+        incoming.statusCode = 200;
+        incoming.headers = { "cache-control": "no-store", "content-type": "application/json" };
+        queueMicrotask(() => callback(incoming));
+      };
+      return request;
+    },
+  });
+  const reader = response.body.getReader();
+  await assert.rejects(reader.read(), /exceeded its size limit/);
+  assert.equal(incoming.destroyed, true);
 });
 
 test("keeps the public RFQ route pinned and separate from the capability route", async () => {

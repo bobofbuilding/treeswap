@@ -26,7 +26,8 @@ docker run --rm --read-only \
     tests/solver-daemon-runtime.test.mjs \
     tests/private-operator-dns-pinning.test.mjs \
     tests/private-json-response.test.mjs \
-    tests/solver-endpoint-transport.test.mjs tests/solver-private-packet.test.mjs
+    tests/solver-endpoint-transport.test.mjs tests/rfq-delivery.test.mjs \
+    tests/solver-private-packet.test.mjs
 docker run --rm --read-only \
   --tmpfs /tmp:rw,noexec,nosuid,size=64m \
   --mount type=bind,src="$project_root/tests",dst=/app/tests,readonly \
