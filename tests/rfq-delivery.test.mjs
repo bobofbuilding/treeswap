@@ -44,8 +44,15 @@ import {
   RfqDeliveryError,
   buildRfqDeliveryRequest,
   buildSignedRfqDeliveryResponse,
+  collectTestVerifiedRfqDeliveries,
   collectVerifiedRfqDeliveries,
+  createRfqDeliveryClient,
+  createTestRfqDeliveryClient,
+  isProductionRfqDeliveryClient,
+  isRfqDeliveryClient,
+  queryTestVerifiedRfqDelivery,
   queryVerifiedRfqDelivery,
+  rfqDeliveryClientTransportMode,
   rfqDeliveryPayloadDigest,
   rfqDeliveryResponseDigest,
   verifiedRfqDeliveryCollection,
@@ -576,7 +583,7 @@ async function fixture({ includeThirdRelay = false } = {}) {
 
 async function collect(options = {}) {
   const data = await fixture(options);
-  const collection = await collectVerifiedRfqDeliveries({
+  const collection = await collectTestVerifiedRfqDeliveries({
     paths: data.paths,
     requestId: pricing.pricingId,
     requestDigest: rfqDeliveryPayloadDigest(pricing),
@@ -1055,7 +1062,7 @@ test("reserves outbound Lightning plus routing headroom before disclosing the us
   ];
   const verifications = offers.map((item) => item.verification);
   const paths = pathPlan(verifications);
-  const collection = await collectVerifiedRfqDeliveries({
+  const collection = await collectTestVerifiedRfqDeliveries({
     paths,
     requestId: bitToLightningPricing.pricingId,
     requestDigest: rfqDeliveryPayloadDigest(bitToLightningPricing),
@@ -1503,7 +1510,7 @@ test("rejects expired, same-ID-mutated, and stale-capacity reservations", async 
 test("rejects an RFQ payload mismatch before transport", async () => {
   const data = await fixture();
   let requests = 0;
-  await assert.rejects(collectVerifiedRfqDeliveries({
+  await assert.rejects(collectTestVerifiedRfqDeliveries({
     paths: data.paths,
     requestId: pricing.pricingId,
     requestDigest: rfqDeliveryPayloadDigest(pricing),
@@ -1513,6 +1520,147 @@ test("rejects an RFQ payload mismatch before transport", async () => {
     nowSeconds: () => NOW,
   }), /does not match its request digest/);
   assert.equal(requests, 0);
+});
+
+test("separates the fixed production RFQ client from explicit test dependencies", async () => {
+  const data = await fixture();
+  const configuration = {
+    paths: data.paths,
+    policy: deliveryPolicy,
+    requestTtlSeconds: 15,
+    timeoutMs: 5_000,
+    maximumResponseBytes: 262_144,
+  };
+  const production = createRfqDeliveryClient(configuration);
+  assert.equal(isRfqDeliveryClient(production), true);
+  assert.equal(isProductionRfqDeliveryClient(production), true);
+  assert.equal(rfqDeliveryClientTransportMode(production), "fixed-public-node-https");
+  assert.equal(isRfqDeliveryClient({ ...production }), false);
+  let getterCalls = 0;
+  const accessorConfiguration = { ...configuration };
+  Object.defineProperty(accessorConfiguration, "policy", {
+    enumerable: true,
+    get() {
+      getterCalls += 1;
+      return deliveryPolicy;
+    },
+  });
+  assert.throws(() => createRfqDeliveryClient(accessorConfiguration), /enumerable data properties/);
+  assert.equal(getterCalls, 0);
+  assert.throws(() => createRfqDeliveryClient({
+    ...configuration,
+    requestImpl: data.responder,
+  }), /fields are (?:not exact|outside policy)/);
+  assert.throws(() => createRfqDeliveryClient({
+    ...configuration,
+    nowSeconds: () => NOW,
+  }), /fields are (?:not exact|outside policy)/);
+  assert.throws(() => createRfqDeliveryClient({
+    ...configuration,
+    randomBytesImpl: () => Buffer.alloc(32, 1),
+  }), /fields are (?:not exact|outside policy)/);
+  let injectedRequests = 0;
+  const productionCallSignal = new AbortController().signal;
+  await assert.rejects(collectVerifiedRfqDeliveries({
+    ...configuration,
+    requestId: pricing.pricingId,
+    requestDigest: rfqDeliveryPayloadDigest(pricing),
+    rfq: pricing,
+    signal: productionCallSignal,
+    requestImpl: async () => { injectedRequests += 1; },
+  }), /fields are (?:not exact|outside policy)/);
+  await assert.rejects(queryVerifiedRfqDelivery({
+    path: data.paths[0],
+    policy: deliveryPolicy,
+    requestId: pricing.pricingId,
+    requestDigest: rfqDeliveryPayloadDigest(pricing),
+    rfq: pricing,
+    signal: productionCallSignal,
+    requestImpl: async () => { injectedRequests += 1; },
+  }), /fields are (?:not exact|outside policy)/);
+  await assert.rejects(collectVerifiedRfqDeliveries({
+    ...configuration,
+    requestId: pricing.pricingId,
+    requestDigest: rfqDeliveryPayloadDigest(pricing),
+    rfq: pricing,
+  }), /fields are not exact/);
+  assert.equal(injectedRequests, 0);
+
+  const mutablePaths = pathPlan(data.verifications);
+  const mutablePolicy = { ...deliveryPolicy };
+  const testClient = createTestRfqDeliveryClient({
+    ...configuration,
+    paths: mutablePaths,
+    policy: mutablePolicy,
+    requestImpl: data.responder,
+    nowSeconds: () => NOW,
+    randomBytesImpl: () => Buffer.alloc(32, 9),
+  });
+  mutablePaths.length = 0;
+  mutablePolicy.minimumRelayPaths = 16;
+  assert.equal(isRfqDeliveryClient(testClient), true);
+  assert.equal(isProductionRfqDeliveryClient(testClient), false);
+  assert.equal(rfqDeliveryClientTransportMode(testClient), "injected-test");
+  const controller = new AbortController();
+  const collection = await testClient.collect({
+    requestId: pricing.pricingId,
+    requestDigest: rfqDeliveryPayloadDigest(pricing),
+    rfq: pricing,
+    signal: controller.signal,
+  });
+  assert.equal(verifiedRfqDeliveryCollection(collection), collection);
+  assert.equal(collection.attemptCount, 4);
+
+  const copied = { ...testClient };
+  assert.throws(() => copied.collect({
+    requestId: pricing.pricingId,
+    requestDigest: rfqDeliveryPayloadDigest(pricing),
+    rfq: pricing,
+    signal: controller.signal,
+  }), /factory provenance/);
+  testClient.close();
+  assert.throws(() => testClient.collect({
+    requestId: pricing.pricingId,
+    requestDigest: rfqDeliveryPayloadDigest(pricing),
+    rfq: pricing,
+    signal: controller.signal,
+  }), (error) => error instanceof RfqDeliveryError && error.code === "CLIENT_CLOSED");
+});
+
+test("cancels every in-flight RFQ path on caller abort or client shutdown", async () => {
+  const data = await fixture();
+  for (const cancelWith of ["caller", "client"]) {
+    let requests = 0;
+    const client = createTestRfqDeliveryClient({
+      paths: data.paths,
+      policy: deliveryPolicy,
+      requestTtlSeconds: 15,
+      timeoutMs: 30_000,
+      maximumResponseBytes: 262_144,
+      requestImpl: async () => {
+        requests += 1;
+        return new Promise(() => {});
+      },
+      nowSeconds: () => NOW,
+      randomBytesImpl: () => Buffer.alloc(32, 8),
+    });
+    const controller = new AbortController();
+    const pending = client.collect({
+      requestId: pricing.pricingId,
+      requestDigest: rfqDeliveryPayloadDigest(pricing),
+      rfq: pricing,
+      signal: controller.signal,
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.equal(requests, data.paths.length);
+    if (cancelWith === "caller") controller.abort();
+    else client.close();
+    await assert.rejects(
+      pending,
+      (error) => error instanceof RfqDeliveryError && error.code === "CANCELLED" && error.ambiguous === false,
+    );
+    client.close();
+  }
 });
 
 test("rejects accessor and coercion RFQ inputs without executing caller code", async () => {
@@ -1557,7 +1705,7 @@ test("rejects accessor and coercion RFQ inputs without executing caller code", a
       return deliveryPolicy;
     },
   });
-  await assert.rejects(collectVerifiedRfqDeliveries(accessorCall), /enumerable data properties/);
+  await assert.rejects(collectTestVerifiedRfqDeliveries(accessorCall), /enumerable data properties/);
 
   const accessorPaths = pathPlan(data.verifications);
   Object.defineProperty(accessorPaths[0], "kind", {
@@ -1567,7 +1715,7 @@ test("rejects accessor and coercion RFQ inputs without executing caller code", a
       return "relay";
     },
   });
-  await assert.rejects(collectVerifiedRfqDeliveries({
+  await assert.rejects(collectTestVerifiedRfqDeliveries({
     paths: accessorPaths,
     requestId: pricing.pricingId,
     requestDigest: rfqDeliveryPayloadDigest(pricing),
@@ -1594,7 +1742,7 @@ test("rejects hidden, symbolic, inherited, sparse, and decorated RFQ authority",
   };
   const hiddenPolicy = { ...deliveryPolicy };
   Object.defineProperty(hiddenPolicy, "override", { enumerable: false, value: true });
-  await assert.rejects(collectVerifiedRfqDeliveries({
+  await assert.rejects(collectTestVerifiedRfqDeliveries({
     ...base,
     paths: data.paths,
     policy: hiddenPolicy,
@@ -1606,15 +1754,15 @@ test("rejects hidden, symbolic, inherited, sparse, and decorated RFQ authority",
   const inheritedPath = Object.assign(Object.create({ privileged: true }), data.paths[0]);
   const inheritedPaths = [...data.paths];
   inheritedPaths[0] = inheritedPath;
-  await assert.rejects(collectVerifiedRfqDeliveries({ ...base, paths: inheritedPaths }), /plain data object/);
+  await assert.rejects(collectTestVerifiedRfqDeliveries({ ...base, paths: inheritedPaths }), /plain data object/);
 
   const sparsePaths = [...data.paths];
   delete sparsePaths[1];
-  await assert.rejects(collectVerifiedRfqDeliveries({ ...base, paths: sparsePaths }), /dense/);
+  await assert.rejects(collectTestVerifiedRfqDeliveries({ ...base, paths: sparsePaths }), /dense/);
 
   const decoratedPaths = [...data.paths];
   Object.defineProperty(decoratedPaths, "selected", { enumerable: false, value: 0 });
-  await assert.rejects(collectVerifiedRfqDeliveries({ ...base, paths: decoratedPaths }), /dense/);
+  await assert.rejects(collectTestVerifiedRfqDeliveries({ ...base, paths: decoratedPaths }), /dense/);
   assert.equal(requests, 0);
 });
 
@@ -1623,7 +1771,7 @@ test("snapshots RFQ collection inputs before concurrent delivery", async () => {
   const mutablePricing = { ...pricing };
   const mutablePolicy = { ...deliveryPolicy };
   const mutablePaths = pathPlan(data.verifications);
-  const pending = collectVerifiedRfqDeliveries({
+  const pending = collectTestVerifiedRfqDeliveries({
     paths: mutablePaths,
     requestId: pricing.pricingId,
     requestDigest: rfqDeliveryPayloadDigest(pricing),
@@ -1734,7 +1882,7 @@ test("bounds strict RFQ response framing under the complete transport deadline",
     { "content-type": "application/json; charset=utf-16" },
     { "transfer-encoding": "gzip" },
   ]) {
-    await assert.rejects(queryVerifiedRfqDelivery({
+    await assert.rejects(queryTestVerifiedRfqDelivery({
       ...args,
       requestImpl: framed(headers),
     }), (error) => error.code === "INVALID_RESPONSE" && error.ambiguous === false);
@@ -1744,7 +1892,7 @@ test("bounds strict RFQ response framing under the complete transport deadline",
     [0x7b, 0x22, 0x78, 0x22, 0x3a, 0x22, 0xc0, 0xaf, 0x22, 0x7d],
     [0xef, 0xbb, 0xbf, ...Buffer.from('{"x":true}')],
   ]) {
-    await assert.rejects(queryVerifiedRfqDelivery({
+    await assert.rejects(queryTestVerifiedRfqDelivery({
       ...args,
       requestImpl: async () => new Response(Uint8Array.from(bytes), {
         headers: { "cache-control": "no-store", "content-type": "application/json; charset=utf-8" },
@@ -1753,7 +1901,7 @@ test("bounds strict RFQ response framing under the complete transport deadline",
   }
 
   let stalledCancelled = 0;
-  await assert.rejects(queryVerifiedRfqDelivery({
+  await assert.rejects(queryTestVerifiedRfqDelivery({
     ...args,
     timeoutMs: 5,
     requestImpl: async () => new Response(new ReadableStream({
@@ -1785,7 +1933,7 @@ test("cancels malformed and rejected RFQ bodies without trusting teardown", asyn
     { status: 503, redirected: false, contentType: "application/json", code: "HTTP_REJECTED" },
     { status: 200, redirected: true, contentType: "application/json", code: "REDIRECT_REFUSED" },
   ]) {
-    await assert.rejects(queryVerifiedRfqDelivery({
+    await assert.rejects(queryTestVerifiedRfqDelivery({
       ...args,
       requestImpl: async () => ({
         status: response.status,
@@ -1823,7 +1971,7 @@ test("rejects relay rewriting while retaining valid offers from two other relay 
       privateKey: relayKeys[0].privateKey,
     }));
   };
-  const collection = await collectVerifiedRfqDeliveries({
+  const collection = await collectTestVerifiedRfqDeliveries({
     paths: data.paths,
     requestId: pricing.pricingId,
     requestDigest: rfqDeliveryPayloadDigest(pricing),
@@ -1856,7 +2004,7 @@ test("invalid relay offers cannot exhaust the retained competition limit", async
     },
     signature: `0x${"00".repeat(65)}`,
   }));
-  const collection = await collectVerifiedRfqDeliveries({
+  const collection = await collectTestVerifiedRfqDeliveries({
     paths: data.paths,
     requestId: pricing.pricingId,
     requestDigest: rfqDeliveryPayloadDigest(pricing),
@@ -1905,7 +2053,7 @@ test("retained competition limit keeps the deterministic best valid offers", asy
   const offers = [...data.offers, third];
   const verifications = [...data.verifications, third.verification];
   const paths = pathPlan(verifications, { includeThirdSolver: true });
-  const collection = await collectVerifiedRfqDeliveries({
+  const collection = await collectTestVerifiedRfqDeliveries({
     paths,
     requestId: pricing.pricingId,
     requestDigest: rfqDeliveryPayloadDigest(pricing),
@@ -1950,7 +2098,7 @@ test("retained competition limit keeps the deterministic best valid offers", asy
 
 test("rejects private or executable fields at the public delivery boundary", async () => {
   const data = await fixture();
-  await assert.rejects(collectVerifiedRfqDeliveries({
+  await assert.rejects(collectTestVerifiedRfqDeliveries({
     paths: data.paths,
     requestId: pricing.pricingId,
     requestDigest: rfqDeliveryPayloadDigest(pricing),
@@ -1995,7 +2143,7 @@ test("does not count an authenticated empty path as valid quote delivery", async
       privateKey: endpointKeys[1].privateKey,
     }));
   };
-  const collection = await collectVerifiedRfqDeliveries({
+  const collection = await collectTestVerifiedRfqDeliveries({
     paths: data.paths,
     requestId: pricing.pricingId,
     requestDigest: rfqDeliveryPayloadDigest(pricing),
@@ -2022,7 +2170,7 @@ test("requires two authenticated relay responses but tolerates a failed extra pa
     if (pathId === "relay-c") throw new Error("private upstream details");
     return baseResponder(url, options, pathId);
   };
-  const collection = await collectVerifiedRfqDeliveries({
+  const collection = await collectTestVerifiedRfqDeliveries({
     paths: data.paths,
     requestId: pricing.pricingId,
     requestDigest: rfqDeliveryPayloadDigest(pricing),
@@ -2035,7 +2183,7 @@ test("requires two authenticated relay responses but tolerates a failed extra pa
   assert.doesNotMatch(JSON.stringify(collection), /private upstream details/);
 
   const exactlyFour = await fixture();
-  await assert.rejects(collectVerifiedRfqDeliveries({
+  await assert.rejects(collectTestVerifiedRfqDeliveries({
     paths: exactlyFour.paths,
     requestId: pricing.pricingId,
     requestDigest: rfqDeliveryPayloadDigest(pricing),
@@ -2051,7 +2199,7 @@ test("requires two authenticated relay responses but tolerates a failed extra pa
 
 test("rejects direct solver substitution and copied capability provenance", async () => {
   const data = await fixture();
-  await assert.rejects(collectVerifiedRfqDeliveries({
+  await assert.rejects(collectTestVerifiedRfqDeliveries({
     paths: data.paths,
     requestId: pricing.pricingId,
     requestDigest: rfqDeliveryPayloadDigest(pricing),
@@ -2072,7 +2220,7 @@ test("rejects direct solver substitution and copied capability provenance", asyn
 
   const copied = pathPlan(data.verifications);
   copied[2] = { ...copied[2], capabilityVerification: { ...data.verifications[0] } };
-  await assert.rejects(collectVerifiedRfqDeliveries({
+  await assert.rejects(collectTestVerifiedRfqDeliveries({
     paths: copied,
     requestId: pricing.pricingId,
     requestDigest: rfqDeliveryPayloadDigest(pricing),
@@ -2097,7 +2245,7 @@ test("binds each direct response to the exact capability configured for that pat
       changedOffer,
     ),
   };
-  await assert.rejects(collectVerifiedRfqDeliveries({
+  await assert.rejects(collectTestVerifiedRfqDeliveries({
     paths: data.paths,
     requestId: pricing.pricingId,
     requestDigest: rfqDeliveryPayloadDigest(pricing),
@@ -2127,7 +2275,7 @@ test("rejects duplicate path identity claims before network access", async () =>
   ]) {
     const paths = pathPlan(data.verifications);
     mutation(paths);
-    await assert.rejects(collectVerifiedRfqDeliveries({
+    await assert.rejects(collectTestVerifiedRfqDeliveries({
       paths,
       requestId: pricing.pricingId,
       requestDigest: rfqDeliveryPayloadDigest(pricing),
@@ -2143,7 +2291,7 @@ test("rejects duplicate path identity claims before network access", async () =>
 test("rejects responder-controlled receipt metadata and request rebinding", async () => {
   const data = await fixture();
   for (const mode of ["extra-metadata", "changed-request"]) {
-    await assert.rejects(collectVerifiedRfqDeliveries({
+    await assert.rejects(collectTestVerifiedRfqDeliveries({
       paths: data.paths,
       requestId: pricing.pricingId,
       requestDigest: rfqDeliveryPayloadDigest(pricing),
@@ -2174,7 +2322,7 @@ test("rejects private endpoints and weakened diversity policy before transport",
   let requests = 0;
   const paths = pathPlan(data.verifications);
   paths[0] = { ...paths[0], endpointOrigin: "https://127.0.0.1" };
-  await assert.rejects(collectVerifiedRfqDeliveries({
+  await assert.rejects(collectTestVerifiedRfqDeliveries({
     paths,
     requestId: pricing.pricingId,
     requestDigest: rfqDeliveryPayloadDigest(pricing),
@@ -2183,7 +2331,7 @@ test("rejects private endpoints and weakened diversity policy before transport",
     requestImpl: async () => { requests += 1; },
     nowSeconds: () => NOW,
   }), /not public/);
-  await assert.rejects(collectVerifiedRfqDeliveries({
+  await assert.rejects(collectTestVerifiedRfqDeliveries({
     paths: data.paths,
     requestId: pricing.pricingId,
     requestDigest: rfqDeliveryPayloadDigest(pricing),
@@ -2192,7 +2340,7 @@ test("rejects private endpoints and weakened diversity policy before transport",
     requestImpl: async () => { requests += 1; },
     nowSeconds: () => NOW,
   }), /diversity minimum/);
-  await assert.rejects(collectVerifiedRfqDeliveries({
+  await assert.rejects(collectTestVerifiedRfqDeliveries({
     paths: data.paths,
     requestId: pricing.pricingId,
     requestDigest: rfqDeliveryPayloadDigest(pricing),
