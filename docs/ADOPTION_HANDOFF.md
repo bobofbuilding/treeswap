@@ -76,8 +76,8 @@ Required properties include:
 
 - no Lightning credential in the browser, public web server, relay, or EVM service;
 - no EVM signer in the browser, relay, reader, or Lightning adapter;
-- the SIWE edge verifies wallet/session ownership, CSRF, rate limits, and the explicit user gesture before signing one wallet claim; it cannot recover or replay a lost claim response;
-- only the reviewed browser adapter may call `eth_sendTransaction`, while the coordinator durably claims first and every restart remains no-resend;
+- the SIWE edge verifies wallet/session ownership, an original server-staged intent handle, CSRF, and rate limits before signing one wallet claim; it cannot recover or replay a lost claim response;
+- only the reviewed browser adapter may call `eth_sendTransaction`; it independently verifies the coordinator claim, requires active user interaction, writes the digest-only Web-Lock/local-storage tombstone first, and never persists the token or response, while the coordinator durably claims first and every restart remains no-resend;
 - authenticated encrypted private paths and reviewed service identity;
 - independently retained encrypted backups and a witnessed isolated restore;
 - continuous proxy, pause, decimals, finality, price, solver-capacity, LND-health, close-risk, and two-asset reconciliation;

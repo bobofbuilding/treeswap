@@ -102,6 +102,11 @@ import {
 import { ContractIntentWalletStore } from "../lib/contract-intent-wallet-store.mjs";
 import { createContractIntentWalletDispatcherForTests } from "../lib/contract-intent-wallet-dispatcher.mjs";
 import {
+  createContractIntentWalletBrowserAdapterForTests,
+  createContractIntentWalletBrowserTombstoneConsumerForTests,
+  verifyContractIntentWalletBrowserClaim,
+} from "../lib/contract-intent-wallet-browser.mjs";
+import {
   buildContractIntentWalletGatewayClaimRequest,
   buildContractIntentWalletGatewayOutcomeRequest,
   createContractIntentWalletGatewayForTests,
@@ -2300,20 +2305,232 @@ for (const direction of ["lightning-to-bit", "bit-to-lightning"]) {
     assert.doesNotMatch(JSON.stringify(gateway.status()), new RegExp(sessionDigest.slice(2)));
 
     const reportedGatewayHash = id(`wallet-gateway-reported:${direction}`).toLowerCase();
-    const outcomeInput = {
-      beforeAccounts: [user.address],
-      beforeChainId: "0x1",
-      claimToken: verifiedClaim.claimToken,
-      contextObservedAt: NOW,
-      expiresAt: NOW + 10,
-      outcome: {
-        errorCode: null,
-        status: "reported",
-        transactionHash: reportedGatewayHash,
+    const responsePublicKeySpki = gatewayResponseKeys.publicKey
+      .export({ format: "der", type: "spki" })
+      .toString("base64");
+    const browserExpectation = {
+      calldataDigest: preflight.calldataDigest,
+      chainId: preflight.chainId,
+      contract: preflight.to,
+      contractIntentDigest: preflight.contractIntentDigest,
+      dispatchExpiresAt: preflight.expiresAt,
+      quoteId: preflight.quoteId,
+      requestDigest: preflight.requestDigest,
+      wallet: preflight.from,
+    };
+    const browserClaim = await verifyContractIntentWalletBrowserClaim({
+      expected: browserExpectation,
+      now: NOW,
+      response: claimResponse,
+      responsePublicKeySpki,
+    });
+    assert.equal(browserClaim.claimVerified, true);
+    assert.equal(browserClaim.durableNoResendTombstoneRequired, true);
+    assert.equal(browserClaim.persistentClaimToken, false);
+    assert.deepEqual(browserClaim.request, verifiedClaim.request);
+    await assert.rejects(
+      () => verifyContractIntentWalletBrowserClaim({
+        expected: browserExpectation,
+        now: NOW,
+        response: claimResponse,
+        responsePublicKeySpki,
+      }),
+      /already verified in this page/,
+    );
+    await assert.rejects(
+      () => verifyContractIntentWalletBrowserClaim({
+        expected: { ...browserExpectation, contract: solvers[0].address },
+        now: NOW,
+        response: claimResponse,
+        responsePublicKeySpki,
+      }),
+      /changed the expected contract intent/,
+    );
+    await assert.rejects(
+      () => verifyContractIntentWalletBrowserClaim({
+        expected: browserExpectation,
+        now: NOW,
+        response: {
+          ...claimResponse,
+          signature: `${claimResponse.signature[0] === "A" ? "B" : "A"}${claimResponse.signature.slice(1)}`,
+        },
+        responsePublicKeySpki,
+      }),
+      /signature is invalid/,
+    );
+    let browserUserActivation = false;
+    let browserWalletSendCalls = 0;
+    let failedTombstoneProviderCalls = 0;
+    const failedTombstoneAdapter = createContractIntentWalletBrowserAdapterForTests({
+      clock: () => NOW,
+      consumeClaimTombstone: async () => { throw new Error("storage unavailable"); },
+      provider: {
+        async request() {
+          failedTombstoneProviderCalls += 1;
+          throw new Error("provider must not be contacted");
+        },
       },
-      outcomeObservedAt: NOW,
-      postAccounts: [user.address],
-      postChainId: "0x1",
+      readUserActivation: () => true,
+      walletResponseTimeoutMs: 100,
+    });
+    await assert.rejects(
+      () => failedTombstoneAdapter.dispatch({
+        claim: browserClaim,
+        confirmation: { confirmed: true, requestDigest: browserClaim.requestDigest },
+      }),
+      (error) => error.code === "DURABLE_TOMBSTONE_UNAVAILABLE"
+        && error.claimConsumed === false
+        && error.requestMayHaveBeenSent === false
+        && error.retryAuthorized === false,
+    );
+    assert.equal(failedTombstoneProviderCalls, 0);
+    const browserTombstoneStorage = new Map();
+    const browserTombstoneConsumer = createContractIntentWalletBrowserTombstoneConsumerForTests({
+      clock: () => NOW,
+      locks: {
+        async request(name, options, callback) {
+          assert.equal(name, "treeswap-wallet-intent-no-resend-v1");
+          assert.deepEqual(options, { mode: "exclusive" });
+          return callback();
+        },
+      },
+      storage: {
+        getItem(key) {
+          return browserTombstoneStorage.get(key) ?? null;
+        },
+        setItem(key, value) {
+          browserTombstoneStorage.set(key, value);
+        },
+      },
+    });
+    const browserProviderRequests = [];
+    const browserAdapter = createContractIntentWalletBrowserAdapterForTests({
+      clock: () => NOW,
+      consumeClaimTombstone: (claim) => browserTombstoneConsumer.consume(claim),
+      provider: {
+        async request(request) {
+          browserProviderRequests.push(request);
+          if (request.method === "eth_chainId") return "0x1";
+          if (request.method === "eth_accounts") return [user.address];
+          if (request.method === "eth_sendTransaction") {
+            browserWalletSendCalls += 1;
+            assert.equal(request, browserClaim.request);
+            return reportedGatewayHash;
+          }
+          throw new Error("unexpected browser wallet method");
+        },
+      },
+      readUserActivation: () => browserUserActivation,
+      walletResponseTimeoutMs: 100,
+    });
+    assert.deepEqual(browserAdapter.status(), {
+      schema: "treeswap.contract-intent-wallet-browser-status.v1",
+      state: "ready",
+      claimSignatureVerification: "Ed25519 Web Crypto",
+      requiresActiveUserInteraction: true,
+      automaticRetry: false,
+      durableNoResendTombstone: true,
+      persistentClaimToken: false,
+      requestsWalletConnection: false,
+      requestsChainSwitch: false,
+      walletDispatchAuthority: false,
+      lightningDispatchAuthority: false,
+      fundingAuthorization: false,
+    });
+    const browserConfirmation = {
+      confirmed: true,
+      requestDigest: browserClaim.requestDigest,
+    };
+    await assert.rejects(
+      () => browserAdapter.dispatch({ claim: browserClaim, confirmation: browserConfirmation }),
+      (error) => error.code === "USER_ACTIVATION_REQUIRED"
+        && error.claimConsumed === false
+        && error.requestMayHaveBeenSent === false
+        && error.retryAuthorized === false,
+    );
+    assert.equal(browserProviderRequests.length, 0);
+    browserUserActivation = true;
+    const extractedBrowserDispatch = browserAdapter.dispatch;
+    await assert.rejects(
+      () => extractedBrowserDispatch({ claim: browserClaim, confirmation: browserConfirmation }),
+      /original fixed adapter/,
+    );
+    await assert.rejects(
+      () => browserAdapter.dispatch({ claim: { ...browserClaim }, confirmation: browserConfirmation }),
+      /original verified claim/,
+    );
+    const concurrentBrowserResults = await Promise.allSettled([
+      browserAdapter.dispatch({ claim: browserClaim, confirmation: browserConfirmation }),
+      browserAdapter.dispatch({ claim: browserClaim, confirmation: browserConfirmation }),
+    ]);
+    const fulfilledBrowserResults = concurrentBrowserResults.filter((result) => result.status === "fulfilled");
+    const rejectedBrowserResults = concurrentBrowserResults.filter((result) => result.status === "rejected");
+    assert.equal(fulfilledBrowserResults.length, 1);
+    assert.equal(rejectedBrowserResults.length, 1);
+    assert.equal(rejectedBrowserResults[0].reason.code, "CLAIM_CONSUMED");
+    assert.equal(rejectedBrowserResults[0].reason.requestMayHaveBeenSent, false);
+    assert.equal(rejectedBrowserResults[0].reason.retryAuthorized, false);
+    const browserResult = fulfilledBrowserResults[0].value;
+    assert.equal(browserResult.state, "OUTCOME_READY");
+    assert.equal(browserResult.transactionHash, reportedGatewayHash);
+    assert.equal(browserResult.outcomeStatus, "reported");
+    assert.equal(browserResult.claimConsumed, true);
+    assert.equal(browserResult.requestMayHaveBeenSent, true);
+    assert.equal(browserResult.retryAuthorized, false);
+    assert.equal(browserResult.durableNoResendTombstone, true);
+    assert.equal(browserResult.persistentClaimToken, false);
+    assert.equal(browserResult.report.claimToken, verifiedClaim.claimToken);
+    assert.equal(browserResult.report.beforeAccounts[0], preflight.from);
+    assert.equal(browserResult.report.postAccounts[0], preflight.from);
+    assert.equal(browserTombstoneStorage.size, 1);
+    const browserTombstoneBytes = [...browserTombstoneStorage.values()][0];
+    assert.doesNotMatch(browserTombstoneBytes, new RegExp(browserClaim.claimToken));
+    assert.doesNotMatch(browserTombstoneBytes, new RegExp(preflight.from.slice(2)));
+    assert.doesNotMatch(browserTombstoneBytes, new RegExp(sessionDigest.slice(2)));
+    await assert.rejects(
+      () => browserTombstoneConsumer.consume(browserClaim),
+      /already has a durable no-resend tombstone/,
+    );
+    const browserTombstoneKey = [...browserTombstoneStorage.keys()][0];
+    const futureTombstoneRecord = JSON.parse(browserTombstoneBytes);
+    futureTombstoneRecord.clockHighWater = NOW + 1;
+    browserTombstoneStorage.set(browserTombstoneKey, JSON.stringify(futureTombstoneRecord));
+    await assert.rejects(
+      () => browserTombstoneConsumer.consume(browserClaim),
+      /tombstone clock regressed/,
+    );
+    browserTombstoneStorage.set(browserTombstoneKey, "{");
+    await assert.rejects(
+      () => browserTombstoneConsumer.consume(browserClaim),
+      /tombstones are malformed/,
+    );
+    assert.deepEqual(browserProviderRequests.map((request) => request.method), [
+      "eth_chainId",
+      "eth_accounts",
+      "eth_sendTransaction",
+      "eth_chainId",
+      "eth_accounts",
+    ]);
+    assert.equal(browserWalletSendCalls, 1);
+    await assert.rejects(
+      () => browserAdapter.dispatch({ claim: browserClaim, confirmation: browserConfirmation }),
+      (error) => error.code === "CLAIM_CONSUMED"
+        && error.claimConsumed === true
+        && error.requestMayHaveBeenSent === false
+        && error.retryAuthorized === false,
+    );
+    assert.equal(browserWalletSendCalls, 1);
+
+    const outcomeInput = {
+      beforeAccounts: browserResult.report.beforeAccounts,
+      beforeChainId: browserResult.report.beforeChainId,
+      claimToken: browserResult.report.claimToken,
+      contextObservedAt: browserResult.report.contextObservedAt,
+      expiresAt: NOW + 10,
+      outcome: browserResult.report.outcome,
+      outcomeObservedAt: browserResult.report.outcomeObservedAt,
+      postAccounts: browserResult.report.postAccounts,
+      postChainId: browserResult.report.postChainId,
       requestDigest: preflight.requestDigest,
       requestedAt: NOW,
       requesterPrivateKey: gatewayRequesterKeys.privateKey,
@@ -2414,6 +2631,130 @@ for (const direction of ["lightning-to-bit", "bit-to-lightning"]) {
       conflictingOutcomeRequest,
     ))).status, 400);
     assert.equal(gateway.status().outcomesRecorded, 1);
+
+    const browserFailurePath = join(directory, `wallet-browser-failure-${direction}.sqlite`);
+    const browserFailureStore = await ContractIntentWalletStore.open({
+      allowMemory: false,
+      initialize: true,
+      maximumIntents: 8,
+      path: browserFailurePath,
+    });
+    const browserFailureDeployment = new AbortController();
+    const browserFailureGateway = createContractIntentWalletGatewayForTests({
+      ...gatewayOptions(),
+      randomBytes: () => Buffer.alloc(32, direction === "lightning-to-bit" ? 171 : 191),
+      signal: browserFailureDeployment.signal,
+      store: browserFailureStore,
+    });
+    browserFailureGateway.stage(preflight, { now: NOW });
+    const browserFailureSessionDigest = id(`wallet-browser-failure-session:${direction}`).toLowerCase();
+    const browserFailureClaimRequest = buildContractIntentWalletGatewayClaimRequest({
+      expiresAt: NOW + 10,
+      requestDigest: preflight.requestDigest,
+      requestedAt: NOW,
+      requesterPrivateKey: gatewayRequesterKeys.privateKey,
+      sessionDigest: browserFailureSessionDigest,
+      wallet: user.address,
+    });
+    const browserFailureClaimHttp = await browserFailureGateway.handle(walletGatewayRequest(
+      "/v1/wallet-intent/claim",
+      browserFailureClaimRequest,
+    ));
+    assert.equal(browserFailureClaimHttp.status, 200);
+    const browserFailureClaimResponse = await browserFailureClaimHttp.json();
+    const verifiedBrowserFailureGatewayClaim = verifyContractIntentWalletGatewayClaimResponse({
+      now: NOW,
+      preflight,
+      request: browserFailureClaimRequest,
+      response: browserFailureClaimResponse,
+      responsePublicKey: gatewayResponseKeys.publicKey,
+    });
+    const browserFailureClaim = await verifyContractIntentWalletBrowserClaim({
+      expected: browserExpectation,
+      now: NOW,
+      response: browserFailureClaimResponse,
+      responsePublicKeySpki,
+    });
+    const browserFailureTombstones = new Map();
+    const browserFailureTombstoneConsumer = createContractIntentWalletBrowserTombstoneConsumerForTests({
+      clock: () => NOW,
+      locks: {
+        async request(_name, _options, callback) { return callback(); },
+      },
+      storage: {
+        getItem(key) { return browserFailureTombstones.get(key) ?? null; },
+        setItem(key, value) { browserFailureTombstones.set(key, value); },
+      },
+    });
+    let browserFailureSendCalls = 0;
+    const browserFailureAdapter = createContractIntentWalletBrowserAdapterForTests({
+      clock: () => NOW,
+      consumeClaimTombstone: (claim) => browserFailureTombstoneConsumer.consume(claim),
+      provider: {
+        async request(request) {
+          if (request.method === "eth_chainId") return "0x1";
+          if (request.method === "eth_accounts") return [user.address];
+          browserFailureSendCalls += 1;
+          const error = new Error(direction === "lightning-to-bit" ? "wallet response lost" : "user rejected");
+          if (direction === "bit-to-lightning") error.code = 4001;
+          throw error;
+        },
+      },
+      readUserActivation: () => true,
+      walletResponseTimeoutMs: 100,
+    });
+    const browserFailureResult = await browserFailureAdapter.dispatch({
+      claim: browserFailureClaim,
+      confirmation: { confirmed: true, requestDigest: browserFailureClaim.requestDigest },
+    });
+    const expectedBrowserFailureStatus = direction === "lightning-to-bit" ? "ambiguous" : "rejected";
+    assert.equal(browserFailureResult.outcomeStatus, expectedBrowserFailureStatus);
+    assert.equal(browserFailureResult.transactionHash, null);
+    assert.equal(browserFailureResult.retryAuthorized, false);
+    assert.equal(browserFailureSendCalls, 1);
+    const browserFailureOutcomeRequest = buildContractIntentWalletGatewayOutcomeRequest({
+      beforeAccounts: browserFailureResult.report.beforeAccounts,
+      beforeChainId: browserFailureResult.report.beforeChainId,
+      claimToken: browserFailureResult.report.claimToken,
+      contextObservedAt: browserFailureResult.report.contextObservedAt,
+      expiresAt: NOW + 10,
+      outcome: browserFailureResult.report.outcome,
+      outcomeObservedAt: browserFailureResult.report.outcomeObservedAt,
+      postAccounts: browserFailureResult.report.postAccounts,
+      postChainId: browserFailureResult.report.postChainId,
+      requestDigest: preflight.requestDigest,
+      requestedAt: NOW,
+      requesterPrivateKey: gatewayRequesterKeys.privateKey,
+      sessionDigest: browserFailureSessionDigest,
+      wallet: user.address,
+    });
+    const browserFailureOutcomeHttp = await browserFailureGateway.handle(walletGatewayRequest(
+      "/v1/wallet-intent/outcome",
+      browserFailureOutcomeRequest,
+    ));
+    assert.equal(browserFailureOutcomeHttp.status, 200);
+    const verifiedBrowserFailureOutcome = verifyContractIntentWalletGatewayOutcomeResponse({
+      claim: verifiedBrowserFailureGatewayClaim,
+      request: browserFailureOutcomeRequest,
+      response: await browserFailureOutcomeHttp.json(),
+      responsePublicKey: gatewayResponseKeys.publicKey,
+    });
+    assert.equal(
+      verifiedBrowserFailureOutcome.state,
+      direction === "lightning-to-bit" ? "SUBMISSION_UNKNOWN" : "USER_REJECTED",
+    );
+    browserFailureDeployment.abort();
+    browserFailureStore.close();
+    const browserFailureDatabaseBytes = await readFile(browserFailurePath);
+    assert.equal(
+      browserFailureDatabaseBytes.includes(Buffer.from(browserFailureClaim.claimToken, "utf8")),
+      false,
+    );
+    assert.equal(
+      browserFailureDatabaseBytes.includes(Buffer.from(browserFailureSessionDigest, "utf8")),
+      false,
+    );
+
     gatewayDeployment.abort();
     assert.equal(gateway.status().state, "stopped");
     gatewayStore.close();
