@@ -1,6 +1,6 @@
 # Selected-solver finalization
 
-Status: exact client, provider request verification, signed response construction, same-process reservation consumer, stable retry identity, two-direction invoice binding, and second user authorization are implemented and tested locally. No `/v1/finalize` provider listener, browser route, production requester key, solver response cache, independent BOLT 11 decoder, or deployed solver exists. Funded operation remains closed.
+Status: the exact client, strict repository-only `/v1/finalize` handler, private durable claim/response journal, recovery-capable finalizer boundary, signed response construction, same-process reservation consumer, stable retry identity, two-direction invoice binding, and second user authorization are implemented and tested locally. No network listener, production requester key, LND-backed idempotent finalizer, browser route, independent BOLT 11 decoder, or deployed solver exists. Funded operation remains closed.
 
 ## Purpose
 
@@ -31,7 +31,11 @@ The response invoice must hash to the executable offer's invoice digest. BIT →
 
 One prepared attempt retains one signed request packet. A transport loss or timeout is ambiguous, so the same in-memory attempt may resend only that byte-identical packet. Concurrent sends reject, and the first verified response is cached for exact local replay. A non-ambiguous invalid or unauthorized response makes the reservation's finalization terminal; the user must obtain fresh competition instead of asking the solver for changed terms.
 
-This stable request ID is also the provider's required idempotency key. A solver implementation must durably claim the request ID and digest before creating a Lightning-to-BIT invoice, then durably store the exact signed response before returning it. An exact retry returns the same response; a different request under the same ID rejects. That provider-side durable claim/cache is specified here but is not yet implemented or deployed.
+This stable request ID is also the provider's idempotency key. `lib/selected-solver-finalization-provider.mjs` durably claims the exact request ID and digest in a private SQLite journal before calling the finalizer, and commits the exact signed response before returning it. An exact retry receives the stored response bytes; a different digest under the same stable ID rejects. `CLAIMED` and `READY` are the only durable states. The store uses full synchronous commits, WAL, a monotonic clock high-water mark, strict schema verification, mode-`0600` files, bounded live rows, short expiring recovery leases, and aggregate-only status.
+
+If the process dies after an external invoice or quote record is created but before `READY` commits, the row remains `CLAIMED`. A retry during the current lease receives `425`; after lease expiry the provider invokes only the finalizer's separate `recover` method, never `finalize` again. A handler failure after claiming receives `503`. The client treats both states as ambiguous and can resend only the byte-identical request. The recovery adapter is required to look up or create one request-bound result idempotently in its own durable system—for Lightning → BIT, ultimately by a precommitted payment hash or equivalent LND lookup key. The repository finalizer wrapper establishes and tests this interface but does not prove that an actual LND deployment honors it.
+
+The provider rejects malformed or cacheable HTTP, compression, wrong method/origin/path, stale authority, requester/endpoint substitution, clock rollback, copied store/finalizer provenance, response expiry, invoice/digest mismatch, and a changed BIT → Lightning invoice or payment hash. Local tests cover exact replay after restart, concurrent requests, a lost response, conflicting re-signing, interrupted finalization, recovery after lease expiry, and SIGKILL/WAL recovery. The handler exposes no listener and the store grants no funding, payment, EVM, or settlement authority. Because the exact response contains private invoice data, its volume and backups still require deployment encryption, access control, retention, and deletion policy.
 
 After the response passes transport and executable-quote validation, the reservation service returns the exact second EIP-712 prompt. It includes the final payment hash, invoice digest, amounts, beneficiary, selected solver, first authorization, executable-offer digest, durable execution binding, and expiry. The signature does not move assets immediately and is not a token allowance, but it is settlement authorization for those exact terms. A separate Lightning payment or onchain wallet action remains necessary.
 
@@ -41,13 +45,13 @@ The service retains the original module-private authorized result for the later 
 
 Before any funded testnet use:
 
-1. implement a solver-owned `/v1/finalize` listener that durably claims the request before invoice creation and commits the exact signed response before returning it;
+1. compose the repository handler with a solver-owned network listener and a reviewed LND-backed finalizer whose `finalize` and `recover` methods share one durable request/payment-hash idempotency record;
 2. deploy the client and provider behind reviewed TLS, logging, tracing, secret-volume, backup, restart, and rate-limit controls;
 3. use a separately scoped requester key, publish its allowlisted digest through reviewed deployment policy, and drill key rotation and revocation;
 4. independently decode and validate every returned BOLT 11 invoice—network, checksum/signature, amount, payment hash/secret, payee, expiry, final CLTV, features, route hints, hold-invoice requirement, and replay state—before showing a pay action;
-5. persist enough token/request commitment to recover or safely burn an in-flight reservation across coordinator restart without creating another invoice;
+5. persist enough coordinator token/request commitment to recover or safely burn an in-flight reservation across coordinator restart without creating another invoice;
 6. expose the second prompt through the strict private browser ceremony and retain wallet evidence for EOA plus an explicit ERC-1271 support decision;
-7. run ambiguous-response, duplicate, conflicting-replay, timeout, shutdown, crash, database-full, cache-loss, key-rotation, stale-capability, malformed-invoice, and both-direction regtest drills; and
+7. run deployed ambiguous-response, duplicate, conflicting-replay, timeout, shutdown, crash, real-volume-full, backup/restore, cache-loss, key-rotation, stale-capability, malformed-invoice, and both-direction regtest drills; and
 8. obtain independent protocol, Lightning, application-security, privacy, and operations review.
 
 Until those gates pass, the implemented client and consumer are repository evidence only. They cannot fund a pool, open the bridge, pay an invoice, broadcast an EVM transaction, or settle a swap.

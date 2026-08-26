@@ -242,6 +242,20 @@ test("retries one byte-identical signed request after ambiguous transport and ca
   assert.equal(bodies[0], bodies[1]);
 });
 
+test("treats provider pending and recovery-required responses as ambiguous", async () => {
+  for (const status of [425, 503]) {
+    const prepared = await preparedClient(async () => jsonResponse(
+      { error: "provider recovery pending" },
+      { status },
+    ));
+    await assert.rejects(
+      prepared.client.send(prepared.attempt),
+      (error) => error instanceof SelectedSolverFinalizationError
+        && error.code === "PROVIDER_RECOVERY_PENDING" && error.ambiguous === true,
+    );
+  }
+});
+
 test("binds BIT-to-Lightning to the user's existing invoice", async () => {
   const userInvoice = "lnbc4u1userprovidedinvoice";
   const privateRequest = disclosure({
