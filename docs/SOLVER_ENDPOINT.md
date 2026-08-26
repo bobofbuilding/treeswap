@@ -50,7 +50,16 @@ Signed self-report can only reduce the admitted amount; it never substitutes for
 The official active and recovery operator client fixes the local verifier,
 module-owned Node HTTPS request path, wall clock, and cryptographic challenge
 source. A separate injected factory exists only for bounded transport tests;
-operator composition rejects it before any capability read.
+operator composition rejects it before any capability read. The required
+production Lightning reader likewise fixes a private port-443 Node HTTPS
+`POST /v1/capacity`, wall clock, request entropy, response-size ceiling, and
+complete-body timeout. Every DNS answer must be private; one validated address
+is pinned for the connection while TLS and `Host` retain the original service
+name. It requires HTTP 200 JSON with `no-store`, refuses
+redirects, compression, ambiguous response framing, plaintext, public or
+credential-bearing origins, paths, queries, fragments, nonstandard ports, and
+globally disabled TLS verification. Its injected factory is test-only and
+cannot enter a production solver capability client.
 
 ## Remaining deployment gates
 
@@ -68,6 +77,6 @@ Until those gates have release evidence, the web product must not publish permis
 
 `createFinalizedBitVaultInventoryReader` compares two independently labeled and function-distinct providers at their common finalized height. Each provider must prove the chosen block finalized and canonical, and every code, implementation-slot, immutable, token-state, vault-accounting, and solver-balance read is bound to the exact block hash with EIP-1898. Lightning → BIT admits only solver-owned available vault inventory after a configured reserve; BIT → Lightning admits zero solver BIT because the user funds the direction-specific user escrow.
 
-The Lightning adapter accepts only a fresh, short-lived coordinator-signed capacity request bound to the exact capability digest, epoch, direction, solver, and LND node. A distinct capacity key signs a response containing gross directional sats, in-flight sats, reserve, budget, and admitted availability—never channel identifiers. The coordinator verifies exact deductions, freshness, key separation, and request binding. This authenticates an observer's statement about private LND state; it does not turn private channel liquidity into a publicly verifiable proof.
+The Lightning adapter accepts only a fresh, short-lived coordinator-signed capacity request bound to the exact capability digest, epoch, direction, solver, and LND node. A distinct capacity key signs a response containing gross directional sats, in-flight sats, reserve, budget, and admitted availability—never channel identifiers. The coordinator verifies exact deductions, freshness, requester/observer/endpoint key separation, and request binding. Production reaches that observer only through the fixed private HTTPS reader above; the direct injected fetcher used by the local Compose lab is branded test-only. This authenticates an observer's statement about private LND state; it does not turn private channel liquidity into a publicly verifiable proof.
 
 Published commit `67655f859ec70c191501d073e75cba808ce06def` passed the live two-direction Lightning-capacity campaign, the adversarial dual-provider BIT-reader suite, and all 26 local qualification campaigns. Its independently rebuilt local-only evidence digest is `sha256:0c20cb3ea69ca7eb56ed5f79b215ad317523908ee09436ac4203966c90ac3d58`; [hosted CI](https://github.com/bobofbuilding/treeswap/actions/runs/32323948108) also passed. This is repository and local-regtest evidence, not independently operated Ethereum-provider evidence, production capacity, or funding authorization.

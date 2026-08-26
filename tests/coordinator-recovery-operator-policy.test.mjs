@@ -27,6 +27,7 @@ import { CoordinatorStore } from "../lib/coordinator-store.mjs";
 import {
   buildLightningCapacityObservation,
   createAuthenticatedLightningCapacityReader,
+  createTestAuthenticatedLightningCapacityReader,
   createFinalizedBitVaultInventoryReader,
   signLightningCapacityObservation,
   verifyLightningCapacityRequest,
@@ -259,7 +260,8 @@ async function capabilityClient({ injected = false } = {}) {
     timeoutMs: 1_000,
     nowSeconds: () => NOW,
   });
-  const readVerifiedLightningCapacity = createAuthenticatedLightningCapacityReader({
+  const readVerifiedLightningCapacity = (injected
+    ? createTestAuthenticatedLightningCapacityReader({
     observerPublicKey: observerKeys.publicKey,
     observerKeyId: "recovery-capacity-observer",
     requesterPrivateKey: capacityRequesterKeys.privateKey,
@@ -295,7 +297,19 @@ async function capabilityClient({ injected = false } = {}) {
     timeoutMs: 1_000,
     randomBytesImpl: () => Buffer.alloc(32, 0x84),
     nowSeconds: () => NOW,
-  });
+  })
+    : createAuthenticatedLightningCapacityReader({
+      observerOrigin: "https://recovery-capacity-observer.internal",
+      observerPublicKey: observerKeys.publicKey,
+      observerKeyId: "recovery-capacity-observer",
+      requesterPrivateKey: capacityRequesterKeys.privateKey,
+      requesterKeyId: "coordinator-recovery-capacity",
+      maxObservationAgeSeconds: 30,
+      maxClockSkewSeconds: 5,
+      maxObservationTtlSeconds: 30,
+      timeoutMs: 1_000,
+      maximumResponseBytes: 65_536,
+    }));
   const source = {
     endpointOrigin: ENDPOINT_ORIGIN,
     solverId: SOLVER.address,

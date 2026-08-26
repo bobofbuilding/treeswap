@@ -12,8 +12,13 @@ must contain all of the following original same-process objects:
 - a `createSolverCapabilityClient` result that performs a fresh public HTTPS
   capability challenge using the module-owned Node HTTPS transport, system
   clock, cryptographic entropy, local LND compact-signature recovery, the
-  finalized two-provider BIT vault reader, and the separately signed
-  Lightning-capacity reader;
+  finalized two-provider BIT vault reader, and a separately signed production
+  Lightning-capacity reader created with `createAuthenticatedLightningCapacityReader`.
+  That reader uses its own module-owned private Node HTTPS `/v1/capacity`
+  transport, pins one address only after every DNS answer is private while
+  preserving hostname verification, fixes the system clock and cryptographic
+  entropy, bounds the complete response, and requires one exact private
+  port-443 observer origin;
 - a `createAuthenticatedPrivatePacketClient` result using the module-owned fixed
   Node HTTPS transport;
 - a `createSolverDaemonEvidenceControls` result using two distinct private
@@ -39,10 +44,10 @@ active policy set prepared.
 Preparation is one-use and cancellation-aware. Shutdown aborts outstanding
 solver endpoint requests; a late result cannot be handed to the active
 lifecycle. A copied client, runtime, config, controls object, or preparer has no
-factory provenance and is rejected. Solver-capability, private-packet, or
-evidence clients made with an injected request callback, clock, entropy source,
-or node-signature verifier are test-only and reject before operator-policy or
-runtime creation. Lightning action configuration has no transport-callback field at
+factory provenance and is rejected. Solver-capability, Lightning-capacity,
+private-packet, or evidence clients made with an injected request callback,
+clock, entropy source, or node-signature verifier are test-only and reject
+before operator-policy or runtime creation. Lightning action configuration has no transport-callback field at
 all: plaintext, a nonstandard port, public or credential-bearing origins, and
 caller transport substitution reject before runtime creation.
 EVM action configuration likewise accepts no RPC callback: broadcast and both
@@ -76,6 +81,10 @@ The operator must still prove all external facts separately:
 - the BIT providers, Lightning capacity observer, evidence producers, and EVM
   reconciliation providers are live and
   independently controlled as required by the release;
+- the capacity observer is reached only through reviewed private DNS and a
+  private CA or equivalent service-mesh identity on port 443; its terminator
+  forwards only `/v1/capacity` to the non-published adapter, and trust-root and
+  certificate rotation are tested without disabling Node verification;
 - both evidence routes use the repository's [durable provider
   boundary](./DURABLE_EVIDENCE_PROVIDER.md), separate initialized replay-ledger
   volumes, independent readers, reviewed TLS identities/trust roots, and the

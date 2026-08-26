@@ -18,7 +18,9 @@ import { fixedEvmRpcHttpsRequest } from "../lib/evm-action-runner.mjs";
 import {
   buildLightningCapacityObservation,
   createAuthenticatedLightningCapacityReader,
+  createTestAuthenticatedLightningCapacityReader,
   createFinalizedBitVaultInventoryReader,
+  lightningCapacityReaderTransportMode,
   signLightningCapacityObservation,
   verifyLightningCapacityRequest,
 } from "../lib/solver-capacity-readers.mjs";
@@ -97,7 +99,7 @@ function evidencePolicy(overrides = {}) {
   };
 }
 
-function concreteReaders() {
+function concreteReaders({ productionLightning = false } = {}) {
   const readVerifiedBitInventory = createFinalizedBitVaultInventoryReader({
     primaryProvider: {
       identity: id("operator primary BIT provider").toLowerCase(),
@@ -121,7 +123,20 @@ function concreteReaders() {
     timeoutMs: 1_000,
     nowSeconds: () => NOW,
   });
-  const readVerifiedLightningCapacity = createAuthenticatedLightningCapacityReader({
+  const readVerifiedLightningCapacity = (productionLightning
+    ? createAuthenticatedLightningCapacityReader({
+      observerOrigin: "https://capacity-observer.internal",
+      observerPublicKey: observerKeys.publicKey,
+      observerKeyId: "capacity-observer-one",
+      requesterPrivateKey: capacityRequesterKeys.privateKey,
+      requesterKeyId: "coordinator-capacity-one",
+      maxObservationAgeSeconds: 30,
+      maxClockSkewSeconds: 5,
+      maxObservationTtlSeconds: 30,
+      timeoutMs: 1_000,
+      maximumResponseBytes: 65_536,
+    })
+    : createTestAuthenticatedLightningCapacityReader({
     observerPublicKey: observerKeys.publicKey,
     observerKeyId: "capacity-observer-one",
     requesterPrivateKey: capacityRequesterKeys.privateKey,
@@ -157,7 +172,7 @@ function concreteReaders() {
     timeoutMs: 1_000,
     randomBytesImpl: () => Buffer.alloc(32, 0x91),
     nowSeconds: () => NOW,
-  });
+  }));
   return Object.freeze({ readVerifiedBitInventory, readVerifiedLightningCapacity });
 }
 
@@ -201,7 +216,7 @@ async function endpointEnvelope() {
 async function capabilityClient({
   policy: policyOverride = capabilityPolicy,
 } = {}) {
-  const readers = concreteReaders();
+  const readers = concreteReaders({ productionLightning: true });
   return createSolverCapabilityClient({
     endpointOrigin: ENDPOINT_ORIGIN,
     solverId: SOLVER.address,
@@ -419,7 +434,10 @@ test("preparation is cancellation-aware and one-use, and the operator launcher r
 });
 
 test("rejects lookalike readers, packet clients, action configs, and non-independent EVM providers", async () => {
-  const readers = concreteReaders();
+  const readers = concreteReaders({ productionLightning: true });
+  const testReaders = concreteReaders();
+  assert.equal(lightningCapacityReaderTransportMode(readers.readVerifiedLightningCapacity), "fixed-node-https");
+  assert.equal(lightningCapacityReaderTransportMode(testReaders.readVerifiedLightningCapacity), "injected-test");
   const source = {
     endpointOrigin: ENDPOINT_ORIGIN,
     solverId: SOLVER.address,
@@ -441,6 +459,10 @@ test("rejects lookalike readers, packet clients, action configs, and non-indepen
       availableLightningSats: "1", capacityEpoch: "7", nodePubkey: NODE_PUBKEY, observedAt: NOW,
     }),
   }), /concrete authenticated Lightning capacity reader/);
+  assert.throws(() => createSolverCapabilityClient({
+    ...source,
+    readVerifiedLightningCapacity: testReaders.readVerifiedLightningCapacity,
+  }), /fixed Node HTTPS Lightning capacity reader/);
   for (const injected of [
     { requestImpl: async () => { throw new Error("injected capability transport"); } },
     { nowSeconds: () => NOW },

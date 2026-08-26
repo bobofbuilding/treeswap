@@ -34,7 +34,7 @@ Reviewed surfaces:
 | TS-M01 | Maker rewards excluded from v1 | None |
 | TS-M02 | Fill/reward incentives excluded from v1 | None |
 | TS-M03 | RFQ quotas, cancellation, work bounds, and local atomic capacity admission implemented | Deployed distributed enforcement |
-| TS-M04 | Signed routing cap, short-lived three-key solver binding, authenticated endpoint challenge/response, and fresh independently observed directional capacity boundary implemented | Deployed endpoint/readers, reconciliation, and routing telemetry |
+| TS-M04 | Signed routing cap, short-lived three-key solver binding, authenticated endpoint challenge/response, fixed private-HTTPS capacity reader, and fresh independently observed directional capacity boundary implemented | Deployed endpoint/readers with reviewed service identity, reconciliation, and routing telemetry |
 | TS-M05 | Preimage relays cannot redirect either payout | Independent review |
 | TS-M06 | Full BOLT 11 field and invoice-digest validation plus isolated live standard/hold decoder integration implemented | Deployed adapter integration and independent review |
 | TS-M07 | Canonical identifiers, text-only rendering, safe logs, and response headers implemented | Production header/log verification |
