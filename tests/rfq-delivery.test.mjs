@@ -5,7 +5,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
-import { id, Signature, TypedDataEncoder, Wallet } from "ethers";
+import {
+  id,
+  Interface,
+  Signature,
+  TypedDataEncoder,
+  Wallet,
+} from "ethers";
 import {
   createClientSafeBlindQuoteSession,
   createTestClientSafeBlindQuoteSession,
@@ -85,6 +91,15 @@ import {
   verifiedAuthorizedContractIntent,
 } from "../lib/rfq-contract-intent.mjs";
 import {
+  observeContractIntentWalletReceipt,
+  prepareContractIntentWalletPreflight,
+  recordContractIntentWalletOutcome,
+  verifyContractIntentWalletContext,
+  verifyContractIntentWalletReceiptQuorum,
+  verifyReplacementContractIntentWalletTransaction,
+  verifyReportedContractIntentWalletTransaction,
+} from "../lib/contract-intent-wallet.mjs";
+import {
   SolverContractSigningProviderStore,
   createSolverContractSigningProviderRoute,
   createTestSolverContractSigner,
@@ -148,6 +163,12 @@ const LIGHTNING_TO_BIT_CODE_HASH = id("delivery-lightning-to-bit-runtime");
 const BIT_TO_LIGHTNING_CODE_HASH = id("delivery-bit-to-lightning-runtime");
 const QUOTE_API_ORIGIN = "https://quotes.treeswap.example";
 const QUOTE_CLIENT_ORIGIN = "https://app.treeswap.example";
+const BIT_VAULT_WALLET_EVENTS = new Interface([
+  "event Reserved(bytes32 indexed quoteId,bytes32 indexed paymentHash,address indexed solver,address user,address beneficiary,uint256 amount,uint256 fee,uint256 lightningAmountSats,bytes32 invoiceDigest,uint256 nonce,uint256 quoteExpiresAt,uint256 lastSafeClaimAt,uint256 refundAfter)",
+]);
+const USER_ESCROW_WALLET_EVENTS = new Interface([
+  "event Opened(bytes32 indexed quoteId,bytes32 indexed paymentHash,address indexed user,address solver,address solverBeneficiary,uint256 amount,uint256 fee,uint256 lightningAmountSats,bytes32 invoiceDigest,uint256 solverNonce,uint256 quoteExpiresAt,uint256 lastSafeClaimAt,uint256 refundAfter)",
+]);
 const CEREMONY_API_ORIGIN = "https://authorize.treeswap.example";
 const privateCeremonyPolicy = Object.freeze({
   apiOrigin: CEREMONY_API_ORIGIN,
@@ -1339,6 +1360,277 @@ for (const direction of ["lightning-to-bit", "bit-to-lightning"]) {
     assert.equal(authorized.contractIntentDigest, prepared.digest);
     assert.equal(authorized.solverSignature, solverResult.solverSignature);
     assert.equal(authorized.walletDispatchAuthority, false);
+
+    const preflight = prepareContractIntentWalletPreflight({ authorizedIntent: authorized, now: NOW });
+    assert.deepEqual(preflight.request, {
+      method: "eth_sendTransaction",
+      params: [{
+        data: authorized.transaction.data.toLowerCase(),
+        from: authorized.transaction.from.toLowerCase(),
+        to: authorized.transaction.to.toLowerCase(),
+        value: "0x0",
+      }],
+    });
+    assert.equal(preflight.requestsWalletConnection, false);
+    assert.equal(preflight.requestsChainSwitch, false);
+    assert.equal(preflight.walletDispatchAuthority, false);
+    assert.throws(() => verifyContractIntentWalletContext({
+      accounts: [user.address],
+      chainId: "0x1",
+      now: NOW,
+      preflight: { ...preflight },
+    }), /original contract-intent preflight/);
+    assert.throws(() => verifyContractIntentWalletContext({
+      accounts: [solvers[0].address],
+      chainId: "0x1",
+      now: NOW,
+      preflight,
+    }), /exact contract-intent wallet/);
+    assert.throws(() => verifyContractIntentWalletContext({
+      accounts: [user.address],
+      chainId: "0x2",
+      now: NOW,
+      preflight,
+    }), /chain does not match/);
+    let accountAccessorReads = 0;
+    const accessorAccounts = [user.address];
+    Object.defineProperty(accessorAccounts, "0", {
+      enumerable: true,
+      get() {
+        accountAccessorReads += 1;
+        return user.address;
+      },
+    });
+    assert.throws(() => verifyContractIntentWalletContext({
+      accounts: accessorAccounts,
+      chainId: "0x1",
+      now: NOW,
+      preflight,
+    }), /data properties/);
+    assert.equal(accountAccessorReads, 0);
+    const walletContext = verifyContractIntentWalletContext({
+      accounts: [user.address],
+      chainId: "0x1",
+      now: NOW,
+      preflight,
+    });
+    const reportedHash = id(`wallet-reported:${direction}`).toLowerCase();
+    const submission = recordContractIntentWalletOutcome({
+      accounts: [user.address],
+      chainId: "0x1",
+      context: walletContext,
+      now: NOW,
+      outcome: {
+        errorCode: null,
+        status: "reported",
+        transactionHash: reportedHash,
+      },
+    });
+    assert.equal(submission.state, "SUBMISSION_REPORTED");
+    assert.equal(submission.retryAuthorized, false);
+    const changedContextSubmission = recordContractIntentWalletOutcome({
+      accounts: [],
+      chainId: "0x2",
+      context: walletContext,
+      now: NOW,
+      outcome: {
+        errorCode: null,
+        status: "reported",
+        transactionHash: reportedHash,
+      },
+    });
+    assert.equal(changedContextSubmission.state, "SUBMISSION_REPORTED_CONTEXT_CHANGED");
+    assert.equal(changedContextSubmission.transactionHash, reportedHash);
+    assert.equal(changedContextSubmission.requiresIndependentReconciliation, true);
+    const rejection = recordContractIntentWalletOutcome({
+      accounts: [user.address],
+      chainId: "0x1",
+      context: walletContext,
+      now: NOW,
+      outcome: { errorCode: 4001, status: "rejected", transactionHash: null },
+    });
+    assert.equal(rejection.state, "USER_REJECTED");
+    assert.equal(rejection.requiresIndependentReconciliation, false);
+    const ambiguous = recordContractIntentWalletOutcome({
+      accounts: [user.address],
+      chainId: "0x1",
+      context: walletContext,
+      now: NOW,
+      outcome: { errorCode: null, status: "ambiguous", transactionHash: null },
+    });
+    assert.equal(ambiguous.state, "SUBMISSION_UNKNOWN");
+    assert.equal(ambiguous.retryAuthorized, false);
+    assert.throws(() => recordContractIntentWalletOutcome({
+      accounts: [user.address],
+      chainId: "0x1",
+      context: walletContext,
+      now: NOW,
+      outcome: { errorCode: -32603, status: "rejected", transactionHash: null },
+    }), /exact EIP-1193 code 4001/);
+    const pendingRpcTransaction = {
+      blockHash: null,
+      blockNumber: null,
+      chainId: "0x1",
+      from: user.address,
+      hash: reportedHash,
+      input: preflight.calldata,
+      nonce: "0x7",
+      to: preflight.to,
+      type: "0x2",
+      value: "0x0",
+    };
+    const verifiedPending = verifyReportedContractIntentWalletTransaction({
+      submission,
+      transaction: pendingRpcTransaction,
+    });
+    assert.equal(verifiedPending.state, "PENDING");
+    assert.equal(verifyReportedContractIntentWalletTransaction({
+      submission: changedContextSubmission,
+      transaction: pendingRpcTransaction,
+    }).transactionHash, reportedHash);
+
+    const replacementHash = id(`wallet-replacement:${direction}`).toLowerCase();
+    const inclusionBlockHash = id(`wallet-inclusion-block:${direction}`).toLowerCase();
+    const includedReplacement = verifyReplacementContractIntentWalletTransaction({
+      previous: verifiedPending,
+      transaction: {
+        ...pendingRpcTransaction,
+        blockHash: inclusionBlockHash,
+        blockNumber: "0x64",
+        hash: replacementHash,
+      },
+    });
+    assert.equal(includedReplacement.state, "INCLUDED");
+    assert.equal(includedReplacement.replacementOf, reportedHash);
+    assert.throws(() => verifyReplacementContractIntentWalletTransaction({
+      previous: verifiedPending,
+      transaction: {
+        ...pendingRpcTransaction,
+        hash: replacementHash,
+        input: `${preflight.calldata.slice(0, -1)}${preflight.calldata.endsWith("0") ? "1" : "0"}`,
+      },
+    }), /changed the nonce or exact contract intent/);
+    assert.throws(() => verifyReplacementContractIntentWalletTransaction({
+      previous: verifiedPending,
+      transaction: { ...pendingRpcTransaction, hash: replacementHash, nonce: "0x8" },
+    }), /changed the nonce or exact contract intent/);
+
+    const quote = preflight.quote;
+    const eventInterface = direction === "lightning-to-bit"
+      ? BIT_VAULT_WALLET_EVENTS
+      : USER_ESCROW_WALLET_EVENTS;
+    const eventName = direction === "lightning-to-bit" ? "Reserved" : "Opened";
+    const eventValues = direction === "lightning-to-bit"
+      ? [
+          quote.quoteId,
+          quote.paymentHash,
+          quote.solver,
+          quote.user,
+          quote.beneficiary,
+          quote.amount,
+          quote.fee,
+          quote.lightningAmountSats,
+          quote.invoiceDigest,
+          quote.nonce,
+          quote.quoteExpiresAt,
+          quote.lastSafeClaimAt,
+          quote.refundAfter,
+        ]
+      : [
+          quote.quoteId,
+          quote.paymentHash,
+          quote.user,
+          quote.solver,
+          quote.beneficiary,
+          quote.amount,
+          quote.fee,
+          quote.lightningAmountSats,
+          quote.invoiceDigest,
+          quote.nonce,
+          quote.quoteExpiresAt,
+          quote.lastSafeClaimAt,
+          quote.refundAfter,
+        ];
+    const encodedEvent = eventInterface.encodeEventLog(eventInterface.getEvent(eventName), eventValues);
+    const receipt = {
+      blockHash: inclusionBlockHash,
+      blockNumber: "0x64",
+      from: preflight.from,
+      logs: [{
+        address: preflight.to,
+        blockHash: inclusionBlockHash,
+        data: encodedEvent.data.toLowerCase(),
+        logIndex: "0x0",
+        removed: false,
+        topics: encodedEvent.topics.map((topic) => topic.toLowerCase()),
+        transactionHash: replacementHash,
+      }],
+      status: "0x1",
+      to: preflight.to,
+      transactionHash: replacementHash,
+    };
+    const receiptInput = {
+      canonicalBlock: { hash: inclusionBlockHash, number: "0x64" },
+      contractCodeHash: preflight.contractCodeHash,
+      finalizedBlock: {
+        hash: id(`wallet-finalized-block:${direction}`).toLowerCase(),
+        number: "0x65",
+      },
+      observedAt: NOW + 1,
+      receipt,
+      transaction: includedReplacement,
+    };
+    const firstObservation = observeContractIntentWalletReceipt({
+      ...receiptInput,
+      providerIdentity: id(`wallet-provider-a:${direction}`).toLowerCase(),
+    });
+    const secondObservation = observeContractIntentWalletReceipt({
+      ...receiptInput,
+      providerIdentity: id(`wallet-provider-b:${direction}`).toLowerCase(),
+    });
+    assert.equal(firstObservation.state, "FINALIZED");
+    const receiptQuorum = verifyContractIntentWalletReceiptQuorum({
+      observations: [firstObservation, secondObservation],
+    });
+    assert.equal(receiptQuorum.state, "REPOSITORY_CORE_VERIFIED");
+    assert.equal(receiptQuorum.canonicalFinalizedReservation, false);
+    assert.equal(receiptQuorum.independentProviderOperationVerified, false);
+    assert.equal(receiptQuorum.fundingAuthorization, false);
+    assert.throws(() => verifyContractIntentWalletReceiptQuorum({
+      observations: [firstObservation, { ...secondObservation }],
+    }), /original distinct-provider provenance/);
+    const disagreeingObservation = observeContractIntentWalletReceipt({
+      ...receiptInput,
+      finalizedBlock: {
+        hash: id(`wallet-other-finalized-block:${direction}`).toLowerCase(),
+        number: "0x66",
+      },
+      providerIdentity: id(`wallet-provider-c:${direction}`).toLowerCase(),
+    });
+    assert.throws(() => verifyContractIntentWalletReceiptQuorum({
+      observations: [firstObservation, disagreeingObservation],
+    }), /do not agree/);
+    assert.throws(() => observeContractIntentWalletReceipt({
+      ...receiptInput,
+      contractCodeHash: id(`wallet-wrong-code:${direction}`).toLowerCase(),
+      providerIdentity: id(`wallet-provider-wrong-code:${direction}`).toLowerCase(),
+    }), /unreviewed contract code/);
+    const mismatch = observeContractIntentWalletReceipt({
+      ...receiptInput,
+      providerIdentity: id(`wallet-provider-mismatch:${direction}`).toLowerCase(),
+      receipt: { ...receipt, logs: [] },
+    });
+    assert.equal(mismatch.state, "MISMATCH");
+    const reorged = observeContractIntentWalletReceipt({
+      canonicalBlock: null,
+      contractCodeHash: preflight.contractCodeHash,
+      finalizedBlock: null,
+      observedAt: NOW + 1,
+      providerIdentity: id(`wallet-provider-reorg:${direction}`).toLowerCase(),
+      receipt: null,
+      transaction: includedReplacement,
+    });
+    assert.equal(reorged.state, "REORGED");
     store.close();
     const databaseBytes = await readFile(databasePath);
     assert.equal(databaseBytes.includes(Buffer.from(solvers[0].privateKey.slice(2), "utf8")), false);
