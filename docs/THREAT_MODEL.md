@@ -263,13 +263,18 @@ The reviewed operator runtimes also reject evidence controls constructed with
 injected transport, clock, or entropy. The production evidence factory owns a
 direct `node:https` request path, the system clock, and cryptographic request-ID
 source; explicit test factories propagate separate provenance into both active
-and recovery-only controls. The fixed path uses a
-fresh port-443 connection, explicit certificate verification, and no global
-`fetch`, shared agent, or process-wide Undici dispatcher. This prevents a
-deployment dependency from silently ignoring the fixed private HTTPS origins,
-path, port, TLS-verification check, request freshness, or replay identity while
-retaining a valid control object. It
-does not prove certificate issuance, trust-root scope, private routing, endpoint
+and recovery-only controls. The fixed evidence, private-packet, and Lightning-
+capacity paths use a shared private-address resolver. Each DNS name is resolved
+once with every answer returned verbatim; an empty set, any public address, or a
+declared/actual address-family mismatch rejects before dispatch. One validated
+private address is pinned for a fresh port-443 connection while the reviewed
+hostname remains the TLS SNI and HTTP Host. Private IP literals bypass DNS but
+retain explicit certificate verification. The paths use no global `fetch`,
+shared agent, or process-wide Undici dispatcher. This prevents a deployment
+dependency or DNS rebinding from silently changing the fixed private HTTPS
+origin, path, port, TLS-verification check, request freshness, or replay identity
+while retaining a valid control object. It does not prove DNS administration,
+certificate issuance, trust-root scope, private routing, egress policy, endpoint
 independence, or honest operators; those remain deployment and review gates.
 
 Each evidence provider now has a concrete fail-closed handler and strict durable

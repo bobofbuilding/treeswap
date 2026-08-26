@@ -110,6 +110,7 @@ jobs:
       - run: node --check lib/blind-rfq.mjs
       - run: node --check lib/solver-capacity-readers.mjs
       - run: node --check lib/lightning-capacity-protocol.mjs
+      - run: node --check lib/private-https-address.mjs
       - run: node --check lib/solver-daemon-planner.mjs
       - run: node --check lib/solver-daemon-evidence.mjs
       - run: node --check lib/solver-daemon-evidence-client.mjs

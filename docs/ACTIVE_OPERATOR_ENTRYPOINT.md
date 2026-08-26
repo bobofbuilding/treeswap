@@ -21,11 +21,14 @@ must contain all of the following original same-process objects:
   port-443 observer origin;
 - a `createAuthenticatedPrivatePacketClient` result using the module-owned fixed
   Node HTTPS transport, system clock, and cryptographic request-ID source, with
-  a requester key distinct from the provider key;
+  a requester key distinct from the provider key; every DNS answer must be
+  private before one address is pinned while TLS and HTTP retain the reviewed
+  hostname;
 - a `createSolverDaemonEvidenceControls` result using two distinct private
   HTTPS routes, the module-owned fixed Node HTTPS transport, system clock,
   cryptographic request-ID source, and a policy digest that exactly matches the
-  policy being prepared;
+  policy being prepared; each route independently requires private-only DNS
+  answers and one pinned connection with hostname verification;
 - a `createCoordinatorLightningActionConfig` result for one credential-free
   private HTTPS Lightning-adapter origin on port 443, one private Ed25519
   authorization-key handle, and the module-owned fixed Node HTTPS transport;
