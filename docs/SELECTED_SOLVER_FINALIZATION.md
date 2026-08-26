@@ -1,6 +1,6 @@
 # Selected-solver finalization
 
-Status: the exact client, strict repository-only `/v1/finalize` handler, private durable claim/response journal, recovery-capable finalizer boundary, signed response construction, same-process reservation consumer, stable retry identity, two-direction invoice binding, and second user authorization are implemented and tested locally. No network listener, production requester key, LND-backed idempotent finalizer, browser route, independent BOLT 11 decoder, or deployed solver exists. Funded operation remains closed.
+Status: the exact client, strict repository-only `/v1/finalize` handler, private durable claim/response journal, recovery-capable finalizer boundary, signed response construction, same-process reservation consumer, stable retry identity, two-direction invoice binding, second user authorization, and an isolated deterministic LND invoice-material core are implemented and tested locally. The invoice core has a live pinned-LND campaign but no private authenticated caller or composition with the public provider. No network listener, production requester key, browser route, independent BOLT 11 decoder, or deployed solver exists. Funded operation remains closed.
 
 ## Purpose
 
@@ -37,6 +37,8 @@ If the process dies after an external invoice or quote record is created but bef
 
 The provider rejects malformed or cacheable HTTP, compression, wrong method/origin/path, stale authority, requester/endpoint substitution, clock rollback, copied store/finalizer provenance, response expiry, invoice/digest mismatch, and a changed BIT → Lightning invoice or payment hash. Local tests cover exact replay after restart, concurrent requests, a lost response, conflicting re-signing, interrupted finalization, recovery after lease expiry, and SIGKILL/WAL recovery. The handler exposes no listener and the store grants no funding, payment, EVM, or settlement authority. Because the exact response contains private invoice data, its volume and backups still require deployment encryption, access control, retention, and deletion policy.
 
+For Lightning → BIT, the repository now has a separate [selected-solver invoice-material core](./SELECTED_SOLVER_INVOICE_MATERIAL.md). It deterministically derives one payment hash from the exact request and a versioned private key, creates or recovers that exact hold invoice through a two-URI LND credential, returns no preimage, and has no cancel, settle, public-listener, EVM, or funding authority. The public provider is intentionally not composed with this core: an authenticated private client/service boundary and durable request-to-key-version record must exist first.
+
 After the response passes transport and executable-quote validation, the reservation service returns the exact second EIP-712 prompt. It includes the final payment hash, invoice digest, amounts, beneficiary, selected solver, first authorization, executable-offer digest, durable execution binding, and expiry. The signature does not move assets immediately and is not a token allowance, but it is settlement authorization for those exact terms. A separate Lightning payment or onchain wallet action remains necessary.
 
 The service retains the original module-private authorized result for the later settlement consumer. Its aggregate status contains no bearer token, invoice, address, signature, request ID, payment hash, or private failure reason and grants no network-listener, funding, signing, or settlement-dispatch authority.
@@ -45,7 +47,7 @@ The service retains the original module-private authorized result for the later 
 
 Before any funded testnet use:
 
-1. compose the repository handler with a solver-owned network listener and a reviewed LND-backed finalizer whose `finalize` and `recover` methods share one durable request/payment-hash idempotency record;
+1. deploy an authenticated private invoice-material service around the repository core, durably bind every claimed request to one retained payment-secret key version, and compose the public handler only with that private client;
 2. deploy the client and provider behind reviewed TLS, logging, tracing, secret-volume, backup, restart, and rate-limit controls;
 3. use a separately scoped requester key, publish its allowlisted digest through reviewed deployment policy, and drill key rotation and revocation;
 4. independently decode and validate every returned BOLT 11 invoice—network, checksum/signature, amount, payment hash/secret, payee, expiry, final CLTV, features, route hints, hold-invoice requirement, and replay state—before showing a pay action;

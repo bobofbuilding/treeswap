@@ -226,6 +226,27 @@ services:
       - ${BOB_RESPONSE_PRIVATE_KEY_PATH}:/response-private.pem:ro
     networks: [regtest]
 
+  export-bob-invoice-material-credential:
+    image: node:22.22.0-alpine@sha256:e4bf2a82ad0a4037d28035ae71529873c069b13eb0455466ae0bc13363826e34
+    profiles: [tools]
+    user: "0:0"
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - >-
+        umask 077;
+        chown 1000:1000 /target;
+        chmod 0700 /target;
+        cp -f /source/tls.cert /target/tls.cert;
+        cp -f /source/treeswap/invoice-material.macaroon /target/role.macaroon;
+        test -s /target/payment-secret.bin || head -c 32 /dev/urandom > /target/payment-secret.bin;
+        chown 1000:1000 /target/tls.cert /target/role.macaroon /target/payment-secret.bin;
+        chmod 0400 /target/role.macaroon /target/payment-secret.bin;
+        chmod 0444 /target/tls.cert
+    volumes:
+      - bob-data:/source:ro
+      - bob-invoice-material-credentials:/target
+    networks: [regtest]
+
   export-alice-close-collector-a-credential:
     image: node:22.22.0-alpine@sha256:e4bf2a82ad0a4037d28035ae71529873c069b13eb0455466ae0bc13363826e34
     profiles: [tools]
@@ -428,6 +449,27 @@ services:
       - coordinator-state:/data
     networks: [regtest]
 
+  selected-solver-invoice-material-smoke:
+    build:
+      context: ../..
+      dockerfile: infra/selected-solver-invoice-material/Dockerfile
+    image: treeswap/selected-solver-invoice-material:regtest
+    profiles: [tools]
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    tmpfs:
+      - /tmp:rw,noexec,nosuid,nodev,size=8m
+    environment:
+      LND_REST_URL: https://bob:8080
+      LND_MACAROON_PATH: /run/treeswap/credentials/role.macaroon
+      LND_TLS_CERT_PATH: /run/treeswap/credentials/tls.cert
+      LND_TLS_CERT_FINGERPRINT: ${BOB_TLS_FINGERPRINT}
+      PAYMENT_SECRET_KEY_PATH: /run/treeswap/credentials/payment-secret.bin
+    volumes:
+      - bob-invoice-material-credentials:/run/treeswap/credentials:ro
+    networks: [regtest]
+
 networks:
   regtest:
     internal: true
@@ -439,6 +481,7 @@ volumes:
   charlie-data:
   alice-payer-credentials:
   bob-invoice-credentials:
+  bob-invoice-material-credentials:
   alice-close-collector-a-credentials:
   alice-close-collector-b-credentials:
   payer-adapter-state:

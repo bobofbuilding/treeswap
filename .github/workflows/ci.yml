@@ -48,9 +48,13 @@ jobs:
         with:
           node-version: 22.22.0
       - run: bash -n infra/regtest/lab.sh
+      - run: node --check lib/lnd-rest-client.mjs
+      - run: node --check lib/selected-solver-invoice-material.mjs
       - run: node --check infra/lightning-adapter/server.mjs
       - run: node --check infra/lightning-adapter/client.mjs
+      - run: node --check infra/selected-solver-invoice-material/smoke.mjs
       - run: docker build --file infra/lightning-adapter/Dockerfile --tag treeswap/lightning-adapter:${{ github.sha }} .
+      - run: docker build --file infra/selected-solver-invoice-material/Dockerfile --tag treeswap/selected-solver-invoice-material:${{ github.sha }} .
 
   coordinator:
     runs-on: ubuntu-latest

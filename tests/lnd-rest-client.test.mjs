@@ -4,6 +4,9 @@ import {
   bytes32PathSegment,
   invoiceDigest,
   isPrivateLndHostname,
+  isLndRestClient,
+  lndFailureReason,
+  LndRestClient,
   LndRestError,
   unwrapLndStreamFrame,
 } from "../lib/lnd-rest-client.mjs";
@@ -35,7 +38,18 @@ test("LND transport errors expose status metadata but no response or credential 
   assert.equal(error.httpStatus, 403);
   assert.equal(error.grpcCode, 7);
   assert.equal(error.ambiguous, false);
+  assert.equal(error.reason, "unknown");
   assert.equal(JSON.stringify(error).includes("macaroon"), false);
+});
+
+test("reduces LND remote failures to a non-sensitive exact reason enum", () => {
+  assert.equal(lndFailureReason("unable to locate invoice", 2), "invoice-not-found");
+  assert.equal(lndFailureReason("there are no existing invoices", 2), "invoice-not-found");
+  assert.equal(lndFailureReason("permission denied", 2), "permission-denied");
+  assert.equal(lndFailureReason("invoice with payment hash already exists", 2), "already-exists");
+  assert.equal(lndFailureReason("private operator detail", 13), "unknown");
+  assert.equal(lndFailureReason("", 5), "not-found");
+  assert.equal(lndFailureReason("", 6), "already-exists");
 });
 
 test("maps an LND stream error frame without exposing its remote message", () => {
@@ -83,4 +97,11 @@ test("accepts only explicit private-network LND host forms", () => {
   for (const host of ["lnd.example.com", "8.8.8.8", "172.15.0.1", "172.32.0.1", "2001:4860:4860::8888"]) {
     assert.equal(isPrivateLndHostname(host), false, host);
   }
+});
+
+test("brands immutable LND clients only through the credential-file factory", () => {
+  assert.throws(() => new LndRestClient({}), /credential-file factory/);
+  assert.equal(isLndRestClient({}), false);
+  assert.equal(Object.isFrozen(LndRestClient), true);
+  assert.equal(Object.isFrozen(LndRestClient.prototype), true);
 });

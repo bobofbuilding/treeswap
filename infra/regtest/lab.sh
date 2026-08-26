@@ -284,6 +284,7 @@ bake_node_credentials() {
     /root/.lnd/treeswap/close-observer-a.macaroon \
     /root/.lnd/treeswap/close-observer-b.macaroon \
     /root/.lnd/treeswap/invoice.macaroon \
+    /root/.lnd/treeswap/invoice-material.macaroon \
     /root/.lnd/treeswap/payer.macaroon
   compose exec -T "$node" lncli --network=regtest bakemacaroon \
     --timeout="$ROLE_CREDENTIAL_LIFETIME_SECONDS" \
@@ -317,6 +318,11 @@ bake_node_credentials() {
     uri:/invoicesrpc.Invoices/SettleInvoice >/dev/null
   compose exec -T "$node" lncli --network=regtest bakemacaroon \
     --timeout="$ROLE_CREDENTIAL_LIFETIME_SECONDS" \
+    --root_key_id=108 --save_to=/root/.lnd/treeswap/invoice-material.macaroon \
+    uri:/invoicesrpc.Invoices/AddHoldInvoice \
+    uri:/invoicesrpc.Invoices/LookupInvoiceV2 >/dev/null
+  compose exec -T "$node" lncli --network=regtest bakemacaroon \
+    --timeout="$ROLE_CREDENTIAL_LIFETIME_SECONDS" \
     --root_key_id=103 --save_to=/root/.lnd/treeswap/payer.macaroon \
     uri:/lnrpc.Lightning/GetInfo \
     uri:/lnrpc.Lightning/ListChannels \
@@ -335,6 +341,7 @@ role_root_key_id() {
     node-proof-verifier) printf '%s\n' 105 ;;
     close-observer-a) printf '%s\n' 106 ;;
     close-observer-b) printf '%s\n' 107 ;;
+    invoice-material) printf '%s\n' 108 ;;
     *) echo "unknown credential role" >&2; return 1 ;;
   esac
 }
@@ -364,6 +371,11 @@ role_permissions() {
         uri:/lnrpc.Lightning/GetInfo \
         uri:/lnrpc.Lightning/ListChannels \
         uri:/lnrpc.Lightning/PendingChannels
+      ;;
+    invoice-material)
+      printf '%s\n' \
+        uri:/invoicesrpc.Invoices/AddHoldInvoice \
+        uri:/invoicesrpc.Invoices/LookupInvoiceV2
       ;;
     payer)
       printf '%s\n' \
@@ -461,6 +473,10 @@ verify_role_negative_matrix() {
   if [[ "$role" == "observer" || "$role" == close-observer-* ]]; then
     assert_role_command_denied "$node" "$role" getnetworkinfo
   fi
+  if [[ "$role" == "invoice-material" ]]; then
+    assert_role_command_denied "$node" "$role" cancelinvoice "$(printf '00%.0s' {1..32})"
+    assert_role_command_denied "$node" "$role" settleinvoice "$(printf '00%.0s' {1..32})"
+  fi
 }
 
 bake_credentials() {
@@ -468,7 +484,7 @@ bake_credentials() {
   bake_node_credentials alice
   bake_node_credentials bob
   for node in alice bob; do
-    for role in observer invoice payer close-observer-a close-observer-b; do
+    for role in observer invoice invoice-material payer close-observer-a close-observer-b; do
       verify_role_manifest "$node" "$role"
       verify_role_negative_matrix "$node" "$role"
     done
@@ -877,6 +893,7 @@ start_adapters() {
   set +a
   compose run --rm export-alice-payer-credential >/dev/null
   compose run --rm export-bob-invoice-credential >/dev/null
+  compose run --rm export-bob-invoice-material-credential >/dev/null
   compose run --rm export-coordinator-private-key >/dev/null
   compose --profile adapter up -d --build payer-adapter invoice-adapter
   for adapter in payer-adapter invoice-adapter; do
@@ -3171,6 +3188,40 @@ smoke_coordinator_invoice_reconciliation() {
   trap - EXIT
 }
 
+cleanup_selected_solver_material_invoices() {
+  local payment_hash
+  while IFS= read -r payment_hash; do
+    [[ -z "$payment_hash" ]] || compose exec -T bob lncli --network=regtest \
+      cancelinvoice "$payment_hash" >/dev/null 2>&1 || true
+  done < <(compose exec -T bob lncli --network=regtest listinvoices 2>/dev/null |
+    jq -r '.invoices[] | select(.memo == "treeswap-selected-solver-material-regtest")
+      | select(.state == "OPEN" or .state == "ACCEPTED") | .r_hash')
+}
+
+smoke_selected_solver_invoice_material() {
+  ensure_runtime_env
+  start_lab >/dev/null
+  local payment_hash state
+  trap 'cleanup_selected_solver_material_invoices >/dev/null 2>&1 || true' EXIT
+  cleanup_selected_solver_material_invoices
+  compose --profile tools build selected-solver-invoice-material-smoke >/dev/null
+  payment_hash=$(compose --profile tools run --rm -T selected-solver-invoice-material-smoke)
+  if [[ ! "$payment_hash" =~ ^0x[0-9a-f]{64}$ ]]; then
+    echo "selected-solver invoice-material smoke returned an invalid cleanup commitment" >&2
+    return 1
+  fi
+  compose exec -T bob lncli --network=regtest cancelinvoice "${payment_hash#0x}" >/dev/null
+  state=$(compose exec -T bob lncli --network=regtest lookupinvoice "${payment_hash#0x}" |
+    jq -er '.state')
+  if [[ "$state" != "CANCELED" ]]; then
+    echo "selected-solver invoice-material cleanup did not reach CANCELED" >&2
+    return 1
+  fi
+  unset payment_hash
+  trap - EXIT
+  echo "Selected-solver invoice-material smoke passed: one exact hold invoice recovered through the private service boundary; its credential could only add and look up, and cleanup used separate authority."
+}
+
 verify_local_lnd_node_signature() {
   local message=$1
   local signature=$2
@@ -3342,13 +3393,14 @@ case "${1:-}" in
   cross-chain-deadline-smoke) smoke_cross_chain_deadline ;;
   coordinator-smoke) smoke_coordinator_reconciliation ;;
   coordinator-invoice-smoke) smoke_coordinator_invoice_reconciliation ;;
+  selected-solver-invoice-smoke) smoke_selected_solver_invoice_material ;;
   solver-node-proof-smoke) smoke_solver_node_proof ;;
   solver-capacity-smoke) smoke_solver_capacity_readers ;;
   status) status_lab ;;
   down) stop_lab ;;
   destroy) destroy_lab ;;
   *)
-    echo "Usage: $0 {up|smoke|adapter-smoke|credential-smoke|credential-rotation-smoke|tls-rotation-smoke|invoice-fault-smoke|policy-fault-smoke|directional-capacity-smoke|daily-cap-smoke|stateless-init-smoke|production-duration-smoke|stale-chain-smoke|unsynced-chain-smoke|force-close-smoke|route-fault-smoke|htlc-cutoff-smoke|cross-chain-deadline-smoke|coordinator-smoke|coordinator-invoice-smoke|solver-node-proof-smoke|solver-capacity-smoke|status|down|destroy}" >&2
+    echo "Usage: $0 {up|smoke|adapter-smoke|credential-smoke|credential-rotation-smoke|tls-rotation-smoke|invoice-fault-smoke|policy-fault-smoke|directional-capacity-smoke|daily-cap-smoke|stateless-init-smoke|production-duration-smoke|stale-chain-smoke|unsynced-chain-smoke|force-close-smoke|route-fault-smoke|htlc-cutoff-smoke|cross-chain-deadline-smoke|coordinator-smoke|coordinator-invoice-smoke|selected-solver-invoice-smoke|solver-node-proof-smoke|solver-capacity-smoke|status|down|destroy}" >&2
     exit 2
     ;;
 esac

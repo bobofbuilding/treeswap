@@ -57,6 +57,7 @@
     "regtest:htlc-cutoff-smoke": "bash infra/regtest/lab.sh htlc-cutoff-smoke",
     "regtest:coordinator-smoke": "bash infra/regtest/lab.sh coordinator-smoke",
     "regtest:coordinator-invoice-smoke": "bash infra/regtest/lab.sh coordinator-invoice-smoke",
+    "regtest:selected-solver-invoice-smoke": "bash infra/regtest/lab.sh selected-solver-invoice-smoke",
     "regtest:solver-node-proof-smoke": "bash infra/regtest/lab.sh solver-node-proof-smoke",
     "regtest:solver-capacity-smoke": "bash infra/regtest/lab.sh solver-capacity-smoke",
     "qualify:local": "node scripts/run-local-qualification.mjs",
