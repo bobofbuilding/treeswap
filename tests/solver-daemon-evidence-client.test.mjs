@@ -135,6 +135,7 @@ function jsonResponse(body, overrides = {}) {
     headers: {
       "cache-control": overrides.cacheControl ?? "no-store",
       "content-type": overrides.contentType ?? "application/json",
+      ...overrides.headers,
     },
   });
 }
@@ -509,6 +510,33 @@ test("rejects unsupported terminal requests, expired evidence, and route timeout
     timedOut.verifyAssets({ settlement: observed, expectedTerminal: "COMPLETED" }),
     /transport failed/,
   );
+});
+
+test("rejects compressed, ambiguously framed, and truncated evidence responses", async () => {
+  const observed = settlement();
+  for (const headers of [
+    { "content-encoding": "gzip" },
+    { "content-length": "2", "transfer-encoding": "chunked" },
+    { "content-length": "3" },
+  ]) {
+    let nonce = 0;
+    const controls = createTestSolverDaemonEvidenceControls({
+      policy: policy(),
+      routes: {
+        lightningOperator: "https://lightning-approver.internal",
+        securityReviewer: "https://security-approver.internal",
+      },
+      requesterPrivateKey: REQUESTER_PRIVATE_KEY,
+      requesterKeyId: REQUESTER_KEY_ID,
+      requestImpl: async () => jsonResponse({}, { headers }),
+      nowSeconds: () => NOW,
+      randomBytesImpl: () => Buffer.alloc(32, ++nonce),
+    });
+    await assert.rejects(
+      controls.verifyAssets({ settlement: observed, expectedTerminal: "COMPLETED" }),
+      /content encoding is invalid|framing is ambiguous|length changed/,
+    );
+  }
 });
 
 test("snapshots exact client and provider data once without invoking accessors", async () => {

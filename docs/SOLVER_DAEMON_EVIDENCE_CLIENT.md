@@ -44,12 +44,12 @@ For each control call, the client:
 3. additionally binds the observed reservation for every post-reservation request and the exact action, private-packet response, and three deadlines for a dispatch request;
 4. signs the exact request with the coordinator's Ed25519 requester key;
 5. sends that same envelope concurrently to the configured Lightning-operator and security-reviewer routes;
-6. requires two different private HTTPS origins on port 443, no credentials or path data in either configured origin, no redirect, JSON, `Cache-Control: no-store`, a bounded complete body, and a hard deadline;
+6. requires two different private HTTPS origins on port 443, no credentials or path data in either configured origin, no redirect, uncompressed JSON, `Cache-Control: no-store`, unambiguous canonical framing, an exact declared/received length when present, a bounded complete body, and a hard deadline;
 7. requires each route to echo the exact signed request and return only its assigned EIP-712 approval;
 8. requires both routes to return canonically identical evidence records; and
 9. re-verifies both approvals, policy binding, record lifetime, and purpose through `verifySolverDaemonEvidence` before returning its uncopyable result.
 
-One missing, late, malformed, cacheable, redirected, disagreeing, copied, wrongly signed, or wrong-role response fails the control. There is no one-route fallback.
+One missing, late, malformed, compressed, ambiguously framed, truncated, cacheable, redirected, disagreeing, copied, wrongly signed, or wrong-role response fails the control. There is no one-route fallback.
 
 Every authority-bearing client, control-call, request, policy, record, and
 approval input must be an exact own-enumerable data record or an undecorated
@@ -93,7 +93,7 @@ Routes must not log request or response bodies. Although the protocol contains n
 
 Different URLs, keys, signatures, containers, or service commitments do not prove independent operation. Before test inventory, retained deployment evidence must show that the two routes use the service identities, trust domains, credentials, operators, and organizations required by the release and service-isolation policies. Reviewers must also prove that both routes are not aliases for one backend observation or one administrator.
 
-The route response is authenticated by the policy-pinned EIP-712 signer, not by trusting an HTTP success. The official launchers require the fixed Node HTTPS transport, which fixes the request path and port, does not follow redirects, explicitly enables certificate verification, and refuses operation whenever Node TLS verification is globally disabled. Each route resolves once, rejects an empty set or any public/family-forged answer, pins one validated private IP, and retains the reviewed hostname for TLS SNI and HTTP Host. Deployment evidence must still retain and independently review DNS administration, the certificate/trust-root, network and egress policy, requester-key provisioning, rotation, revocation, replay-store persistence, and outage behavior for both origins.
+The route response is authenticated by the policy-pinned EIP-712 signer, not by trusting an HTTP success. The official launchers require the fixed Node HTTPS transport, which fixes the request path and port, does not follow redirects, explicitly enables certificate verification, and refuses operation whenever Node TLS verification is globally disabled. Each route resolves once, rejects an empty set or any public/family-forged answer, pins one validated private IP, and retains the reviewed hostname for TLS SNI and HTTP Host. Packet and evidence clients share one strict complete-response reader, so neither can silently accept compression, conflicting framing, or a declared length that differs from the received bytes. Deployment evidence must still retain and independently review DNS administration, the certificate/trust-root, network and egress policy, requester-key provisioning, rotation, revocation, replay-store persistence, and outage behavior for both origins.
 
 ## Remaining deployment gate
 

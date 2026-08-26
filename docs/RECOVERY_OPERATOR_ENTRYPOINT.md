@@ -30,13 +30,15 @@ For every retained policy the operator must construct:
   Node HTTPS transport, system clock, and cryptographic request-ID source, with
   a requester key distinct from the provider key; every DNS answer must be
   private before one address is pinned while TLS and HTTP retain the reviewed
-  hostname;
+  hostname, and the complete response must use uncompressed, unambiguous JSON
+  framing with any declared length exactly matching the received bytes;
 - `createSolverDaemonRecoveryEvidenceControls`, using two distinct private
   evidence routes through the module-owned fixed Node HTTPS transport, system
   clock, and cryptographic request-ID source, and exposing only reservation
   observation, EVM-claim authorization, and terminal asset verification; each
   route independently requires private-only DNS answers and one pinned
-  connection with hostname verification;
+  connection with hostname verification plus the same strict complete-response
+  framing boundary;
 - a `createCoordinatorLightningActionConfig` result bound to the module-owned
   fixed Node HTTPS transport and one credential-free private port-443 adapter
   origin, used only to reconcile an already-created Lightning action; and

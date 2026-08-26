@@ -270,7 +270,10 @@ declared/actual address-family mismatch rejects before dispatch. One validated
 private address is pinned for a fresh port-443 connection while the reviewed
 hostname remains the TLS SNI and HTTP Host. Private IP literals bypass DNS but
 retain explicit certificate verification. The paths use no global `fetch`,
-shared agent, or process-wide Undici dispatcher. This prevents a deployment
+shared agent, or process-wide Undici dispatcher. Packet and evidence responses
+also cross one shared reader that requires uncompressed non-cacheable JSON,
+rejects conflicting content-length/transfer framing, and requires any declared
+length to equal the complete bounded byte stream before parsing. This prevents a deployment
 dependency or DNS rebinding from silently changing the fixed private HTTPS
 origin, path, port, TLS-verification check, request freshness, or replay identity
 while retaining a valid control object. It does not prove DNS administration,

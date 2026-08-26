@@ -386,6 +386,26 @@ test("bounds headers and the complete response-body read under the same deadline
     }),
     /response is too large/,
   );
+  const signedBytes = Buffer.byteLength(JSON.stringify(signed));
+  for (const headers of [
+    { "content-encoding": "gzip" },
+    { "content-length": String(signedBytes), "transfer-encoding": "chunked" },
+    { "content-length": String(signedBytes + 1) },
+  ]) {
+    await assert.rejects(
+      fetchVerifiedPrivatePacket({
+        ...args,
+        requestImpl: async () => new Response(JSON.stringify(signed), {
+          headers: {
+            "cache-control": "no-store",
+            "content-type": "application/json",
+            ...headers,
+          },
+        }),
+      }),
+      /content encoding is invalid|framing is ambiguous|length changed/,
+    );
+  }
   await assert.rejects(
     fetchVerifiedPrivatePacket({
       ...args,

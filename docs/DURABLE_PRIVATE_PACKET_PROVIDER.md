@@ -31,10 +31,13 @@ source, accepts no dependency-injection fields, and rejects requester/provider
 key reuse. Before dispatch it resolves the reviewed hostname once, requires
 every answer to be private, pins one validated IP for the connection, and
 preserves the hostname for TLS SNI and HTTP Host. The injected factory is
-explicitly test-only and cannot enter either official operator runtime. This
-protects request freshness, replay identity, and the repository DNS boundary;
-it does not prove the deployed provider, DNS administration, TLS identity,
-secret scope, network egress policy, or durable storage.
+explicitly test-only and cannot enter either official operator runtime. Its
+shared response reader requires JSON and `no-store`, rejects compression,
+noncanonical or conflicting content framing, declared/actual length mismatch,
+invalid chunks, interruption, and declared or received oversize before parsing.
+This protects request freshness, replay identity, and the repository transport
+boundary; it does not prove the deployed provider, DNS administration, TLS
+identity, secret scope, network egress policy, or durable storage.
 
 ## Deployment gates
 

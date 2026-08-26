@@ -23,12 +23,14 @@ must contain all of the following original same-process objects:
   Node HTTPS transport, system clock, and cryptographic request-ID source, with
   a requester key distinct from the provider key; every DNS answer must be
   private before one address is pinned while TLS and HTTP retain the reviewed
-  hostname;
+  hostname, and the complete response must use uncompressed, unambiguous JSON
+  framing with any declared length exactly matching the received bytes;
 - a `createSolverDaemonEvidenceControls` result using two distinct private
   HTTPS routes, the module-owned fixed Node HTTPS transport, system clock,
   cryptographic request-ID source, and a policy digest that exactly matches the
   policy being prepared; each route independently requires private-only DNS
-  answers and one pinned connection with hostname verification;
+  answers, one pinned connection with hostname verification, and the same
+  strict complete-response framing boundary;
 - a `createCoordinatorLightningActionConfig` result for one credential-free
   private HTTPS Lightning-adapter origin on port 443, one private Ed25519
   authorization-key handle, and the module-owned fixed Node HTTPS transport;
