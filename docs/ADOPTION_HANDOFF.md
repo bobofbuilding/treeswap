@@ -70,13 +70,13 @@ Use [closed testnet deployment](./CLOSED_TESTNET_DEPLOYMENT.md), [postflight](./
 
 ### 4. Deploy isolated services
 
-Deploy the persistent coordinator, solver endpoints, private-packet provider, capacity readers, and the distinct Lightning-operator and security-reviewer [daemon-evidence routes](./SOLVER_DAEMON_EVIDENCE_CLIENT.md) through the [durable provider boundary](./DURABLE_EVIDENCE_PROVIDER.md), each with its own initialized persistent replay-ledger volume and independent reader. Deploy the finality authorizers, both-assets verifier, two relays, two solver daemons, continuous monitors, redundant guardian broadcasters, recovery procedures, and alert delivery in the trust domains required by [service-isolation evidence](./SERVICE_ISOLATION_EVIDENCE.md). Deploy the [wallet gateway](./CONTRACT_INTENT_WALLET.md) only on a private coordinator origin behind the SIWE edge, with a dedicated edge requester key, separate coordinator response key, body logging disabled, and one enforced replica.
+Deploy the persistent coordinator, solver endpoints, private-packet provider, capacity readers, and the distinct Lightning-operator and security-reviewer [daemon-evidence routes](./SOLVER_DAEMON_EVIDENCE_CLIENT.md) through the [durable provider boundary](./DURABLE_EVIDENCE_PROVIDER.md), each with its own initialized persistent replay-ledger volume and independent reader. Deploy the finality authorizers, both-assets verifier, two relays, two solver daemons, continuous monitors, redundant guardian broadcasters, recovery procedures, and alert delivery in the trust domains required by [service-isolation evidence](./SERVICE_ISOLATION_EVIDENCE.md). Deploy the [wallet ownership service and gateway](./CONTRACT_INTENT_WALLET.md) only on a private coordinator origin behind the SIWE edge, with a server-derived session digest, dedicated edge requester key, separate coordinator response key, handle/body logging disabled, and one enforced replica.
 
 Required properties include:
 
 - no Lightning credential in the browser, public web server, relay, or EVM service;
 - no EVM signer in the browser, relay, reader, or Lightning adapter;
-- the SIWE edge verifies wallet/session ownership, an original server-staged intent handle, CSRF, and rate limits before signing one wallet claim; it cannot recover or replay a lost claim response;
+- the SIWE edge verifies wallet/session ownership, derives the opaque session digest server-side, checks exact Origin/Fetch Metadata plus CSRF and rate limits, and atomically consumes only an issued ownership handle before signing one wallet claim; it cannot recover or replay a lost claim response;
 - only the reviewed browser adapter may call `eth_sendTransaction`; it independently verifies the coordinator claim, requires active user interaction, writes the digest-only Web-Lock/local-storage tombstone first, and never persists the token or response, while the coordinator durably claims first and every restart remains no-resend;
 - authenticated encrypted private paths and reviewed service identity;
 - independently retained encrypted backups and a witnessed isolated restore;

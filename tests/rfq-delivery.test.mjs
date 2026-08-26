@@ -116,6 +116,9 @@ import {
   verifyContractIntentWalletGatewayOutcomeResponse,
 } from "../lib/contract-intent-wallet-gateway.mjs";
 import {
+  createContractIntentWalletOwnershipServiceForTests,
+} from "../lib/contract-intent-wallet-ownership.mjs";
+import {
   SolverContractSigningProviderStore,
   createSolverContractSigningProviderRoute,
   createTestSolverContractSigner,
@@ -2144,23 +2147,236 @@ for (const direction of ["lightning-to-bit", "bit-to-lightning"]) {
       /keys must be separate/,
     );
     const gateway = createContractIntentWalletGatewayForTests(gatewayOptions());
-    assert.deepEqual(gateway.stage(preflight, { now: NOW }), {
-      schema: "treeswap.contract-intent-wallet-gateway-stage.v1",
-      requestDigest: preflight.requestDigest,
-      expiresAt: preflight.expiresAt,
-      browserClaimAuthority: false,
-      walletDispatchAuthority: false,
-      lightningDispatchAuthority: false,
-      fundingAuthorization: false,
-    });
     const sessionDigest = id(`wallet-gateway-session:${direction}`).toLowerCase();
-    const claimRequest = buildContractIntentWalletGatewayClaimRequest({
-      expiresAt: NOW + 10,
-      requestDigest: preflight.requestDigest,
-      requestedAt: NOW,
-      requesterPrivateKey: gatewayRequesterKeys.privateKey,
+    let ownershipEntropy = direction === "lightning-to-bit" ? 151 : 181;
+    const ownership = createContractIntentWalletOwnershipServiceForTests({
+      clock: () => NOW,
+      gateway,
+      randomBytes: () => Buffer.alloc(32, ++ownershipEntropy),
+      signal: gatewayDeployment.signal,
+    });
+    assert.throws(
+      () => createContractIntentWalletOwnershipServiceForTests({
+        clock: () => NOW,
+        gateway,
+        randomBytes: () => Buffer.alloc(32, 211),
+        signal: gatewayDeployment.signal,
+      }),
+      /already has an ownership boundary/,
+    );
+    assert.throws(
+      () => ownership.issue({
+        preflight: { ...preflight },
+        sessionDigest,
+        wallet: user.address,
+      }),
+      /original contract-intent wallet provenance/,
+    );
+    assert.throws(
+      () => ownership.issue({
+        preflight,
+        sessionDigest,
+        wallet: solvers[0].address,
+      }),
+      /does not match the contract intent/,
+    );
+    const ownershipHandle = ownership.issue({
+      preflight,
       sessionDigest,
       wallet: user.address,
+    });
+    assert.equal(ownershipHandle.singleUse, true);
+    assert.equal(ownershipHandle.expiresAt, Math.min(preflight.expiresAt, NOW + 60));
+    assert.equal(ownershipHandle.requestDigestDisclosed, false);
+    assert.equal(ownershipHandle.invoiceDisclosed, false);
+    assert.doesNotMatch(JSON.stringify(ownershipHandle), new RegExp(preflight.requestDigest.slice(2)));
+    assert.doesNotMatch(JSON.stringify(ownershipHandle), new RegExp(preflight.quoteId.slice(2)));
+    assert.doesNotMatch(JSON.stringify(ownershipHandle), new RegExp(sessionDigest.slice(2)));
+    assert.doesNotMatch(JSON.stringify(ownershipHandle), new RegExp(user.address.slice(2), "i"));
+    assert.throws(
+      () => ownership.claim({
+        ownershipHandle: ownershipHandle.ownershipHandle,
+        sessionDigest: id(`wrong-ownership-session:${direction}`).toLowerCase(),
+        wallet: user.address,
+      }),
+      /handle is unavailable/,
+    );
+    assert.throws(
+      () => ownership.claim({
+        ownershipHandle: ownershipHandle.ownershipHandle,
+        sessionDigest,
+        wallet: solvers[0].address,
+      }),
+      /handle is unavailable/,
+    );
+    let ownershipWalletAccessorReads = 0;
+    const accessorOwnershipClaim = {
+      ownershipHandle: ownershipHandle.ownershipHandle,
+      sessionDigest,
+      wallet: user.address,
+    };
+    Object.defineProperty(accessorOwnershipClaim, "wallet", {
+      enumerable: true,
+      get() {
+        ownershipWalletAccessorReads += 1;
+        return user.address;
+      },
+    });
+    assert.throws(
+      () => ownership.claim(accessorOwnershipClaim),
+      /enumerable data properties/,
+    );
+    assert.equal(ownershipWalletAccessorReads, 0);
+    const ownershipClaimResults = await Promise.allSettled([
+      Promise.resolve().then(() => ownership.claim({
+        ownershipHandle: ownershipHandle.ownershipHandle,
+        sessionDigest,
+        wallet: user.address,
+      })),
+      Promise.resolve().then(() => ownership.claim({
+        ownershipHandle: ownershipHandle.ownershipHandle,
+        sessionDigest,
+        wallet: user.address,
+      })),
+    ]);
+    const fulfilledOwnershipClaims = ownershipClaimResults
+      .filter((result) => result.status === "fulfilled");
+    const rejectedOwnershipClaims = ownershipClaimResults
+      .filter((result) => result.status === "rejected");
+    assert.equal(fulfilledOwnershipClaims.length, 1);
+    assert.equal(rejectedOwnershipClaims.length, 1);
+    assert.match(rejectedOwnershipClaims[0].reason.message, /handle is unavailable/);
+    const ownershipClaim = fulfilledOwnershipClaims[0].value;
+    assert.equal(ownershipClaim.ownershipHandleDisclosed, false);
+    assert.equal(ownershipClaim.requestDigestDisclosed, false);
+    assert.throws(
+      () => ownership.take({ ...ownershipClaim }),
+      /original unused claim/,
+    );
+    const ownershipHandoff = ownership.take(ownershipClaim);
+    assert.equal(ownershipHandoff.preflight, preflight);
+    assert.equal(ownershipHandoff.requestDigest, preflight.requestDigest);
+    assert.equal(ownershipHandoff.wallet, preflight.from);
+    assert.equal(ownershipHandoff.sessionDigest, sessionDigest);
+    assert.equal(ownershipHandoff.requestedAt, NOW);
+    assert.equal(ownershipHandoff.expiresAt, Math.min(preflight.expiresAt, NOW + 30));
+    assert.equal(ownershipHandoff.retryAuthorized, false);
+    assert.throws(
+      () => ownership.take(ownershipClaim),
+      /original unused claim/,
+    );
+    assert.deepEqual(gateway.status().stagedPreflights, 1);
+    const ownershipStatus = ownership.status();
+    assert.equal(ownershipStatus.liveHandles, 0);
+    assert.equal(ownershipStatus.consumedHandles, 1);
+    assert.equal(ownershipStatus.handlesIssued, 1);
+    assert.equal(ownershipStatus.handlesClaimed, 1);
+    assert.equal(ownershipStatus.claimsTaken, 1);
+    assert.equal(ownershipStatus.handleTokensInStatus, false);
+    assert.equal(ownershipStatus.walletsInStatus, false);
+    assert.equal(ownershipStatus.sessionDigestsInStatus, false);
+    assert.doesNotMatch(
+      JSON.stringify(ownershipStatus),
+      new RegExp(ownershipHandle.ownershipHandle),
+    );
+    assert.doesNotMatch(JSON.stringify(ownershipStatus), new RegExp(sessionDigest.slice(2)));
+    assert.doesNotMatch(JSON.stringify(ownershipStatus), new RegExp(user.address.slice(2), "i"));
+
+    let expiringOwnershipClock = NOW;
+    const expiringOwnershipStore = await ContractIntentWalletStore.open({
+      allowMemory: true,
+      initialize: true,
+      maximumIntents: 8,
+      path: ":memory:",
+    });
+    const expiringOwnershipDeployment = new AbortController();
+    const expiringOwnershipGateway = createContractIntentWalletGatewayForTests(gatewayOptions({
+      clock: () => expiringOwnershipClock,
+      randomBytes: () => Buffer.alloc(32, 221),
+      signal: expiringOwnershipDeployment.signal,
+      store: expiringOwnershipStore,
+    }));
+    const expiringOwnership = createContractIntentWalletOwnershipServiceForTests({
+      clock: () => expiringOwnershipClock,
+      gateway: expiringOwnershipGateway,
+      randomBytes: () => Buffer.alloc(32, 222),
+      signal: expiringOwnershipDeployment.signal,
+    });
+    const expiringOwnershipHandle = expiringOwnership.issue({
+      preflight,
+      sessionDigest,
+      wallet: user.address,
+    });
+    expiringOwnershipClock = expiringOwnershipHandle.expiresAt;
+    assert.throws(
+      () => expiringOwnership.claim({
+        ownershipHandle: expiringOwnershipHandle.ownershipHandle,
+        sessionDigest,
+        wallet: user.address,
+      }),
+      /handle is unavailable/,
+    );
+    assert.equal(expiringOwnership.status().liveHandles, 0);
+    assert.equal(expiringOwnershipGateway.status().stagedPreflights, 0);
+    expiringOwnershipDeployment.abort();
+    expiringOwnershipStore.close();
+
+    const restartOwnershipStore = await ContractIntentWalletStore.open({
+      allowMemory: true,
+      initialize: true,
+      maximumIntents: 8,
+      path: ":memory:",
+    });
+    const firstOwnershipDeployment = new AbortController();
+    const firstOwnershipGateway = createContractIntentWalletGatewayForTests(gatewayOptions({
+      randomBytes: () => Buffer.alloc(32, 223),
+      signal: firstOwnershipDeployment.signal,
+      store: restartOwnershipStore,
+    }));
+    const firstOwnership = createContractIntentWalletOwnershipServiceForTests({
+      clock: () => NOW,
+      gateway: firstOwnershipGateway,
+      randomBytes: () => Buffer.alloc(32, 224),
+      signal: firstOwnershipDeployment.signal,
+    });
+    const preRestartOwnershipHandle = firstOwnership.issue({
+      preflight,
+      sessionDigest,
+      wallet: user.address,
+    });
+    firstOwnershipDeployment.abort();
+    assert.equal(firstOwnership.status().state, "stopped");
+    const restartedOwnershipDeployment = new AbortController();
+    const restartedOwnershipGateway = createContractIntentWalletGatewayForTests(gatewayOptions({
+      randomBytes: () => Buffer.alloc(32, 225),
+      signal: restartedOwnershipDeployment.signal,
+      store: restartOwnershipStore,
+    }));
+    const restartedOwnership = createContractIntentWalletOwnershipServiceForTests({
+      clock: () => NOW,
+      gateway: restartedOwnershipGateway,
+      randomBytes: () => Buffer.alloc(32, 226),
+      signal: restartedOwnershipDeployment.signal,
+    });
+    assert.throws(
+      () => restartedOwnership.claim({
+        ownershipHandle: preRestartOwnershipHandle.ownershipHandle,
+        sessionDigest,
+        wallet: user.address,
+      }),
+      /handle is unavailable/,
+    );
+    assert.equal(restartedOwnershipGateway.status().stagedPreflights, 0);
+    restartedOwnershipDeployment.abort();
+    restartOwnershipStore.close();
+
+    const claimRequest = buildContractIntentWalletGatewayClaimRequest({
+      expiresAt: ownershipHandoff.expiresAt,
+      requestDigest: ownershipHandoff.requestDigest,
+      requestedAt: ownershipHandoff.requestedAt,
+      requesterPrivateKey: gatewayRequesterKeys.privateKey,
+      sessionDigest: ownershipHandoff.sessionDigest,
+      wallet: ownershipHandoff.wallet,
     });
     let walletAccessorReads = 0;
     const accessorClaimInput = {
@@ -2760,6 +2976,10 @@ for (const direction of ["lightning-to-bit", "bit-to-lightning"]) {
     gatewayStore.close();
     const gatewayDatabaseBytes = await readFile(gatewayDatabasePath);
     assert.equal(gatewayDatabaseBytes.includes(Buffer.from(verifiedClaim.claimToken, "utf8")), false);
+    assert.equal(
+      gatewayDatabaseBytes.includes(Buffer.from(ownershipHandle.ownershipHandle, "utf8")),
+      false,
+    );
     assert.equal(gatewayDatabaseBytes.includes(Buffer.from(sessionDigest, "utf8")), false);
     gatewayStore = await ContractIntentWalletStore.open({
       allowMemory: false,
