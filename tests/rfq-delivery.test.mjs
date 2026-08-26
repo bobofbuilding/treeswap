@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { generateKeyPairSync, sign } from "node:crypto";
+import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import { chmod, mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -118,6 +118,10 @@ import {
 import {
   createContractIntentWalletOwnershipServiceForTests,
 } from "../lib/contract-intent-wallet-ownership.mjs";
+import {
+  CONTRACT_INTENT_WALLET_SESSION_QUERY,
+  createContractIntentWalletSiweEdgeForTests,
+} from "../lib/contract-intent-wallet-siwe-edge.mjs";
 import {
   SolverContractSigningProviderStore,
   createSolverContractSigningProviderRoute,
@@ -884,6 +888,77 @@ function walletGatewayRequest(path, value, overrides = {}) {
     body: overrides.method === "GET" ? undefined : body,
     signal: overrides.signal,
   });
+}
+
+function walletEdgeRequest(path, value, overrides = {}) {
+  const body = Buffer.isBuffer(value) || value instanceof Uint8Array
+    ? Buffer.from(value)
+    : Buffer.from(typeof value === "string" ? value : JSON.stringify(value), "utf8");
+  const origin = overrides.origin ?? "https://treeswap.vercel.app";
+  const headers = new Headers({
+    "cache-control": "no-store",
+    "content-length": String(body.length),
+    "content-type": "application/json",
+    cookie: overrides.cookie ?? `__Host-treeswap_session=${"cd".repeat(32)}`,
+    origin,
+    "sec-fetch-dest": "empty",
+    "sec-fetch-mode": "cors",
+    "sec-fetch-site": "same-origin",
+    ...overrides.headers,
+  });
+  if (overrides.omitContentLength) headers.delete("content-length");
+  return new Request(`${overrides.requestOrigin ?? origin}${path}`, {
+    method: overrides.method ?? "POST",
+    headers,
+    body: overrides.method === "GET" ? undefined : body,
+  });
+}
+
+function walletEdgeSessionDatabase({
+  chainId = 1,
+  createdAt = NOW - 10,
+  expiresAt = NOW + 600,
+  sessionToken = "cd".repeat(32),
+  wallet = user.address.toLowerCase(),
+} = {}) {
+  const expectedHash = createHash("sha256").update(sessionToken, "utf8").digest("hex");
+  const observed = { binds: [], queries: 0 };
+  const state = {
+    chainId,
+    createdAt,
+    duplicate: false,
+    expiresAt,
+    wallet,
+  };
+  return {
+    observed,
+    state,
+    prepare(sql) {
+      assert.equal(sql, CONTRACT_INTENT_WALLET_SESSION_QUERY);
+      observed.queries += 1;
+      return {
+        bind(tokenHash, observedAt) {
+          observed.binds.push([tokenHash, observedAt]);
+          return {
+            async all() {
+              const active = tokenHash === expectedHash
+                && Date.parse(observedAt) < state.expiresAt * 1_000;
+              const row = {
+                tokenHash: expectedHash,
+                walletAddress: state.wallet,
+                chainId: state.chainId,
+                createdAt: new Date(state.createdAt * 1_000).toISOString(),
+                expiresAt: new Date(state.expiresAt * 1_000).toISOString(),
+              };
+              return {
+                results: active ? (state.duplicate ? [row, { ...row }] : [row]) : [],
+              };
+            },
+          };
+        },
+      };
+    },
+  };
 }
 
 async function quoteIngressFixture(t, {
@@ -2970,6 +3045,336 @@ for (const direction of ["lightning-to-bit", "bit-to-lightning"]) {
       browserFailureDatabaseBytes.includes(Buffer.from(browserFailureSessionDigest, "utf8")),
       false,
     );
+
+    const edgeDatabasePath = join(directory, `wallet-siwe-edge-${direction}.sqlite`);
+    const edgeStore = await ContractIntentWalletStore.open({
+      allowMemory: false,
+      initialize: true,
+      maximumIntents: 8,
+      path: edgeDatabasePath,
+    });
+    const edgeDeployment = new AbortController();
+    const edgeGateway = createContractIntentWalletGatewayForTests(gatewayOptions({
+      randomBytes: () => Buffer.alloc(32, direction === "lightning-to-bit" ? 231 : 241),
+      signal: edgeDeployment.signal,
+      store: edgeStore,
+    }));
+    const edgeOwnership = createContractIntentWalletOwnershipServiceForTests({
+      clock: () => NOW,
+      gateway: edgeGateway,
+      randomBytes: () => Buffer.alloc(32, direction === "lightning-to-bit" ? 232 : 242),
+      signal: edgeDeployment.signal,
+    });
+    const edgeSessionToken = direction === "lightning-to-bit" ? "cd".repeat(32) : "de".repeat(32);
+    const edgeDatabase = walletEdgeSessionDatabase({ sessionToken: edgeSessionToken });
+    let edgeClock = NOW;
+    assert.throws(
+      () => createContractIntentWalletSiweEdgeForTests({
+        clientOrigin: "https://treeswap.vercel.app",
+        clock: () => edgeClock,
+        database: edgeDatabase,
+        gateway: edgeGateway,
+        maximumBodyReadMilliseconds: 50,
+        ownership: edgeOwnership,
+        requesterPrivateKey: gatewayRequesterKeys.publicKey,
+        responsePublicKey: gatewayResponseKeys.publicKey,
+        signal: edgeDeployment.signal,
+      }),
+      /requester private key and response public key/,
+    );
+    assert.throws(
+      () => createContractIntentWalletSiweEdgeForTests({
+        clientOrigin: "https://treeswap.vercel.app",
+        clock: () => edgeClock,
+        database: edgeDatabase,
+        gateway: edgeGateway,
+        maximumBodyReadMilliseconds: 50,
+        ownership: edgeOwnership,
+        requesterPrivateKey: gatewayRequesterKeys.privateKey,
+        responsePublicKey: gatewayResponseKeys.privateKey,
+        signal: edgeDeployment.signal,
+      }),
+      /requester private key and response public key/,
+    );
+    const edge = createContractIntentWalletSiweEdgeForTests({
+      clientOrigin: "https://treeswap.vercel.app",
+      clock: () => edgeClock,
+      database: edgeDatabase,
+      gateway: edgeGateway,
+      maximumBodyReadMilliseconds: 50,
+      ownership: edgeOwnership,
+      requesterPrivateKey: gatewayRequesterKeys.privateKey,
+      responsePublicKey: gatewayResponseKeys.publicKey,
+      signal: edgeDeployment.signal,
+    });
+    const edgeCookie = `__Host-treeswap_session=${edgeSessionToken}`;
+    let stalledBodyCanceled = false;
+    const stalledRequest = new Request(
+      "https://treeswap.vercel.app/v1/wallet-intent/prepare",
+      {
+        body: new ReadableStream({
+          cancel() { stalledBodyCanceled = true; },
+        }),
+        duplex: "half",
+        headers: {
+          "cache-control": "no-store",
+          "content-type": "application/json",
+          cookie: edgeCookie,
+          origin: "https://treeswap.vercel.app",
+          "sec-fetch-dest": "empty",
+          "sec-fetch-mode": "cors",
+          "sec-fetch-site": "same-origin",
+        },
+        method: "POST",
+      },
+    );
+    assert.equal((await edge.issue(preflight, stalledRequest)).status, 400);
+    assert.equal(stalledBodyCanceled, true);
+    assert.equal((await edge.issue(preflight, walletEdgeRequest(
+        "/v1/wallet-intent/prepare",
+        {},
+        { cookie: `${edgeCookie}; ${edgeCookie}` },
+      ))).status, 401);
+    edgeDatabase.state.chainId = 5;
+    assert.equal((await edge.issue(preflight, walletEdgeRequest(
+        "/v1/wallet-intent/prepare",
+        {},
+        { cookie: edgeCookie },
+      ))).status, 401);
+    edgeDatabase.state.chainId = 1;
+    edgeDatabase.state.createdAt = NOW + 1;
+    assert.equal((await edge.issue(preflight, walletEdgeRequest(
+        "/v1/wallet-intent/prepare",
+        {},
+        { cookie: edgeCookie },
+      ))).status, 401);
+    edgeDatabase.state.createdAt = NOW - 10;
+    edgeDatabase.state.expiresAt = NOW + (24 * 60 * 60);
+    assert.equal((await edge.issue(preflight, walletEdgeRequest(
+        "/v1/wallet-intent/prepare",
+        {},
+        { cookie: edgeCookie },
+      ))).status, 401);
+    edgeDatabase.state.expiresAt = NOW + 600;
+    edgeDatabase.state.duplicate = true;
+    assert.equal((await edge.issue(preflight, walletEdgeRequest(
+        "/v1/wallet-intent/prepare",
+        {},
+        { cookie: edgeCookie },
+      ))).status, 401);
+    edgeDatabase.state.duplicate = false;
+    assert.equal((await edge.issue(preflight, walletEdgeRequest(
+        "/v1/wallet-intent/prepare",
+        {},
+        { cookie: edgeCookie, headers: { "sec-fetch-site": "cross-site" } },
+      ))).status, 400);
+    assert.equal((await edge.issue(preflight, walletEdgeRequest(
+        "/v1/wallet-intent/prepare",
+        { requestDigest: preflight.requestDigest },
+        { cookie: edgeCookie },
+      ))).status, 400);
+    const edgePreparationResponse = await edge.issue(preflight, walletEdgeRequest(
+      "/v1/wallet-intent/prepare",
+      {},
+      { cookie: edgeCookie },
+    ));
+    assert.equal(edgePreparationResponse.status, 200);
+    assert.match(edgePreparationResponse.headers.get("cache-control"), /no-store/);
+    assert.equal(edgePreparationResponse.headers.has("set-cookie"), false);
+    const edgePreparation = await edgePreparationResponse.json();
+    assert.equal(edgePreparation.schema, "treeswap.contract-intent-wallet-siwe-edge-prepare.v1");
+    assert.equal(edgePreparation.singleUse, true);
+    assert.equal(edgePreparation.csrfExpiresAt, Math.min(preflight.expiresAt, NOW + 60));
+    assert.equal(edgePreparation.requestDigestDisclosed, false);
+    assert.equal(edgePreparation.walletDisclosed, false);
+    assert.equal(edgePreparation.sessionDigestDisclosed, false);
+    assert.doesNotMatch(JSON.stringify(edgePreparation), new RegExp(preflight.requestDigest.slice(2)));
+    assert.doesNotMatch(JSON.stringify(edgePreparation), new RegExp(preflight.quoteId.slice(2)));
+    assert.doesNotMatch(JSON.stringify(edgePreparation), new RegExp(user.address.slice(2), "i"));
+    assert.doesNotMatch(JSON.stringify(edgePreparation), new RegExp(edgeSessionToken));
+    assert.equal(
+      edgeDatabase.observed.binds.some((values) => JSON.stringify(values).includes(edgeSessionToken)),
+      false,
+    );
+    assert.throws(
+      () => edgeOwnership.issue({
+        preflight,
+        sessionDigest: id(`unbound-edge-session:${direction}`).toLowerCase(),
+        wallet: user.address,
+      }),
+      /belong to its claimed SIWE edge/,
+    );
+    assert.throws(
+      () => createContractIntentWalletSiweEdgeForTests({
+        clientOrigin: "https://treeswap.vercel.app",
+        clock: () => NOW,
+        database: edgeDatabase,
+        gateway: edgeGateway,
+        maximumBodyReadMilliseconds: 50,
+        ownership: edgeOwnership,
+        requesterPrivateKey: gatewayRequesterKeys.privateKey,
+        responsePublicKey: gatewayResponseKeys.publicKey,
+        signal: edgeDeployment.signal,
+      }),
+      /already belongs to a SIWE edge/,
+    );
+    const edgeClaimBody = {
+      ownershipHandle: edgePreparation.ownershipHandle,
+      csrfToken: edgePreparation.csrfToken,
+      csrfExpiresAt: edgePreparation.csrfExpiresAt,
+    };
+    assert.equal((await edge.handle(walletEdgeRequest(
+      "/v1/wallet-intent/claim",
+      edgeClaimBody,
+      { cookie: edgeCookie, headers: { "sec-fetch-mode": "navigate" } },
+    ))).status, 400);
+    assert.equal((await edge.handle(walletEdgeRequest(
+      "/v1/wallet-intent/claim",
+      { ...edgeClaimBody, csrfToken: "ab".repeat(32) },
+      { cookie: edgeCookie },
+    ))).status, 401);
+    assert.equal((await edge.handle(walletEdgeRequest(
+      "/v1/wallet-intent/claim",
+      { ...edgeClaimBody, csrfExpiresAt: NOW + 61 },
+      { cookie: edgeCookie },
+    ))).status, 400);
+    assert.equal((await edge.handle(walletEdgeRequest(
+      "/v1/wallet-intent/claim",
+      edgeClaimBody,
+      { cookie: `__Host-treeswap_session=${"ef".repeat(32)}` },
+    ))).status, 401);
+    const edgeClaimResponses = await Promise.all([
+      edge.handle(walletEdgeRequest(
+        "/v1/wallet-intent/claim",
+        edgeClaimBody,
+        { cookie: edgeCookie },
+      )),
+      edge.handle(walletEdgeRequest(
+        "/v1/wallet-intent/claim",
+        edgeClaimBody,
+        { cookie: edgeCookie },
+      )),
+    ]);
+    assert.deepEqual(edgeClaimResponses.map((response) => response.status).sort(), [200, 400]);
+    const edgeClaimEnvelope = await edgeClaimResponses
+      .find((response) => response.status === 200).json();
+    assert.equal(edgeClaimEnvelope.retryAuthorized, false);
+    assert.equal(edgeClaimEnvelope.persistentClaimToken, false);
+    assert.equal(edgeClaimEnvelope.walletDispatchAuthority, false);
+    const edgeBrowserClaim = await verifyContractIntentWalletBrowserClaim({
+      expected: browserExpectation,
+      now: NOW,
+      response: edgeClaimEnvelope.claim,
+      responsePublicKeySpki,
+    });
+    const edgeTombstones = new Map();
+    const edgeTombstoneConsumer = createContractIntentWalletBrowserTombstoneConsumerForTests({
+      clock: () => NOW,
+      locks: {
+        async request(_name, _options, callback) { return callback(); },
+      },
+      storage: {
+        getItem(key) { return edgeTombstones.get(key) ?? null; },
+        setItem(key, value) { edgeTombstones.set(key, value); },
+      },
+    });
+    const edgeReportedHash = id(`wallet-siwe-edge-reported:${direction}`).toLowerCase();
+    const edgeBrowserAdapter = createContractIntentWalletBrowserAdapterForTests({
+      clock: () => NOW,
+      consumeClaimTombstone: (claim) => edgeTombstoneConsumer.consume(claim),
+      provider: {
+        async request(request) {
+          if (request.method === "eth_chainId") return "0x1";
+          if (request.method === "eth_accounts") return [user.address];
+          if (request.method === "eth_sendTransaction") {
+            assert.equal(request, edgeBrowserClaim.request);
+            return edgeReportedHash;
+          }
+          throw new Error("unexpected SIWE-edge browser provider method");
+        },
+      },
+      readUserActivation: () => true,
+      walletResponseTimeoutMs: 100,
+    });
+    const edgeBrowserResult = await edgeBrowserAdapter.dispatch({
+      claim: edgeBrowserClaim,
+      confirmation: { confirmed: true, requestDigest: edgeBrowserClaim.requestDigest },
+    });
+    assert.equal(edgeBrowserResult.transactionHash, edgeReportedHash);
+    const edgeOutcomeBody = {
+      report: edgeBrowserResult.report,
+      csrfToken: edgeClaimEnvelope.outcomeCsrfToken,
+      csrfExpiresAt: edgeClaimEnvelope.outcomeCsrfExpiresAt,
+    };
+    const edgeOutcomeResponse = await edge.handle(walletEdgeRequest(
+      "/v1/wallet-intent/outcome",
+      edgeOutcomeBody,
+      { cookie: edgeCookie },
+    ));
+    assert.equal(edgeOutcomeResponse.status, 200);
+    const edgeOutcomeEnvelope = await edgeOutcomeResponse.json();
+    assert.equal(edgeOutcomeEnvelope.outcome.state, "SUBMISSION_REPORTED");
+    assert.equal(edgeOutcomeEnvelope.outcome.transactionHash, edgeReportedHash);
+    assert.equal(edgeOutcomeEnvelope.retryAuthorized, false);
+    const replayedEdgeOutcome = await edge.handle(walletEdgeRequest(
+      "/v1/wallet-intent/outcome",
+      edgeOutcomeBody,
+      { cookie: edgeCookie },
+    ));
+    assert.equal(replayedEdgeOutcome.status, 200);
+    assert.deepEqual(await replayedEdgeOutcome.json(), edgeOutcomeEnvelope);
+    const conflictingEdgeOutcomeBody = {
+      ...edgeOutcomeBody,
+      report: {
+        ...edgeOutcomeBody.report,
+        outcome: { errorCode: null, status: "ambiguous", transactionHash: null },
+      },
+    };
+    assert.equal((await edge.handle(walletEdgeRequest(
+      "/v1/wallet-intent/outcome",
+      conflictingEdgeOutcomeBody,
+      { cookie: edgeCookie },
+    ))).status, 400);
+    assert.equal((await edge.handle(walletEdgeRequest(
+      "/v1/wallet-intent/claim",
+      edgeClaimBody,
+      { cookie: edgeCookie },
+    ))).status, 429);
+    const edgeStatus = edge.status();
+    assert.equal(edgeStatus.preparedHandles, 1);
+    assert.equal(edgeStatus.claimsIssued, 1);
+    assert.equal(edgeStatus.outcomeResponses, 1);
+    assert.equal(edgeStatus.activeClaims, 1);
+    assert.equal(edgeStatus.exactOriginRequired, true);
+    assert.equal(edgeStatus.fetchMetadataRequired, true);
+    assert.equal(edgeStatus.handleTokensInStatus, false);
+    assert.equal(edgeStatus.csrfTokensInStatus, false);
+    assert.equal(edgeStatus.gatewayClaimTokensInStatus, false);
+    const edgeStatusBytes = JSON.stringify(edgeStatus);
+    for (const secret of [
+      edgePreparation.ownershipHandle,
+      edgePreparation.csrfToken,
+      edgeClaimEnvelope.claim.claimToken,
+      edgeClaimEnvelope.outcomeCsrfToken,
+      edgeSessionToken,
+      user.address.slice(2),
+      preflight.requestDigest.slice(2),
+    ]) assert.doesNotMatch(edgeStatusBytes, new RegExp(secret, "i"));
+    edgeClock = NOW - 1;
+    assert.throws(() => edge.status(), /clock regressed/);
+    assert.equal(edge.status().state, "halted");
+    assert.equal(edge.status().haltedOnClockRollback, true);
+    edgeDeployment.abort();
+    assert.equal(edge.status().state, "stopped");
+    edgeStore.close();
+    const edgeDatabaseBytes = await readFile(edgeDatabasePath);
+    for (const secret of [
+      edgePreparation.ownershipHandle,
+      edgePreparation.csrfToken,
+      edgeClaimEnvelope.claim.claimToken,
+      edgeClaimEnvelope.outcomeCsrfToken,
+      edgeSessionToken,
+    ]) assert.equal(edgeDatabaseBytes.includes(Buffer.from(secret, "utf8")), false);
 
     gatewayDeployment.abort();
     assert.equal(gateway.status().state, "stopped");
