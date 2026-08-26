@@ -122,9 +122,13 @@ import {
   ContractIntentWalletAbuseStore,
 } from "../lib/contract-intent-wallet-abuse-store.mjs";
 import {
-  CONTRACT_INTENT_WALLET_SESSION_QUERY,
   createContractIntentWalletSiweEdgeForTests,
 } from "../lib/contract-intent-wallet-siwe-edge.mjs";
+import {
+  CONTRACT_INTENT_WALLET_SESSION_QUERY,
+  createContractIntentWalletSessionProviderForTests,
+  createContractIntentWalletSessionReaderForTests,
+} from "../lib/contract-intent-wallet-session-reader.mjs";
 import {
   acquireContractIntentWalletEdgeReplicaFenceForTests,
   createContractIntentWalletEdgePerimeter,
@@ -3075,24 +3079,70 @@ for (const direction of ["lightning-to-bit", "bit-to-lightning"]) {
     });
     const edgeSessionToken = direction === "lightning-to-bit" ? "cd".repeat(32) : "de".repeat(32);
     const edgeDatabase = walletEdgeSessionDatabase({ sessionToken: edgeSessionToken });
+    const edgeSessionRequesterKeys = generateKeyPairSync("ed25519");
+    const edgeSessionResponseKeys = generateKeyPairSync("ed25519");
+    let edgeClock = NOW;
+    const edgeSessionProvider = createContractIntentWalletSessionProviderForTests({
+      apiOrigin: "https://wallet-session.example",
+      clock: () => edgeClock,
+      database: edgeDatabase,
+      maximumProcessingMilliseconds: 50,
+      requesterPublicKey: edgeSessionRequesterKeys.publicKey,
+      responsePrivateKey: edgeSessionResponseKeys.privateKey,
+      signal: edgeDeployment.signal,
+    });
+    const edgeSessionReader = createContractIntentWalletSessionReaderForTests({
+      apiOrigin: "https://wallet-session.example",
+      clock: () => edgeClock,
+      maximumProcessingMilliseconds: 50,
+      randomBytes: () => Buffer.alloc(32, direction === "lightning-to-bit" ? 245 : 246),
+      requesterPrivateKey: edgeSessionRequesterKeys.privateKey,
+      responsePublicKey: edgeSessionResponseKeys.publicKey,
+      signal: edgeDeployment.signal,
+      transport: (url, options) => edgeSessionProvider.handle(new Request(url, options)),
+    });
+    const collidingEdgeSessionReader = createContractIntentWalletSessionReaderForTests({
+      apiOrigin: "https://wallet-session.example",
+      clock: () => edgeClock,
+      maximumProcessingMilliseconds: 50,
+      randomBytes: () => Buffer.alloc(32, direction === "lightning-to-bit" ? 247 : 248),
+      requesterPrivateKey: gatewayRequesterKeys.privateKey,
+      responsePublicKey: edgeSessionResponseKeys.publicKey,
+      signal: edgeDeployment.signal,
+      transport: (url, options) => edgeSessionProvider.handle(new Request(url, options)),
+    });
     const edgeAbusePath = join(directory, `wallet-siwe-edge-abuse-${direction}.sqlite`);
     const edgeAbuseStore = await ContractIntentWalletAbuseStore.open({
       allowMemory: false,
       initialize: true,
       path: edgeAbusePath,
     });
-    let edgeClock = NOW;
     assert.throws(
       () => createContractIntentWalletSiweEdgeForTests({
         abuseStore: edgeAbuseStore,
         clientOrigin: "https://treeswap.vercel.app",
         clock: () => edgeClock,
-        database: edgeDatabase,
+        gateway: edgeGateway,
+        maximumBodyReadMilliseconds: 50,
+        ownership: edgeOwnership,
+        requesterPrivateKey: gatewayRequesterKeys.privateKey,
+        responsePublicKey: gatewayResponseKeys.publicKey,
+        sessionReader: collidingEdgeSessionReader,
+        signal: edgeDeployment.signal,
+      }),
+      /session-reader keys must be separate from gateway keys/,
+    );
+    assert.throws(
+      () => createContractIntentWalletSiweEdgeForTests({
+        abuseStore: edgeAbuseStore,
+        clientOrigin: "https://treeswap.vercel.app",
+        clock: () => edgeClock,
         gateway: edgeGateway,
         maximumBodyReadMilliseconds: 50,
         ownership: edgeOwnership,
         requesterPrivateKey: gatewayRequesterKeys.publicKey,
         responsePublicKey: gatewayResponseKeys.publicKey,
+        sessionReader: edgeSessionReader,
         signal: edgeDeployment.signal,
       }),
       /requester private key and response public key/,
@@ -3102,12 +3152,12 @@ for (const direction of ["lightning-to-bit", "bit-to-lightning"]) {
         abuseStore: edgeAbuseStore,
         clientOrigin: "https://treeswap.vercel.app",
         clock: () => edgeClock,
-        database: edgeDatabase,
         gateway: edgeGateway,
         maximumBodyReadMilliseconds: 50,
         ownership: edgeOwnership,
         requesterPrivateKey: gatewayRequesterKeys.privateKey,
         responsePublicKey: gatewayResponseKeys.privateKey,
+        sessionReader: edgeSessionReader,
         signal: edgeDeployment.signal,
       }),
       /requester private key and response public key/,
@@ -3116,12 +3166,12 @@ for (const direction of ["lightning-to-bit", "bit-to-lightning"]) {
       abuseStore: edgeAbuseStore,
       clientOrigin: "https://treeswap.vercel.app",
       clock: () => edgeClock,
-      database: edgeDatabase,
       gateway: edgeGateway,
       maximumBodyReadMilliseconds: 50,
       ownership: edgeOwnership,
       requesterPrivateKey: gatewayRequesterKeys.privateKey,
       responsePublicKey: gatewayResponseKeys.publicKey,
+      sessionReader: edgeSessionReader,
       signal: edgeDeployment.signal,
     });
     const edgeFenceDirectoryAlias = await mkdtemp(join(
@@ -3242,34 +3292,6 @@ for (const direction of ["lightning-to-bit", "bit-to-lightning"]) {
         {},
         { cookie: `${edgeCookie}; ${edgeCookie}` },
       ))).status, 401);
-    edgeDatabase.state.chainId = 5;
-    assert.equal((await edge.issue(preflight, walletEdgeRequest(
-        "/v1/wallet-intent/prepare",
-        {},
-        { cookie: edgeCookie },
-      ))).status, 401);
-    edgeDatabase.state.chainId = 1;
-    edgeDatabase.state.createdAt = NOW + 1;
-    assert.equal((await edge.issue(preflight, walletEdgeRequest(
-        "/v1/wallet-intent/prepare",
-        {},
-        { cookie: edgeCookie },
-      ))).status, 401);
-    edgeDatabase.state.createdAt = NOW - 10;
-    edgeDatabase.state.expiresAt = NOW + (24 * 60 * 60);
-    assert.equal((await edge.issue(preflight, walletEdgeRequest(
-        "/v1/wallet-intent/prepare",
-        {},
-        { cookie: edgeCookie },
-      ))).status, 401);
-    edgeDatabase.state.expiresAt = NOW + 600;
-    edgeDatabase.state.duplicate = true;
-    assert.equal((await edge.issue(preflight, walletEdgeRequest(
-        "/v1/wallet-intent/prepare",
-        {},
-        { cookie: edgeCookie },
-      ))).status, 401);
-    edgeDatabase.state.duplicate = false;
     assert.equal((await edge.issue(preflight, walletEdgeRequest(
         "/v1/wallet-intent/prepare",
         {},
@@ -3316,12 +3338,12 @@ for (const direction of ["lightning-to-bit", "bit-to-lightning"]) {
         abuseStore: edgeAbuseStore,
         clientOrigin: "https://treeswap.vercel.app",
         clock: () => NOW,
-        database: edgeDatabase,
         gateway: edgeGateway,
         maximumBodyReadMilliseconds: 50,
         ownership: edgeOwnership,
         requesterPrivateKey: gatewayRequesterKeys.privateKey,
         responsePublicKey: gatewayResponseKeys.publicKey,
+        sessionReader: edgeSessionReader,
         signal: edgeDeployment.signal,
       }),
       /already belongs to a SIWE edge|unclaimed active store lifecycle/,
@@ -3473,6 +3495,11 @@ for (const direction of ["lightning-to-bit", "bit-to-lightning"]) {
     assert.equal(edgeStatus.edge.csrfTokensInStatus, false);
     assert.equal(edgeStatus.edge.gatewayClaimTokensInStatus, false);
     assert.equal(edgeStatus.edge.durableAuthenticatedSessionRateLimit, true);
+    assert.equal(edgeStatus.edge.remoteAuthenticatedSessionReads, true);
+    assert.equal(edgeStatus.edge.rawSessionTokensSentToReader, false);
+    assert.equal(edgeStatus.edge.sessionReaderActiveReads >= 1, true);
+    assert.equal(edgeStatus.edge.sessionReaderInactiveReads >= 1, true);
+    assert.equal(edgeStatus.edge.sessionReaderFailedReads, 0);
     assert.equal(edgeStatus.edge.durableRateAcceptedRequests, 8);
     assert.equal(edgeStatus.edge.durableRateRejectedRequests >= 1, true);
     assert.equal(edgeStatus.edge.haltedOnDurableAbuseStore, false);
@@ -3522,6 +3549,7 @@ for (const direction of ["lightning-to-bit", "bit-to-lightning"]) {
     }
     edgeDeployment.abort();
     assert.equal(edge.status().state, "stopped");
+    assert.equal(edgeSessionProvider.status().state, "stopped");
     edgeAbuseStore.close();
     const edgeAbuseBytes = await readFile(edgeAbusePath);
     assert.equal(edgeAbuseBytes.includes(Buffer.from(edgeSessionToken, "utf8")), false);

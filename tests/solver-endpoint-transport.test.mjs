@@ -21,6 +21,7 @@ import {
   pinnedPublicRfqRequest,
   pinnedPublicSelectedSolverRequest,
   pinnedPublicSolverContractSigningRequest,
+  pinnedPublicWalletSessionRequest,
   queryVerifiedSolverCapability,
   solverEndpointResponseDigest,
 } from "../lib/solver-endpoint-transport.mjs";
@@ -497,6 +498,42 @@ test("keeps the solver contract-signing route pinned and separate", async () => 
     `${ORIGIN}/v1/sign-contract-intent`,
     { body: "{}" },
   ), /invalid/);
+});
+
+test("keeps the private wallet-session read route pinned and separate", async () => {
+  const response = await pinnedPublicWalletSessionRequest(
+    `${ORIGIN}/api/internal/wallet-session-read`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: "{}",
+    },
+    {
+      lookupImpl: async () => [{ address: "8.8.8.8", family: 4 }],
+      httpsRequestImpl: (options, callback) => {
+        assert.equal(options.path, "/api/internal/wallet-session-read");
+        assert.equal(options.hostname, "8.8.8.8");
+        assert.equal(options.servername, "solver.example");
+        const request = new EventEmitter();
+        request.end = () => {
+          const incoming = Readable.from([Buffer.from("{}")]);
+          incoming.statusCode = 200;
+          incoming.headers = { "content-type": "application/json" };
+          queueMicrotask(() => callback(incoming));
+        };
+        return request;
+      },
+    },
+  );
+  assert.equal(response.status, 200);
+  await assert.rejects(
+    pinnedPublicWalletSessionRequest(`${ORIGIN}/v1/rfq`, { body: "{}" }),
+    /invalid/,
+  );
+  await assert.rejects(
+    pinnedPublicRfqRequest(`${ORIGIN}/api/internal/wallet-session-read`, { body: "{}" }),
+    /invalid/,
+  );
 });
 
 test("rejects expired responses, oversized bodies, and signed capacity overstatement", async () => {
