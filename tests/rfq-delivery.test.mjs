@@ -7,6 +7,12 @@ import { DatabaseSync } from "node:sqlite";
 import test from "node:test";
 import { id, TypedDataEncoder, Wallet } from "ethers";
 import {
+  createClientSafeBlindQuoteSession,
+  createTestClientSafeBlindQuoteSession,
+  isClientSafeBlindQuoteSession,
+  isProductionClientSafeBlindQuoteSession,
+} from "../lib/blind-quote-preview.mjs";
+import {
   BLIND_RFQ_OFFER_TYPES,
   USER_EXECUTION_AUTHORIZATION_TYPES,
   USER_SELECTION_AUTHORIZATION_TYPES,
@@ -23,6 +29,7 @@ import {
   selectBlindQuote,
   validateBlindSolverOffer,
   verifyBlindQuoteSelectionAuthorization,
+  verifiedBlindQuoteBook,
   verifiedFinalizedExecutableQuote,
 } from "../lib/blind-rfq.mjs";
 import { CoordinatorStore } from "../lib/coordinator-store.mjs";
@@ -603,6 +610,21 @@ async function collect(options = {}) {
   return { ...data, collection };
 }
 
+async function collectedBlindBook(options = {}) {
+  const data = await collect(options);
+  return {
+    ...data,
+    book: buildMultipathBlindQuoteBook({
+      pricing,
+      collection: data.collection,
+      capabilityVerifications: data.verifications,
+      marketRiskAttestations: marketRiskAttestationsForCollection(data.collection),
+      now: NOW,
+      policy: blindPolicy,
+    }),
+  };
+}
+
 async function preparedDurableStore(t, {
   selection,
   verification,
@@ -693,6 +715,183 @@ async function durableReservation(t, {
   });
   return { ...prepared, reservation, userAuthorization };
 }
+
+test("projects authenticated competition into an opaque client-safe quote set", async () => {
+  const { book } = await collectedBlindBook();
+  let entropy = 0;
+  const session = createTestClientSafeBlindQuoteSession({
+    book,
+    nowSeconds: () => NOW,
+    randomBytesImpl: () => Buffer.alloc(32, ++entropy),
+  });
+  assert.equal(isClientSafeBlindQuoteSession(session), true);
+  assert.equal(isProductionClientSafeBlindQuoteSession(session), false);
+  assert.equal(verifiedBlindQuoteBook(book), book);
+  assert.throws(() => verifiedBlindQuoteBook({ ...book }), /authenticated complete delivery collection/);
+
+  const preview = session.preview();
+  assert.deepEqual(Object.keys(preview).sort(), [
+    "direction", "exactOutput", "expiresAt", "marketRiskPolicyDigest", "offers", "outputUnit",
+    "pricingDigest", "pricingId", "quoteCount", "receivedSetDigest", "schema",
+  ].sort());
+  assert.equal(preview.schema, "treeswap.client-safe-blind-quote-set.v1");
+  assert.equal(preview.quoteCount, 2);
+  assert.equal(preview.offers.length, 2);
+  assert.deepEqual(Object.keys(preview.offers[0]).sort(), [
+    "choiceId", "expiresAt", "feeBitAmount", "grossBitAmount", "lightningAmountSats",
+    "maxRoutingFeeSats", "netBitAmount", "rank",
+  ].sort());
+  assert.match(preview.offers[0].choiceId, /^0x[0-9a-f]{64}$/);
+  assert.notEqual(preview.offers[0].choiceId, preview.offers[1].choiceId);
+  assert.equal(preview.offers[0].rank, 1);
+  assert.equal(preview.offers[0].netBitAmount, pricing.exactOutput);
+  assert.equal(preview.offers[0].lightningAmountSats, "10000");
+
+  const publicWire = JSON.stringify(preview).toLowerCase();
+  for (const envelope of book.offers) {
+    for (const secret of [
+      envelope.source,
+      envelope.offer.offerId,
+      envelope.offer.solver,
+      envelope.offer.capabilityDigest,
+      envelope.offer.capacitySnapshotDigest,
+      envelope.offer.endpointPublicKeyDigest,
+      envelope.offer.settlementContractCodeHash,
+      envelope.signature,
+    ]) {
+      assert.equal(publicWire.includes(String(secret).toLowerCase()), false);
+    }
+  }
+  for (const secret of ["relay-a", "relay-b", "direct-a", "direct-b", "availableBitWei", "availableLightningSats"]) {
+    assert.equal(publicWire.includes(secret.toLowerCase()), false);
+  }
+  assert.deepEqual(session.status(), {
+    schema: "treeswap.blind-quote-preview-status.v1",
+    state: "active",
+    mode: "injected-test",
+    quoteCount: 2,
+    fundingAuthorization: false,
+    settlementAuthorization: false,
+    networkListener: false,
+  });
+});
+
+test("selects one original blind quote through an opaque one-use choice", async () => {
+  const { book } = await collectedBlindBook();
+  let entropy = 8;
+  const session = createTestClientSafeBlindQuoteSession({
+    book,
+    nowSeconds: () => NOW,
+    randomBytesImpl: () => Buffer.alloc(32, ++entropy),
+  });
+  const preview = session.preview();
+  const copied = { ...session };
+  assert.throws(() => copied.preview(), /factory provenance/);
+  const extracted = session.select;
+  assert.throws(() => extracted({ choiceId: preview.offers[0].choiceId }), /factory provenance/);
+  assert.throws(
+    () => session.select({ choiceId: `0x${"ff".repeat(32)}` }),
+    /not in the client preview/,
+  );
+  const selection = session.select({ choiceId: preview.offers[0].choiceId });
+  assert.equal(selection.selected.offer.offerId, book.offers[0].offer.offerId);
+  assert.equal(selection.receivedSetDigest, preview.receivedSetDigest);
+  assert.equal(session.status().state, "selected");
+  assert.equal(session.status().quoteCount, 0);
+  assert.throws(
+    () => session.select({ choiceId: preview.offers[1].choiceId }),
+    /no longer active/,
+  );
+  assert.throws(
+    () => createTestClientSafeBlindQuoteSession({
+      book,
+      nowSeconds: () => NOW,
+      randomBytesImpl: () => Buffer.alloc(32, 22),
+    }),
+    /already has a client preview session/,
+  );
+});
+
+test("fails closed on expiry, entropy faults, decorated choices, and closed sessions", async () => {
+  const first = await collectedBlindBook();
+  assert.throws(
+    () => createTestClientSafeBlindQuoteSession({
+      book: first.book,
+      nowSeconds: () => Math.min(...first.book.offers.map(({ offer }) => offer.expiresAt)),
+      randomBytesImpl: () => Buffer.alloc(32, 1),
+    }),
+    /expired or empty/,
+  );
+
+  const second = await collectedBlindBook();
+  assert.throws(
+    () => createTestClientSafeBlindQuoteSession({
+      book: second.book,
+      nowSeconds: () => NOW,
+      randomBytesImpl: () => Buffer.alloc(31, 1),
+    }),
+    /exactly 32 bytes/,
+  );
+  assert.throws(
+    () => createTestClientSafeBlindQuoteSession({
+      book: second.book,
+      nowSeconds: () => NOW,
+      randomBytesImpl: () => Buffer.alloc(32, 2),
+    }),
+    /entropy collided/,
+  );
+
+  const third = await collectedBlindBook();
+  assert.throws(
+    () => createTestClientSafeBlindQuoteSession({
+      book: third.book,
+      nowSeconds: () => NOW,
+      randomBytesImpl: () => Buffer.alloc(32, 1),
+      authority: true,
+    }),
+    /fields are not exact/,
+  );
+  let entropy = 31;
+  let observedAt = NOW;
+  const session = createTestClientSafeBlindQuoteSession({
+    book: third.book,
+    nowSeconds: () => observedAt,
+    randomBytesImpl: () => Buffer.alloc(32, ++entropy),
+  });
+  const preview = session.preview();
+  const choice = { choiceId: preview.offers[0].choiceId };
+  Object.defineProperty(choice, "choiceId", {
+    enumerable: true,
+    get() {
+      throw new Error("choice accessor executed");
+    },
+  });
+  assert.throws(() => session.select(choice), /enumerable data properties/);
+  const symbolicChoice = { choiceId: preview.offers[0].choiceId };
+  symbolicChoice[Symbol("authority")] = true;
+  assert.throws(() => session.select(symbolicChoice), /not exact data properties/);
+  assert.throws(
+    () => session.select(Object.create({ choiceId: preview.offers[0].choiceId })),
+    /plain data object/,
+  );
+  observedAt = preview.expiresAt;
+  assert.equal(session.status().state, "expired");
+  assert.equal(session.status().quoteCount, 0);
+  assert.throws(() => session.preview(), /no longer active/);
+  assert.throws(
+    () => session.select({ choiceId: preview.offers[0].choiceId }),
+    /no longer active/,
+  );
+});
+
+test("production preview sessions use module-owned time and entropy", async () => {
+  const { book } = await collectedBlindBook();
+  const session = createClientSafeBlindQuoteSession(book);
+  assert.equal(isProductionClientSafeBlindQuoteSession(session), true);
+  assert.equal(session.status().mode, "system-entropy");
+  assert.match(session.preview().offers[0].choiceId, /^0x[0-9a-f]{64}$/);
+  assert.equal(session.close().state, "closed");
+});
 
 test("atomically reserves authenticated blind competition before private disclosure and finalization", async (t) => {
   const { collection, verifications } = await collect();
