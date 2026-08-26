@@ -1,10 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { Wallet, id } from "ethers";
+import { id } from "ethers";
 import {
-  WALLET_SESSION_ROUTE_DEPLOYMENT_PREFLIGHT_ROLES,
   assertWalletSessionRouteDeploymentPreflightIsSecretFree,
   buildWalletSessionRouteDeploymentPreflightMessage,
+  buildWalletSessionRouteDeploymentPostflightEvidence,
   buildWalletSessionRouteDeploymentPreflightSummary,
   prepareWalletSessionRouteDeploymentPreflight,
   verifyWalletSessionRouteDeploymentPreflight,
@@ -13,110 +13,16 @@ import {
   WALLET_SESSION_ROUTE_REVIEWER_WALLETS,
   createVerifiedWalletSessionRouteReviewFixture,
 } from "./fixtures/verified-wallet-session-route-review.mjs";
-
-const REVIEWED_AT = 1_800_000_000;
-const PREPARED_AT = REVIEWED_AT + 10;
-const OBSERVED_AT = PREPARED_AT + 5;
-const OPERATORS = Object.freeze([
-  new Wallet(id("wallet session Sites deployment owner")),
-  new Wallet(id("wallet session edge operations owner")),
-]);
-
-function deploymentPlan(review, overrides = {}) {
-  const participants = WALLET_SESSION_ROUTE_DEPLOYMENT_PREFLIGHT_ROLES.map((role, index) => ({
-    role,
-    participantId: id(`wallet session deployment participant:${index}`).toLowerCase(),
-    organizationId: id(`wallet session deployment organization:${index}`).toLowerCase(),
-    identityEvidenceDigest: id(`wallet session deployment identity evidence:${index}`).toLowerCase(),
-    signer: OPERATORS[index].address,
-  }));
-  return {
-    schema: "treeswap.wallet-session-route-deployment-plan.v1",
-    status: "private-closed-test-deployment-planned-live-evidence-required",
-    scope: "preflight-only-no-deployment-dispatch-settlement-or-funding-authorization",
-    environment: "closed-test",
-    sourceBranch: review.artifact.sourceBranch,
-    sourceCommit: review.artifact.sourceCommit,
-    routePath: "/api/internal/wallet-session-read",
-    preparedAt: PREPARED_AT,
-    validUntil: PREPARED_AT + 1_800,
-    access: {
-      accessClass: "owner-only-private",
-      anonymousAccess: false,
-      publicBypass: false,
-      externalVisitorCount: 0,
-      workspaceGroupCount: 0,
-      ownerCount: 2,
-    },
-    bindings: {
-      d1Binding: "DB",
-      d1DataClass: "non-production-copy",
-      d1MigrationRequired: false,
-      r2Binding: null,
-      schemaChangeRequired: false,
-    },
-    runtime: {
-      routeMode: "closed-test",
-      runtimeValuesSource: "sites-runtime-values",
-      processEnvironmentFallbackAllowed: false,
-      retiringCredentialSlotConfigured: false,
-      apiOriginDigest: id("wallet session private API origin").toLowerCase(),
-      deploymentIdDigest: id("wallet session private deployment ID").toLowerCase(),
-      currentRequesterKeyId: `sha256:${"1".repeat(64)}`,
-      currentResponseKeyId: `sha256:${"2".repeat(64)}`,
-      gatewayRequesterKeyId: `sha256:${"3".repeat(64)}`,
-      gatewayResponseKeyId: `sha256:${"4".repeat(64)}`,
-    },
-    dataHandling: {
-      analyticsBodyCapture: false,
-      cdnCaching: false,
-      errorBodyRetention: false,
-      requestBodyLogging: false,
-      requestBodyPersistence: false,
-      responseBodyLogging: false,
-      responseBodyPersistence: false,
-      tracingBodyCapture: false,
-      trafficCapture: false,
-    },
-    controlCommitments: {
-      accessPolicyDigest: id("wallet session access policy").toLowerCase(),
-      bodyHandlingPolicyDigest: id("wallet session body handling policy").toLowerCase(),
-      d1AccessPolicyDigest: id("wallet session D1 access policy").toLowerCase(),
-      d1BackupRestorePolicyDigest: id("wallet session D1 backup restore policy").toLowerCase(),
-      d1PurgePolicyDigest: id("wallet session D1 purge policy").toLowerCase(),
-      incidentDrillPolicyDigest: id("wallet session incident drill policy").toLowerCase(),
-      keyCustodyPolicyDigest: id("wallet session key custody policy").toLowerCase(),
-      monitoringPolicyDigest: id("wallet session monitoring policy").toLowerCase(),
-      versionRetirementPolicyDigest: id("wallet session version retirement policy").toLowerCase(),
-    },
-    participants,
-    ...overrides,
-  };
-}
+import {
+  WALLET_SESSION_ROUTE_DEPLOYMENT_OBSERVED_AT as OBSERVED_AT,
+  WALLET_SESSION_ROUTE_DEPLOYMENT_PREPARED_AT as PREPARED_AT,
+  WALLET_SESSION_ROUTE_REVIEWED_AT as REVIEWED_AT,
+  createVerifiedWalletSessionRouteDeploymentPreflightFixture,
+  createWalletSessionRouteDeploymentPlan,
+} from "./fixtures/verified-wallet-session-route-deployment-preflight.mjs";
 
 async function signedFixture(planOverrides = {}) {
-  const review = await createVerifiedWalletSessionRouteReviewFixture({
-    reviewedAt: REVIEWED_AT,
-    observedAt: REVIEWED_AT + 5,
-  });
-  const plan = deploymentPlan(review, planOverrides);
-  const attestations = [];
-  for (let index = 0; index < WALLET_SESSION_ROUTE_DEPLOYMENT_PREFLIGHT_ROLES.length; index += 1) {
-    const role = WALLET_SESSION_ROUTE_DEPLOYMENT_PREFLIGHT_ROLES[index];
-    const typed = buildWalletSessionRouteDeploymentPreflightMessage({
-      routeReviewVerification: review.verification,
-      plan,
-      role,
-      observedAt: OBSERVED_AT,
-    });
-    attestations.push({
-      role,
-      participantId: plan.participants[index].participantId,
-      signer: OPERATORS[index].address,
-      signature: await OPERATORS[index].signTypedData(typed.domain, typed.types, typed.value),
-    });
-  }
-  return { review, plan, attestations };
+  return createVerifiedWalletSessionRouteDeploymentPreflightFixture({ planOverrides });
 }
 
 test("verifies one reviewed private closed-test plan while every live fact and authority stays false", async () => {
@@ -134,8 +40,23 @@ test("verifies one reviewed private closed-test plan while every live fact and a
   const summary = buildWalletSessionRouteDeploymentPreflightSummary(verification);
   assert.equal(summary.sourceCommit, fixture.review.artifact.sourceCommit);
   assert.equal("plan" in summary, false);
+  const postflightEvidence = buildWalletSessionRouteDeploymentPostflightEvidence(verification);
+  assert.equal(postflightEvidence.configuration.runtime.routeMode, "closed-test");
+  assert.equal(postflightEvidence.reviewers.length, 2);
+  assert.equal(postflightEvidence.operators.length, 2);
+  const defaultTimestampMessage = buildWalletSessionRouteDeploymentPreflightMessage({
+    routeReviewVerification: fixture.review.verification,
+    plan: fixture.plan,
+    role: fixture.plan.participants[0].role,
+    observedAt: OBSERVED_AT,
+  });
+  assert.equal(defaultTimestampMessage.value.attestedAt, OBSERVED_AT);
   assert.throws(
     () => buildWalletSessionRouteDeploymentPreflightSummary(structuredClone(verification)),
+    /provenance/,
+  );
+  assert.throws(
+    () => buildWalletSessionRouteDeploymentPostflightEvidence(structuredClone(verification)),
     /provenance/,
   );
 });
@@ -174,7 +95,7 @@ test("requires live route-review provenance and a causally bounded plan", async 
   });
   assert.doesNotThrow(() => prepareWalletSessionRouteDeploymentPreflight({
     routeReviewVerification: laterVerification.verification,
-    plan: deploymentPlan(laterVerification),
+    plan: createWalletSessionRouteDeploymentPlan(laterVerification),
     observedAt: PREPARED_AT + 20,
   }));
 });
@@ -285,6 +206,21 @@ test("rejects missing, reordered, copied, substituted, future, and expired attes
       ? { ...attestation, signature: fixture.attestations[0].signature }
       : attestation),
   }), /signature is invalid/);
+  assert.throws(() => verify({
+    attestations: fixture.attestations.map((attestation, index) => index === 0
+      ? { ...attestation, attestedAt: attestation.attestedAt + 1 }
+      : attestation),
+  }), /signature is invalid/);
+  assert.throws(() => verify({
+    attestations: fixture.attestations.map((attestation, index) => index === 0
+      ? { ...attestation, attestedAt: PREPARED_AT - 1 }
+      : attestation),
+  }), /outside the signed plan window/);
+  assert.throws(() => verify({
+    attestations: fixture.attestations.map((attestation, index) => index === 0
+      ? { ...attestation, attestedAt: OBSERVED_AT + 1 }
+      : attestation),
+  }), /outside the signed plan window/);
   assert.throws(() => verify({
     plan: {
       ...fixture.plan,

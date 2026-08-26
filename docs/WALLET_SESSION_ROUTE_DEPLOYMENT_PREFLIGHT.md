@@ -50,7 +50,7 @@ The preflight rejects extra fields, accessors, inherited data, endpoints, privat
 
    The other operator uses `--role wallet-edge-operations-owner`. The command emits EIP-712 typed data only. It has no private-key input and performs no signing or deployment.
 
-6. Store the signatures in canonical role order as exact records containing `role`, `participantId`, `signer`, and `signature`.
+6. Store the signatures in canonical role order as exact records containing `role`, `participantId`, `signer`, the signed `attestedAt`, and `signature`. The later operator timestamp is the earliest permitted deployment time; retroactive approval fails the downstream postflight.
 7. Verify the complete packet while it is still valid:
 
    ```sh
@@ -74,4 +74,4 @@ The summary also keeps deployment, signing, dispatch, settlement, gate-opening, 
 
 ## Remaining live sequence
 
-After the independent review and this preflight both succeed, authorized human operators may perform a private closed-test deployment. They must capture a separate, secret-free postflight from the hosting platform and D1 control plane, test the route from the fixed wallet edge, demonstrate exact-version retirement and fail-closed monitoring, and repeat independent review over those live facts. No public access, production session data, live swap, inventory, or pool funding belongs in that exercise.
+After the independent review and this preflight both succeed, authorized human operators may perform a private closed-test deployment. They must complete the separate three-observer [deployment postflight](./WALLET_SESSION_ROUTE_DEPLOYMENT_POSTFLIGHT.md), retain secret-free commitments to evidence from the hosting platform, D1 control plane, fixed wallet edge, privacy systems, exact-version retirement, monitoring, and drills, and then repeat independent review over the retained live facts. No public access, production session data, live swap, inventory, or pool funding belongs in that exercise.
