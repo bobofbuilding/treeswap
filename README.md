@@ -53,7 +53,7 @@ The prototype assumes a business par value of **1 BIT = 100 sats**. This value i
 - Immutable version transitions in [`docs/UPGRADES.md`](docs/UPGRADES.md)
 - Pinned two-node Lightning lab in [`docs/LIGHTNING_REGTEST.md`](docs/LIGHTNING_REGTEST.md)
 - Atomic coordinator, one-dispatch Lightning recovery, revoking release/recovery verification supervisors, fail-closed same-process recovery bootstrap, bounded restart-only action loop, and exact-transaction EVM claim outbox in [`docs/COORDINATOR.md`](docs/COORDINATOR.md)
-- Non-dispatching exact escrow-wallet preflight, durable no-resend restart journal, transaction/replacement validation, receipt/event classification, and repository-only two-observation agreement in [`docs/CONTRACT_INTENT_WALLET.md`](docs/CONTRACT_INTENT_WALLET.md)
+- Exact escrow-wallet preflight, one-shot journal-gated EIP-1193 dispatcher, durable no-resend restart recovery, transaction/replacement validation, receipt/event classification, and repository-only two-observation agreement in [`docs/CONTRACT_INTENT_WALLET.md`](docs/CONTRACT_INTENT_WALLET.md)
 - Controlled EVM finality, provider-disagreement, nonce-replacement, and relayer-rotation evidence in [`docs/EVM_OUTBOX_EVIDENCE.md`](docs/EVM_OUTBOX_EVIDENCE.md)
 - Reproducible BIT source, provider-comparison, and live-token fork evidence in [`docs/BIT_MAINNET_EVIDENCE.md`](docs/BIT_MAINNET_EVIDENCE.md)
 - Deterministic static preflight for the short-lived two-provider/two-reviewer ceremony in [`docs/BIT_CEREMONY_PREFLIGHT.md`](docs/BIT_CEREMONY_PREFLIGHT.md)

@@ -100,6 +100,7 @@ import {
   verifyReportedContractIntentWalletTransaction,
 } from "../lib/contract-intent-wallet.mjs";
 import { ContractIntentWalletStore } from "../lib/contract-intent-wallet-store.mjs";
+import { createContractIntentWalletDispatcherForTests } from "../lib/contract-intent-wallet-dispatcher.mjs";
 import {
   SolverContractSigningProviderStore,
   createSolverContractSigningProviderRoute,
@@ -1745,6 +1746,333 @@ for (const direction of ["lightning-to-bit", "bit-to-lightning"]) {
       /transaction transition is invalid/,
     );
     ambiguousWalletStore.close();
+
+    const dispatcherDatabasePath = join(directory, `wallet-dispatch-${direction}.sqlite`);
+    let dispatcherStore = await ContractIntentWalletStore.open({
+      allowMemory: false,
+      initialize: true,
+      maximumIntents: 8,
+      path: dispatcherDatabasePath,
+    });
+    let walletSendCalls = 0;
+    let confirmationCalls = 0;
+    const dispatchedHash = id(`wallet-dispatched:${direction}`).toLowerCase();
+    const providerRequests = [];
+    const dispatcherProvider = {
+      async request(request) {
+        providerRequests.push(request);
+        if (request.method === "eth_chainId") return "0x1";
+        if (request.method === "eth_accounts") return [user.address];
+        if (request.method === "eth_sendTransaction") {
+          walletSendCalls += 1;
+          assert.equal(request, preflight.request);
+          return dispatchedHash;
+        }
+        throw new Error("unexpected wallet method");
+      },
+    };
+    const dispatcher = createContractIntentWalletDispatcherForTests({
+      clock: () => NOW,
+      provider: dispatcherProvider,
+      requestExplicitConfirmation: async (prompt) => {
+        confirmationCalls += 1;
+        assert.equal(prompt.request, preflight.request);
+        assert.equal(prompt.requestDigest, preflight.requestDigest);
+        assert.equal(prompt.walletDispatchAuthority, false);
+        return { confirmed: true, requestDigest: prompt.requestDigest };
+      },
+      store: dispatcherStore,
+      walletResponseTimeoutMs: 100,
+    });
+    assert.deepEqual(dispatcher.status(), {
+      schema: "treeswap.contract-intent-wallet-dispatcher-status.v1",
+      state: "ready",
+      automaticRetry: false,
+      requestsWalletConnection: false,
+      requestsChainSwitch: false,
+      walletDispatchAuthority: false,
+      lightningDispatchAuthority: false,
+      fundingAuthorization: false,
+    });
+    const extractedDispatch = dispatcher.dispatch;
+    await assert.rejects(
+      () => extractedDispatch(preflight),
+      /original fixed dispatcher/,
+    );
+    await assert.rejects(
+      () => dispatcher.dispatch.call({ ...dispatcher }, preflight),
+      /original fixed dispatcher/,
+    );
+    assert.equal(walletSendCalls, 0);
+    const dispatchResult = await dispatcher.dispatch(preflight);
+    assert.equal(dispatchResult.state, "SUBMISSION_REPORTED");
+    assert.equal(dispatchResult.transactionHash, dispatchedHash);
+    assert.equal(dispatchResult.retryAuthorized, false);
+    assert.equal(dispatchResult.postContextUnavailable, false);
+    assert.equal(walletSendCalls, 1);
+    assert.equal(confirmationCalls, 1);
+    assert.deepEqual(providerRequests.map((request) => request.method), [
+      "eth_chainId",
+      "eth_accounts",
+      "eth_sendTransaction",
+      "eth_chainId",
+      "eth_accounts",
+    ]);
+    await assert.rejects(
+      () => dispatcher.dispatch(preflight),
+      (error) => error.code === "DURABLE_CLAIM_UNAVAILABLE"
+        && error.requestMayHaveBeenSent === false
+        && error.retryAuthorized === false,
+    );
+    assert.equal(walletSendCalls, 1);
+    dispatcherStore.close();
+    dispatcherStore = await ContractIntentWalletStore.open({
+      allowMemory: false,
+      initialize: false,
+      maximumIntents: 8,
+      path: dispatcherDatabasePath,
+    });
+    const dispatchedRecovery = dispatcherStore.recover({ limit: 8, now: NOW + 1 });
+    assert.equal(dispatchedRecovery[0].state, "SUBMISSION_REPORTED");
+    assert.equal(dispatchedRecovery[0].transactionHash, dispatchedHash);
+    assert.equal(dispatchedRecovery[0].action, "RECONCILE_TRANSACTION_NO_RESEND");
+    assert.equal(dispatchedRecovery[0].retryAuthorized, false);
+    dispatcherStore.close();
+
+    const rejectedDispatcherPath = join(directory, `wallet-dispatch-rejected-${direction}.sqlite`);
+    const rejectedDispatcherStore = await ContractIntentWalletStore.open({
+      allowMemory: false,
+      initialize: true,
+      maximumIntents: 8,
+      path: rejectedDispatcherPath,
+    });
+    let rejectedSendCalls = 0;
+    const rejectedDispatcher = createContractIntentWalletDispatcherForTests({
+      clock: () => NOW,
+      provider: {
+        async request(request) {
+          if (request.method === "eth_chainId") return "0x1";
+          if (request.method === "eth_accounts") return [user.address];
+          rejectedSendCalls += 1;
+          const error = new Error("user rejected");
+          error.code = 4001;
+          throw error;
+        },
+      },
+      requestExplicitConfirmation: async (prompt) => ({
+        confirmed: true,
+        requestDigest: prompt.requestDigest,
+      }),
+      store: rejectedDispatcherStore,
+      walletResponseTimeoutMs: 100,
+    });
+    const rejectedDispatch = await rejectedDispatcher.dispatch(preflight);
+    assert.equal(rejectedDispatch.state, "USER_REJECTED");
+    assert.equal(rejectedDispatch.transactionHash, null);
+    assert.equal(rejectedSendCalls, 1);
+    assert.deepEqual(rejectedDispatcherStore.recover({ limit: 8, now: NOW + 1 }), []);
+    rejectedDispatcherStore.close();
+
+    const droppedDispatcherPath = join(directory, `wallet-dispatch-dropped-${direction}.sqlite`);
+    const droppedDispatcherStore = await ContractIntentWalletStore.open({
+      allowMemory: false,
+      initialize: true,
+      maximumIntents: 8,
+      path: droppedDispatcherPath,
+    });
+    let droppedSendCalls = 0;
+    const droppedDispatcher = createContractIntentWalletDispatcherForTests({
+      clock: () => NOW,
+      provider: {
+        async request(request) {
+          if (request.method === "eth_chainId") return "0x1";
+          if (request.method === "eth_accounts") return [user.address];
+          droppedSendCalls += 1;
+          return new Promise(() => {});
+        },
+      },
+      requestExplicitConfirmation: async (prompt) => ({
+        confirmed: true,
+        requestDigest: prompt.requestDigest,
+      }),
+      store: droppedDispatcherStore,
+      walletResponseTimeoutMs: 5,
+    });
+    const droppedDispatch = await droppedDispatcher.dispatch(preflight);
+    assert.equal(droppedDispatch.state, "SUBMISSION_UNKNOWN");
+    assert.equal(droppedDispatch.retryAuthorized, false);
+    assert.equal(droppedSendCalls, 1);
+    assert.equal(
+      droppedDispatcherStore.recover({ limit: 8, now: NOW + 1 })[0].action,
+      "SEARCH_QUOTE_NO_RESEND",
+    );
+    droppedDispatcherStore.close();
+
+    const missingPostContextPath = join(directory, `wallet-dispatch-post-context-${direction}.sqlite`);
+    const missingPostContextStore = await ContractIntentWalletStore.open({
+      allowMemory: false,
+      initialize: true,
+      maximumIntents: 8,
+      path: missingPostContextPath,
+    });
+    let transactionReturned = false;
+    const missingPostContextHash = id(`wallet-post-context:${direction}`).toLowerCase();
+    const missingPostContextDispatcher = createContractIntentWalletDispatcherForTests({
+      clock: () => NOW,
+      provider: {
+        async request(request) {
+          if (request.method === "eth_sendTransaction") {
+            transactionReturned = true;
+            return missingPostContextHash;
+          }
+          if (transactionReturned) throw new Error("wallet disconnected");
+          return request.method === "eth_chainId" ? "0x1" : [user.address];
+        },
+      },
+      requestExplicitConfirmation: async (prompt) => ({
+        confirmed: true,
+        requestDigest: prompt.requestDigest,
+      }),
+      store: missingPostContextStore,
+      walletResponseTimeoutMs: 100,
+    });
+    const missingPostContext = await missingPostContextDispatcher.dispatch(preflight);
+    assert.equal(missingPostContext.state, "SUBMISSION_REPORTED_CONTEXT_CHANGED");
+    assert.equal(missingPostContext.transactionHash, missingPostContextHash);
+    assert.equal(missingPostContext.postContextUnavailable, true);
+    assert.equal(
+      missingPostContextStore.recover({ limit: 8, now: NOW + 1 })[0].transactionHash,
+      missingPostContextHash,
+    );
+    missingPostContextStore.close();
+
+    const failedJournalPath = join(directory, `wallet-dispatch-journal-failure-${direction}.sqlite`);
+    let failedJournalStore = await ContractIntentWalletStore.open({
+      allowMemory: false,
+      initialize: true,
+      maximumIntents: 8,
+      path: failedJournalPath,
+    });
+    let failedJournalSendCalls = 0;
+    const failedJournalHash = id(`wallet-journal-failure:${direction}`).toLowerCase();
+    const failedJournalDispatcher = createContractIntentWalletDispatcherForTests({
+      clock: () => NOW,
+      provider: {
+        async request(request) {
+          if (request.method === "eth_chainId") return "0x1";
+          if (request.method === "eth_accounts") return [user.address];
+          failedJournalSendCalls += 1;
+          failedJournalStore.close();
+          return failedJournalHash;
+        },
+      },
+      requestExplicitConfirmation: async (prompt) => ({
+        confirmed: true,
+        requestDigest: prompt.requestDigest,
+      }),
+      store: failedJournalStore,
+      walletResponseTimeoutMs: 100,
+    });
+    await assert.rejects(
+      () => failedJournalDispatcher.dispatch(preflight),
+      (error) => error.code === "DURABLE_OUTCOME_UNAVAILABLE"
+        && error.transactionHash === failedJournalHash
+        && error.requestMayHaveBeenSent === true
+        && error.retryAuthorized === false,
+    );
+    assert.equal(failedJournalSendCalls, 1);
+    failedJournalStore = await ContractIntentWalletStore.open({
+      allowMemory: false,
+      initialize: false,
+      maximumIntents: 8,
+      path: failedJournalPath,
+    });
+    const failedJournalRecovery = failedJournalStore.recover({ limit: 8, now: NOW + 1 });
+    assert.equal(failedJournalRecovery[0].state, "WALLET_REQUEST_CLAIMED");
+    assert.equal(failedJournalRecovery[0].action, "SEARCH_QUOTE_NO_RESEND");
+    assert.equal(failedJournalRecovery[0].retryAuthorized, false);
+    failedJournalStore.close();
+
+    const wrongContextPath = join(directory, `wallet-dispatch-wrong-context-${direction}.sqlite`);
+    const wrongContextStore = await ContractIntentWalletStore.open({
+      allowMemory: false,
+      initialize: true,
+      maximumIntents: 8,
+      path: wrongContextPath,
+    });
+    let wrongContextSendCalls = 0;
+    const wrongContextDispatcher = createContractIntentWalletDispatcherForTests({
+      clock: () => NOW,
+      provider: {
+        async request(request) {
+          if (request.method === "eth_chainId") return "0x2";
+          if (request.method === "eth_accounts") return [user.address];
+          wrongContextSendCalls += 1;
+          return id("must-not-send").toLowerCase();
+        },
+      },
+      requestExplicitConfirmation: async (prompt) => ({
+        confirmed: true,
+        requestDigest: prompt.requestDigest,
+      }),
+      store: wrongContextStore,
+      walletResponseTimeoutMs: 100,
+    });
+    await assert.rejects(
+      () => wrongContextDispatcher.dispatch(preflight),
+      (error) => error.code === "CONTEXT_MISMATCH"
+        && error.durableAttemptCreated === true
+        && error.requestMayHaveBeenSent === false
+        && error.retryAuthorized === false,
+    );
+    assert.equal(wrongContextSendCalls, 0);
+    assert.equal(
+      wrongContextStore.recover({ limit: 8, now: NOW + 1 })[0].action,
+      "SEARCH_QUOTE_NO_RESEND",
+    );
+    wrongContextStore.close();
+
+    const declinedDispatcherPath = join(directory, `wallet-dispatch-declined-${direction}.sqlite`);
+    const declinedDispatcherStore = await ContractIntentWalletStore.open({
+      allowMemory: false,
+      initialize: true,
+      maximumIntents: 8,
+      path: declinedDispatcherPath,
+    });
+    let declinedProviderCalls = 0;
+    let declinedConfirmationCalls = 0;
+    const declinedDispatcher = createContractIntentWalletDispatcherForTests({
+      clock: () => NOW,
+      provider: {
+        async request() {
+          declinedProviderCalls += 1;
+          throw new Error("provider must not be contacted");
+        },
+      },
+      requestExplicitConfirmation: async (prompt) => {
+        declinedConfirmationCalls += 1;
+        return { confirmed: false, requestDigest: prompt.requestDigest };
+      },
+      store: declinedDispatcherStore,
+      walletResponseTimeoutMs: 100,
+    });
+    await assert.rejects(
+      () => declinedDispatcher.dispatch(preflight),
+      (error) => error.code === "CONFIRMATION_DECLINED"
+        && error.durableAttemptCreated === false
+        && error.requestMayHaveBeenSent === false,
+    );
+    assert.equal(declinedConfirmationCalls, 1);
+    assert.equal(declinedProviderCalls, 0);
+    assert.equal(declinedDispatcherStore.status().totalIntents, 0);
+    await assert.rejects(
+      () => declinedDispatcher.dispatch({ ...preflight }),
+      /original contract-intent wallet provenance/,
+    );
+    assert.equal(declinedConfirmationCalls, 1);
+    assert.equal(declinedProviderCalls, 0);
+    declinedDispatcherStore.close();
+
     const walletSymlinkPath = join(directory, `wallet-link-${direction}.sqlite`);
     await symlink(ambiguousWalletDatabasePath, walletSymlinkPath);
     await assert.rejects(

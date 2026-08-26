@@ -1,6 +1,6 @@
 # Contract-intent wallet boundary
 
-Status: a non-dispatching repository core prepares and reviews the exact user-wallet transaction for either TreeSwap escrow, records the wallet outcome without authorizing retry, verifies a reported or same-nonce replacement transaction, and classifies its receipt, reservation event, finality, mismatch, revert, disappearance, or reorg. A separate strict private SQLite journal now durably claims the wallet attempt and records each original core artifact, allowing restart to produce reconciliation-only work without inventing resend authority. Neither component calls a wallet, Ethereum provider, escrow, or Lightning node. Its two-observation result explicitly does not prove independent provider operation or authorize funds. Funded operation remains closed.
+Status: a repository core prepares and reviews the exact user-wallet transaction for either TreeSwap escrow, records the wallet outcome without authorizing retry, verifies a reported or same-nonce replacement transaction, and classifies its receipt, reservation event, finality, mismatch, revert, disappearance, or reorg. A strict private SQLite journal durably claims the attempt and records each original core artifact. A fixed same-process dispatcher now requires fresh explicit confirmation, the original preflight, an original journal claim, and an exact chain/account check before making one EIP-1193 request; every uncertain result becomes reconciliation-only work. This is local repository evidence, not a deployed browser/coordinator integration. It calls no Lightning node and its two-observation result does not prove independent provider operation or authorize funds. Funded operation remains closed.
 
 ## Pricing and settlement scope
 
@@ -24,7 +24,7 @@ The response recorder admits exactly three outcomes:
 - exact EIP-1193 user rejection code `4001`; or
 - an ambiguous result with neither a hash nor a claimed error code.
 
-It reads chain and accounts again after the wallet returns. If the chain changes or the wallet disconnects after returning a hash, the hash is retained under `SUBMISSION_REPORTED_CONTEXT_CHANGED`. It is never discarded. Every non-rejection requires independent reconciliation and every outcome has `retryAuthorized: false`; an unknown result cannot be converted into a second send.
+It reads chain and accounts again after the wallet returns. If the chain changes, the wallet disconnects, or the post-request context cannot be read after returning a hash, the hash is retained under `SUBMISSION_REPORTED_CONTEXT_CHANGED`; `postContextUnavailable` distinguishes an unreadable post-context. It is never discarded. Every non-rejection requires independent reconciliation and every outcome has `retryAuthorized: false`; an unknown result cannot be converted into a second send.
 
 ## Transaction and replacement rule
 
@@ -63,13 +63,29 @@ Startup recovery returns one of four authority-free actions:
 
 A repository quorum returns `REQUIRE_DEPLOYED_FINALITY_PROOF_NO_LIGHTNING`. Every recovery has `retryAuthorized: false`; none authorizes wallet dispatch, Lightning, provider independence, canonical finality, or funding.
 
-The journal cannot prevent unrelated application code from calling an injected wallet provider. Production safety therefore still requires a fixed dispatcher that is structurally reachable only through the journal claim and explicit user confirmation, plus deployed browser and process-failure evidence.
+## Fixed one-shot dispatcher
+
+`createContractIntentWalletDispatcher` fixes the system clock and a bounded wallet-response window. It accepts no connect or switch method. For one original preflight it performs this sequence:
+
+1. present the exact frozen review and `eth_sendTransaction` request to the configured explicit-confirmation function;
+2. durably create the journal claim;
+3. read `eth_chainId` and `eth_accounts`, then verify the exact chain and first account;
+4. consume the original same-process claim once immediately before dispatch;
+5. call the wallet exactly once with the original frozen request;
+6. classify exact code `4001`, a lowercase transaction hash, or every other result as ambiguous;
+7. re-read context and durably record the original outcome before returning.
+
+A timeout, malformed response, non-data or inherited rejection code, provider error, lost response, or unreadable post-context cannot trigger another send. If the journal fails after the request may have started, the dispatcher returns an explicit reconciliation-required error with any already-returned hash and `retryAuthorized: false`. If context fails after the claim but before the wallet request, restart still returns `SEARCH_QUOTE_NO_RESEND`. A declined confirmation creates no claim and contacts no provider. Concurrent or later use of the same claimed request cannot send again.
+
+The production factory has no injected clock or timeout. A separately named test factory is the only path that accepts them. Local tests exercise both directions, exact request identity, rejection, response loss, post-hash disconnect, wrong chain, duplicate use, copied preflight, declined confirmation, and restart.
+
+This module cannot prove that a callback represented a human gesture, prevent unrelated application code from directly calling an injected provider, or bridge the Node-only journal into a remote browser by itself. Those are deployment and architecture gates, not properties claimed by this checkpoint.
 
 ## Remaining release gates
 
 This checkpoint intentionally leaves the production checklist open. Before either asset can move, TreeSwap still needs:
 
-1. a fixed EIP-1193 dispatcher that is reachable only after the durable claim, invokes only the original preflight after a fresh explicit user confirmation, retains the returned hash, and never retries an ambiguous request automatically;
+1. an authenticated deployed browser-to-coordinator claim/outcome route that makes the fixed dispatcher the only wallet path, demonstrates a real user gesture, and never turns a process or network retry into another wallet request;
 2. composition of the journal into the persistent coordinator plus process-kill, disk-full, backup/restore, and multi-replica conflict drills;
 3. fixed authenticated Ethereum clients that project raw responses into this core, prove two genuinely independent providers, and bind the finalized reservation to the durable coordinator settlement;
 4. deployed testnet evidence for both directions and common wallet types, including rejection, disconnect, dropped response, speed-up, cancellation, nonce contention, revert, provider disagreement/outage, and reorg before and after finality;
