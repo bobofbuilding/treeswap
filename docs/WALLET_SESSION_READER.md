@@ -44,11 +44,13 @@ The adversarial suite covers active and inactive sessions, exact D1 query/bind v
 
 The application route now imports the provider through `lib/contract-intent-wallet-session-route.mjs`, reads only the existing Sites `env.DB` binding and named secret-manager values, caches an initialization rejection for the isolate lifetime, and contains no request-body parser, logger, trace hook, `process.env` fallback, browser import, wallet call, Lightning call, or funding path. `.env.example` names the required values but contains no key material. This is still local evidence: no configured Sites route, secret, D1 migration, deployed overlap, traffic capture, or live provider/reader composition was created.
 
+An independent-review boundary now reconstructs the exact published route scope and requires separate application-security and platform/data-isolation reviewers to sign one canonical, short-lived package with zero open repository findings. It rejects source drift, incomplete controls, shared reviewer authority, stale evidence, and signature substitution while keeping every deployment and funding authority false. This is review tooling, not a review: no external reviewer, report, signature, deployment setting, or live evidence is included. See [Wallet-session route independent review](./WALLET_SESSION_ROUTE_REVIEW.md).
+
 ## Deployment gates
 
 Before even a closed funded testnet may use this path:
 
-1. independently review the repository route, protocol change, fixed D1 query, closed-test lock, key-overlap policy, secret names, generic errors, and absence of browser authority;
+1. complete the [wallet-session route independent-review ceremony](./WALLET_SESSION_ROUTE_REVIEW.md) against the exact final commit on `origin/main`, with both external roles, zero open repository findings, and retained reports and independence evidence;
 2. deploy it only to a private closed environment with generated four-way-separated keys, exact origin, owner-only access policy, no public bypass, and a non-production D1 copy; do not put key bytes in source, build output, D1, evidence, or command logs;
 3. prove the route is absent from browser bundles, accepts only the signed protocol, preserves exact length and identity framing through the CDN, and has request/response-body logging, caching, tracing, analytics, traffic capture, and error-body retention disabled at every layer;
 4. deploy the wallet edge separately with pinned DNS/TLS, separate key custody, the bounded overlap sequence above, process supervision, latency/error/clock alerts, and the existing single-replica abuse-ledger and fence controls;

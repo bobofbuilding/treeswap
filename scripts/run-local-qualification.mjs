@@ -154,6 +154,7 @@ const campaigns = [
     "--test",
     "tests/bit-reviewed-manifest.test.mjs",
   ]],
+  ["governance:wallet-session-route-review", "npm", ["run", "test:wallet-session-route-review"]],
   ["evm:escrow-reorgs", "npm", ["run", "test:escrow-reorg"]],
   ["lightning:credential-lifecycle", "npm", ["run", "regtest:credential-smoke"]],
   ["lightning:credential-overlap-rotation", "npm", ["run", "regtest:credential-rotation-smoke"]],
