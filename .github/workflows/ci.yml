@@ -98,6 +98,7 @@ jobs:
       - run: node --check lib/closed-testnet-deployment-preflight.mjs
       - run: node --check lib/closed-testnet-deployment-postflight-observer.mjs
       - run: node --check lib/closed-testnet-deployment-postflight.mjs
+      - run: node --check lib/d1-access-policy-review.mjs
       - run: node --check lib/qualification-evidence.mjs
       - run: node --check lib/local-qualification-verification.mjs
       - run: node --check lib/production-duration-evidence.mjs
@@ -182,6 +183,8 @@ jobs:
       - run: bash -n scripts/run-live-bit-cross-chain-deadline-smoke.sh
       - run: node --check scripts/run-local-qualification.mjs
       - run: node --check scripts/verify-local-qualification.mjs
+      - run: node --check scripts/prepare-d1-access-policy-review-attestation.mjs
+      - run: node --check scripts/verify-d1-access-policy-review.mjs
       - run: node --check scripts/write-production-duration-evidence.mjs
       - run: node --check scripts/evaluate-lightning-close-recovery.mjs
       - run: node --check scripts/verify-lightning-close-collector-quorum.mjs
