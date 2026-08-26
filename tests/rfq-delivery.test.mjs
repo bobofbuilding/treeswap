@@ -70,13 +70,18 @@ import {
   buildRfqQuoteAuthorization,
   createRfqQuoteIngressReader,
   createRfqQuoteIngressRoute,
+  createRfqSelectionReservationService,
   createTestRfqQuoteIngressReader,
   createTestRfqQuoteIngressServiceReader,
   createTestRfqQuoteIngressRoute,
+  createTestRfqSelectionReservationService,
   isRfqQuoteIngressRoute,
   rfqQuoteIngressPolicyDigest,
 } from "../lib/rfq-quote-ingress.mjs";
 import { RfqQuoteIngressStore } from "../lib/rfq-quote-ingress-store.mjs";
+import {
+  claimRfqSelectionReservationOwnership,
+} from "../lib/rfq-selection-reservation.mjs";
 import {
   isProductionRfqDeliveryService,
   isRfqDeliveryService,
@@ -605,14 +610,30 @@ function jsonResponse(value, options = {}) {
   });
 }
 
-async function fixture({ includeThirdRelay = false } = {}) {
-  const offers = [await blindEnvelope(0, 10_000), await blindEnvelope(1, 10_100)];
+async function fixture({ includeThirdRelay = false, pricingRequest = pricing } = {}) {
+  const offers = pricingRequest.direction === "lightning-to-bit"
+    ? [
+      await blindEnvelope(0, 10_000, { pricingRequest }),
+      await blindEnvelope(1, 10_100, { pricingRequest }),
+    ]
+    : [
+      await blindEnvelope(0, Number(pricingRequest.exactOutput), {
+        pricingRequest,
+        grossBitAmount: 252n * BIT + BIT / 2n,
+        feeBitAmount: 2n * BIT + BIT / 2n,
+      }),
+      await blindEnvelope(1, Number(pricingRequest.exactOutput), {
+        pricingRequest,
+        grossBitAmount: 253n * BIT,
+        feeBitAmount: 2n * BIT + BIT / 2n,
+      }),
+    ];
   const verifications = offers.map((item) => item.verification);
   const paths = pathPlan(verifications, { includeThirdRelay });
   const responder = async (_url, options, pathId) => {
     const wireRequest = JSON.parse(options.body);
-    assert.deepEqual(wireRequest.rfq, pricing);
-    assert.equal(wireRequest.requestDigest, rfqDeliveryPayloadDigest(pricing));
+    assert.deepEqual(wireRequest.rfq, pricingRequest);
+    assert.equal(wireRequest.requestDigest, rfqDeliveryPayloadDigest(pricingRequest));
     const delivered = pathId === "direct-a" ? [offers[0].envelope]
       : pathId === "direct-b" ? [offers[1].envelope]
         : offers.map((item) => item.envelope);
@@ -633,16 +654,16 @@ async function fixture({ includeThirdRelay = false } = {}) {
     ]) assert.doesNotMatch(publicWire, new RegExp(secret.slice(2).toLowerCase()));
     return jsonResponse(response);
   };
-  return { offers, verifications, paths, responder };
+  return { offers, pricingRequest, verifications, paths, responder };
 }
 
 async function collect(options = {}) {
   const data = await fixture(options);
   const collection = await collectTestVerifiedRfqDeliveries({
     paths: data.paths,
-    requestId: pricing.pricingId,
-    requestDigest: rfqDeliveryPayloadDigest(pricing),
-    rfq: pricing,
+    requestId: data.pricingRequest.pricingId,
+    requestDigest: rfqDeliveryPayloadDigest(data.pricingRequest),
+    rfq: data.pricingRequest,
     policy: deliveryPolicy,
     requestImpl: data.responder,
     nowSeconds: () => NOW,
@@ -656,7 +677,7 @@ async function collectedBlindBook(options = {}) {
   return {
     ...data,
     book: buildMultipathBlindQuoteBook({
-      pricing,
+      pricing: data.pricingRequest,
       collection: data.collection,
       capabilityVerifications: data.verifications,
       marketRiskAttestations: marketRiskAttestationsForCollection(data.collection),
@@ -728,8 +749,9 @@ async function quoteIngressFixture(t, {
   read = null,
   randomBytesImpl = null,
 } = {}) {
-  const { book } = await collectedBlindBook();
+  const { book, verifications } = await collectedBlindBook();
   const store = await quoteIngressStore(policy);
+  const coordinatorStore = await CoordinatorStore.open(":memory:", { allowMemory: true });
   const deployment = new AbortController();
   let previewEntropy = 40;
   let reads = 0;
@@ -746,6 +768,16 @@ async function quoteIngressFixture(t, {
       });
     }),
   });
+  let reservationEntropy = 110;
+  const selectionReservation = createTestRfqSelectionReservationService({
+    admissionPolicy,
+    capabilityVerifications: verifications,
+    coordinatorStore,
+    maximumPendingSelections: policy.maximumLiveRequests,
+    nowSeconds,
+    randomBytesImpl: () => Buffer.alloc(32, ++reservationEntropy),
+    signal: deployment.signal,
+  });
   let routeEntropy = 70;
   const route = createTestRfqQuoteIngressRoute({
     nowSeconds,
@@ -753,19 +785,23 @@ async function quoteIngressFixture(t, {
     quoteReader: reader,
     randomBytesImpl: randomBytesImpl ?? (() => Buffer.alloc(32, ++routeEntropy)),
     replayStore: store,
+    selectionReservation,
     signal: deployment.signal,
   });
   t.after(() => {
     try { route.stop(); } catch {}
     try { store.close(); } catch {}
+    try { coordinatorStore.close(); } catch {}
   });
   return {
     book,
+    coordinatorStore,
     deployment,
     lastReaderPricing: () => lastReaderPricing,
     reader,
     reads: () => reads,
     route,
+    selectionReservation,
     store,
   };
 }
@@ -1078,14 +1114,43 @@ test("authenticates quote ingress, exposes only opaque competition, and consumes
     sessionToken: payload.sessionToken,
   }));
   assert.equal(selected.status, 200);
-  assert.deepEqual(await selected.json(), {
+  const selectionPayload = await selected.json();
+  assert.deepEqual(selectionPayload, {
     schema: "treeswap.rfq-quote-selection-ack.v1",
     status: "selected",
+    reservationToken: `0x${"6f".repeat(32)}`,
     expiresAt: payload.preview.expiresAt,
     privateSettlementRequired: true,
     fundingAuthorization: false,
     settlementAuthorization: false,
   });
+  const signingPayload = data.selectionReservation.prepare({
+    authorizationExpiresAt: NOW + 30,
+    request: privateRequest,
+    reservationToken: selectionPayload.reservationToken,
+  });
+  assert.equal(signingPayload.schema, "treeswap.selection-reservation-signing-payload.v1");
+  assert.equal(signingPayload.primaryType, "UserSelectionAuthorization");
+  assert.equal(JSON.stringify(signingPayload).includes(data.book.offers[0].signature), false);
+  const selectionSignature = await user.signTypedData(
+    signingPayload.domain,
+    signingPayload.types,
+    signingPayload.message,
+  );
+  assert.deepEqual(data.selectionReservation.reserve({
+    authorization: signingPayload.message,
+    request: privateRequest,
+    reservationToken: selectionPayload.reservationToken,
+    signature: selectionSignature,
+  }), {
+    schema: "treeswap.selection-reservation-ack.v1",
+    status: "reserved",
+    expiresAt: NOW + 30,
+    privateExecutionRequired: true,
+    fundingAuthorization: false,
+    settlementAuthorization: false,
+  });
+  assert.equal(data.coordinatorStore.getFirmOffer(data.book.offers[0].offer.offerId).state, "ACTIVE");
   assert.equal((await data.route.handle(quoteIngressRequest("/v1/quotes", body))).status, 400);
   assert.equal((await data.route.handle(quoteIngressRequest("/v1/quotes/select", {
     choiceId: payload.preview.offers[0].choiceId,
@@ -1102,7 +1167,7 @@ test("authenticates quote ingress, exposes only opaque competition, and consumes
     requestsInFlight: 0,
     selectionsCompleted: 1,
     inMemoryReadySessions: 0,
-    inMemorySelectedSessions: 1,
+    inMemorySelectedSessions: 0,
     durableLiveClaimedRequests: 0,
     durableLiveReadySessions: 0,
     fundingAuthorization: false,
@@ -1110,6 +1175,271 @@ test("authenticates quote ingress, exposes only opaque competition, and consumes
     signingAuthorization: false,
     networkListener: false,
   });
+  assert.deepEqual(data.selectionReservation.status(), {
+    schema: "treeswap.selection-reservation-status.v1",
+    state: "active",
+    mode: "injected-test",
+    selectionsAccepted: 1,
+    signingPayloadsPrepared: 1,
+    reservationsCompleted: 1,
+    requestsFailed: 0,
+    pendingSelected: 0,
+    pendingPrepared: 0,
+    inMemoryReservations: 1,
+    fundingAuthorization: false,
+    settlementAuthorization: false,
+    signingAuthority: false,
+    networkListener: false,
+  });
+});
+
+test("hands one original selection into user-authorized durable reservation without bearer-token griefing", async (t) => {
+  const data = await collectedBlindBook();
+  const selection = selectBlindQuote(data.book, data.book.offers[0].offer.offerId);
+  const coordinatorStore = await CoordinatorStore.open(":memory:", { allowMemory: true });
+  const deployment = new AbortController();
+  assert.throws(() => createTestRfqSelectionReservationService({
+    admissionPolicy,
+    capabilityVerifications: [{ ...data.verifications[0] }, data.verifications[1]],
+    coordinatorStore,
+    maximumPendingSelections: 4,
+    nowSeconds: () => NOW,
+    randomBytesImpl: () => Buffer.alloc(32, 130),
+    signal: deployment.signal,
+  }), /locally verified capability/);
+  let policyAccessorRead = false;
+  const accessorPolicy = { ...admissionPolicy };
+  Object.defineProperty(accessorPolicy, "minimumNotionalSats", {
+    enumerable: true,
+    get() {
+      policyAccessorRead = true;
+      throw new Error("admission policy accessor executed");
+    },
+  });
+  assert.throws(() => createTestRfqSelectionReservationService({
+    admissionPolicy: accessorPolicy,
+    capabilityVerifications: data.verifications,
+    coordinatorStore,
+    maximumPendingSelections: 4,
+    nowSeconds: () => NOW,
+    randomBytesImpl: () => Buffer.alloc(32, 130),
+    signal: deployment.signal,
+  }), /enumerable data properties/);
+  assert.equal(policyAccessorRead, false);
+  const service = createTestRfqSelectionReservationService({
+    admissionPolicy,
+    capabilityVerifications: data.verifications,
+    coordinatorStore,
+    maximumPendingSelections: 4,
+    nowSeconds: () => NOW,
+    randomBytesImpl: () => Buffer.alloc(32, 131),
+    signal: deployment.signal,
+  });
+  t.after(() => {
+    deployment.abort();
+    try { coordinatorStore.close(); } catch {}
+  });
+  const lease = claimRfqSelectionReservationOwnership(service, deployment.signal);
+  const copiedLease = { ...lease };
+  assert.throws(() => copiedLease.accept({}), /route lease lacks factory provenance/);
+  const extractedAccept = lease.accept;
+  assert.throws(() => extractedAccept({}), /route lease lacks factory provenance/);
+  assert.throws(() => lease.accept({
+    expiresAt: NOW + 60,
+    identityCommitment: id("selection-reservation-identity").toLowerCase(),
+    requestNonce: "17",
+    selection: { ...selection },
+    user: user.address,
+  }), /locally verified blind quote book/);
+  let accessorRead = false;
+  const accessorSelection = {};
+  Object.defineProperty(accessorSelection, "selected", {
+    enumerable: true,
+    get() {
+      accessorRead = true;
+      throw new Error("selection accessor executed");
+    },
+  });
+  assert.throws(() => lease.accept({
+    expiresAt: NOW + 60,
+    identityCommitment: id("selection-reservation-identity").toLowerCase(),
+    requestNonce: "17",
+    selection: accessorSelection,
+    user: user.address,
+  }), /locally verified blind quote book/);
+  assert.equal(accessorRead, false);
+
+  const handoff = lease.accept({
+    expiresAt: NOW + 40,
+    identityCommitment: id("selection-reservation-identity").toLowerCase(),
+    requestNonce: "17",
+    selection,
+    user: user.address,
+  });
+  assert.deepEqual(Object.keys(handoff).sort(), [
+    "expiresAt", "fundingAuthorization", "privateSettlementRequired", "reservationToken",
+    "settlementAuthorization",
+  ].sort());
+  assert.match(handoff.reservationToken, /^0x[0-9a-f]{64}$/);
+  const copiedService = { ...service };
+  assert.throws(() => copiedService.prepare({
+    authorizationExpiresAt: NOW + 30,
+    request: privateRequest,
+    reservationToken: handoff.reservationToken,
+  }), /factory provenance/);
+
+  const griefRequest = {
+    ...privateRequest,
+    beneficiary: "0x6666666666666666666666666666666666666666",
+  };
+  const griefPayload = service.prepare({
+    authorizationExpiresAt: NOW + 25,
+    request: griefRequest,
+    reservationToken: handoff.reservationToken,
+  });
+  const signingPayload = service.prepare({
+    authorizationExpiresAt: NOW + 30,
+    request: privateRequest,
+    reservationToken: handoff.reservationToken,
+  });
+  assert.notEqual(griefPayload.digest, signingPayload.digest);
+  assert.equal(coordinatorStore.getRfqRequest(selection.pricingId), null);
+
+  let requestAccessorRead = false;
+  const accessorRequest = { ...privateRequest };
+  Object.defineProperty(accessorRequest, "beneficiary", {
+    enumerable: true,
+    get() {
+      requestAccessorRead = true;
+      throw new Error("private request accessor executed");
+    },
+  });
+  assert.throws(() => service.prepare({
+    authorizationExpiresAt: NOW + 30,
+    request: accessorRequest,
+    reservationToken: handoff.reservationToken,
+  }), /enumerable data properties/);
+  assert.equal(requestAccessorRead, false);
+
+  const wrongSigner = Wallet.createRandom();
+  const wrongSignature = await wrongSigner.signTypedData(
+    signingPayload.domain,
+    signingPayload.types,
+    signingPayload.message,
+  );
+  assert.throws(() => service.reserve({
+    authorization: signingPayload.message,
+    request: privateRequest,
+    reservationToken: handoff.reservationToken,
+    signature: wrongSignature,
+  }), /signer does not match/);
+  assert.equal(coordinatorStore.getRfqRequest(selection.pricingId), null);
+  assert.equal(coordinatorStore.getSolverCapacity(selection.selected.offer.solver.toLowerCase()), null);
+
+  const extended = buildBlindQuoteSelectionAuthorization({
+    selection,
+    request: privateRequest,
+    authorizationExpiresAt: NOW + 50,
+  });
+  const extendedSignature = await user.signTypedData(
+    extended.domain,
+    extended.types,
+    extended.message,
+  );
+  assert.throws(() => service.reserve({
+    authorization: extended.message,
+    request: privateRequest,
+    reservationToken: handoff.reservationToken,
+    signature: extendedSignature,
+  }), /outlives the reservation ceremony/);
+  assert.equal(coordinatorStore.getRfqRequest(selection.pricingId), null);
+
+  const signature = await user.signTypedData(
+    signingPayload.domain,
+    signingPayload.types,
+    signingPayload.message,
+  );
+  const input = {
+    authorization: signingPayload.message,
+    request: privateRequest,
+    reservationToken: handoff.reservationToken,
+    signature,
+  };
+  const reserved = service.reserve(input);
+  assert.deepEqual(service.reserve(input), reserved);
+  assert.equal(reserved.expiresAt, NOW + 30);
+  assert.equal(coordinatorStore.getFirmOffer(selection.selected.offer.offerId).state, "ACTIVE");
+  assert.throws(() => service.prepare({
+    authorizationExpiresAt: NOW + 30,
+    request: privateRequest,
+    reservationToken: handoff.reservationToken,
+  }), /already durable/);
+  const status = service.status();
+  assert.equal(JSON.stringify(status).includes(handoff.reservationToken), false);
+  assert.equal(status.selectionsAccepted, 1);
+  assert.equal(status.signingPayloadsPrepared, 2);
+  assert.equal(status.reservationsCompleted, 1);
+  assert.equal(status.requestsFailed, 4);
+  assert.equal(status.inMemoryReservations, 1);
+  coordinatorStore.getFirmOffer = () => ({ state: "ACTIVE" });
+  assert.throws(() => service.reserve(input), /unmodified coordinator store methods/);
+  delete coordinatorStore.getFirmOffer;
+  assert.deepEqual(service.reserve(input), reserved);
+  deployment.abort();
+  assert.equal(service.status().state, "stopped");
+  assert.throws(() => service.reserve(input), /stopped/);
+});
+
+test("reserves BIT-to-Lightning output and routing headroom through the same selection handoff", async (t) => {
+  const data = await collectedBlindBook({ pricingRequest: bitToLightningPricing });
+  const selection = selectBlindQuote(data.book, data.book.offers[0].offer.offerId);
+  const coordinatorStore = await CoordinatorStore.open(":memory:", { allowMemory: true });
+  const deployment = new AbortController();
+  const service = createTestRfqSelectionReservationService({
+    admissionPolicy,
+    capabilityVerifications: data.verifications,
+    coordinatorStore,
+    maximumPendingSelections: 4,
+    nowSeconds: () => NOW,
+    randomBytesImpl: () => Buffer.alloc(32, 132),
+    signal: deployment.signal,
+  });
+  t.after(() => {
+    deployment.abort();
+    try { coordinatorStore.close(); } catch {}
+  });
+  const lease = claimRfqSelectionReservationOwnership(service, deployment.signal);
+  const handoff = lease.accept({
+    expiresAt: NOW + 60,
+    identityCommitment: id("selection-reservation-bit-to-lightning-identity").toLowerCase(),
+    requestNonce: "19",
+    selection,
+    user: user.address,
+  });
+  const signingPayload = service.prepare({
+    authorizationExpiresAt: NOW + 30,
+    request: bitToLightningRequest,
+    reservationToken: handoff.reservationToken,
+  });
+  const signature = await user.signTypedData(
+    signingPayload.domain,
+    signingPayload.types,
+    signingPayload.message,
+  );
+  const ack = service.reserve({
+    authorization: signingPayload.message,
+    request: bitToLightningRequest,
+    reservationToken: handoff.reservationToken,
+    signature,
+  });
+  assert.equal(ack.status, "reserved");
+  const firm = coordinatorStore.getFirmOffer(selection.selected.offer.offerId);
+  assert.equal(firm.state, "ACTIVE");
+  assert.equal(
+    firm.lightningAmountSats,
+    String(selection.selected.offer.lightningAmountSats + selection.selected.offer.maxRoutingFeeSats),
+  );
+  assert.equal(firm.bitAmountWei, "0");
 });
 
 test("composes quote ingress through the owned RFQ service and reviewed evidence", async (t) => {
@@ -1297,6 +1627,7 @@ test("fails closed on substituted, mutable, or stale ingress-reader evidence", a
 test("keeps quote ingress factories, execution modes, and methods provenance-bound", async (t) => {
   const data = await fixture();
   const store = await quoteIngressStore();
+  const coordinatorStore = await CoordinatorStore.open(":memory:", { allowMemory: true });
   const deployment = new AbortController();
   const productionClient = createRfqDeliveryClient({
     paths: data.paths,
@@ -1321,15 +1652,40 @@ test("keeps quote ingress factories, execution modes, and methods provenance-bou
     )),
     signal: deployment.signal,
   });
+  const productionSelectionReservation = createRfqSelectionReservationService({
+    admissionPolicy,
+    capabilityVerifications: data.verifications,
+    coordinatorStore,
+    maximumPendingSelections: quoteIngressPolicy.maximumLiveRequests,
+    signal: deployment.signal,
+  });
+  const testSelectionReservation = createTestRfqSelectionReservationService({
+    admissionPolicy,
+    capabilityVerifications: data.verifications,
+    coordinatorStore,
+    maximumPendingSelections: quoteIngressPolicy.maximumLiveRequests,
+    nowSeconds: () => NOW,
+    randomBytesImpl: () => Buffer.alloc(32, 2),
+    signal: deployment.signal,
+  });
   const testReader = createTestRfqQuoteIngressReader({ read: async () => null });
   t.after(() => {
     deployment.abort();
     try { store.close(); } catch {}
+    try { coordinatorStore.close(); } catch {}
   });
+  assert.throws(() => createRfqQuoteIngressRoute({
+    policy: quoteIngressPolicy,
+    quoteReader: productionReader,
+    replayStore: store,
+    selectionReservation: testSelectionReservation,
+    signal: deployment.signal,
+  }), /matching factory-created selection reservation service/);
   assert.throws(() => createRfqQuoteIngressRoute({
     policy: quoteIngressPolicy,
     quoteReader: testReader,
     replayStore: store,
+    selectionReservation: productionSelectionReservation,
     signal: deployment.signal,
   }), /matching factory-created quote reader/);
   assert.throws(() => createTestRfqQuoteIngressRoute({
@@ -1338,18 +1694,21 @@ test("keeps quote ingress factories, execution modes, and methods provenance-bou
     quoteReader: productionReader,
     randomBytesImpl: () => Buffer.alloc(32, 1),
     replayStore: store,
+    selectionReservation: productionSelectionReservation,
     signal: deployment.signal,
   }), /matching factory-created quote reader/);
   assert.throws(() => createRfqQuoteIngressRoute({
     policy: quoteIngressPolicy,
     quoteReader: productionReader,
     replayStore: store,
+    selectionReservation: productionSelectionReservation,
     signal: new AbortController().signal,
   }), /share one deployment lifecycle/);
   const route = createRfqQuoteIngressRoute({
     policy: quoteIngressPolicy,
     quoteReader: productionReader,
     replayStore: store,
+    selectionReservation: productionSelectionReservation,
     signal: deployment.signal,
   });
   await assert.rejects(productionReader.read({}), /route-owned/);
@@ -1363,6 +1722,7 @@ test("keeps quote ingress factories, execution modes, and methods provenance-bou
     policy: quoteIngressPolicy,
     quoteReader: productionReader,
     replayStore: store,
+    selectionReservation: productionSelectionReservation,
     signal: deployment.signal,
   }), /already bound/);
 });

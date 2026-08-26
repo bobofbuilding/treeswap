@@ -26,7 +26,7 @@ The prototype assumes a business par value of **1 BIT = 100 sats**. This value i
 - Deterministic unsigned Sepolia deployment preparation, a short-lived signed two-provider preflight, and signed finalized receipt reconstruction in [`docs/CLOSED_TESTNET_DEPLOYMENT.md`](docs/CLOSED_TESTNET_DEPLOYMENT.md) and [`docs/CLOSED_TESTNET_DEPLOYMENT_POSTFLIGHT.md`](docs/CLOSED_TESTNET_DEPLOYMENT_POSTFLIGHT.md)
 - Provider- and reviewer-signed deployment-manifest promotion in [`docs/DEPLOYMENT_PROMOTION.md`](docs/DEPLOYMENT_PROMOTION.md)
 - Deterministic cross-chain clock and payment-authorization policy in [`docs/SETTLEMENT_POLICY.md`](docs/SETTLEMENT_POLICY.md)
-- Multi-solver signed RFQ validation, deterministic received-set policy, authenticated multipath delivery, authority-free quote ingress with a lifecycle-bound concrete reader, durable replay/quota control, and pre-disclosure reservation in [`docs/RFQ_POLICY.md`](docs/RFQ_POLICY.md), [`docs/RFQ_DELIVERY.md`](docs/RFQ_DELIVERY.md), and [`docs/RFQ_QUOTE_INGRESS.md`](docs/RFQ_QUOTE_INGRESS.md)
+- Multi-solver signed RFQ validation, deterministic received-set policy, authenticated multipath delivery, authority-free quote ingress with a lifecycle-bound concrete reader, durable replay/quota control, and one-use user-signed selection-to-reservation handoff in [`docs/RFQ_POLICY.md`](docs/RFQ_POLICY.md), [`docs/RFQ_DELIVERY.md`](docs/RFQ_DELIVERY.md), and [`docs/RFQ_QUOTE_INGRESS.md`](docs/RFQ_QUOTE_INGRESS.md)
 - Canonical integer units and BIT-only fee policy in [`docs/UNITS_AND_ROUNDING.md`](docs/UNITS_AND_ROUNDING.md) and [`docs/FEES.md`](docs/FEES.md)
 - Adversarial design review and launch gates in [`docs/THREAT_MODEL.md`](docs/THREAT_MODEL.md)
 - Phase-by-phase evidence ledger in [`docs/LAUNCH_CHECKLIST.md`](docs/LAUNCH_CHECKLIST.md)
@@ -102,7 +102,7 @@ Start with the ordered [TreeSwap adoption handoff](docs/ADOPTION_HANDOFF.md). It
 - Independently rebuild and review the closed Sepolia plan, deploy its exact transactions through hardware-backed operators, and capture matching finalized v2 TreeSwap manifests proving reconciled zero balances before test inventory
 - Deploy the reviewed same-process recovery operator launcher with real retained custody, concrete runtime adapters, persistent storage, and independently operated providers; then qualify its exact restored-database job set through host-restart, backup/restore, safety-monitoring, redundant-guardian, and external-alert drills
 - Deploy the persistent activation coordinator with independently operated runtime reconciliation signers; never restore funding authority from serialized activation output
-- Deploy the implemented solver endpoint, private-packet, capacity-reader, and dual-route daemon-evidence protocols plus independent quote-delivery paths
+- Deploy the implemented quote reader and selection-reservation service behind separate reviewed public/private HTTPS adapters, connect the retained reservation to the selected-solver packet path, and deploy the solver endpoint, capacity-reader, dual-route daemon-evidence protocols, and independent quote-delivery paths
 - Create and mature the BIT/WBTC pool in observation-only mode, then independently review its exact pool/feed/quoter policy and the other executable BIT venues before it can help bound funded quotes
 - Bridge-escrow wallet integration with exact intent authorization and explicit approval boundaries
 - Keep email delivery disabled; a later mail release requires ownership verification, unsubscribe, rate limits, auditing, and sender authentication

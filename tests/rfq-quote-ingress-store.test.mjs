@@ -78,8 +78,12 @@ test("persists opaque one-use quote sessions across restart", async (t) => {
   assert.notEqual(ready.sessionDigest, sessionToken);
   const selectionClaim = store.claimSelection({ now: NOW + 2, sessionToken });
   assert.equal(selectionClaim.status, "selection-claimed");
-  assert.equal(rfqQuoteIngressSelectionBinding(selectionClaim).store, store);
-  assert.equal(rfqQuoteIngressSelectionBinding(selectionClaim).sessionDigest, ready.sessionDigest);
+  const selectionBinding = rfqQuoteIngressSelectionBinding(selectionClaim);
+  assert.equal(selectionBinding.store, store);
+  assert.equal(selectionBinding.sessionDigest, ready.sessionDigest);
+  assert.equal(selectionBinding.requestNonce, "1");
+  assert.match(selectionBinding.identityCommitment, /^0x[0-9a-f]{64}$/);
+  assert.notEqual(selectionBinding.identityCommitment, IDENTITY.toLowerCase());
   assert.equal(store.claimSelection({ now: NOW + 2, sessionToken }), null);
   assert.deepEqual(store.status({ now: NOW + 2 }), {
     schema: RFQ_QUOTE_INGRESS_STORE_SCHEMA,
