@@ -119,6 +119,9 @@ import {
   createContractIntentWalletOwnershipServiceForTests,
 } from "../lib/contract-intent-wallet-ownership.mjs";
 import {
+  ContractIntentWalletAbuseStore,
+} from "../lib/contract-intent-wallet-abuse-store.mjs";
+import {
   CONTRACT_INTENT_WALLET_SESSION_QUERY,
   createContractIntentWalletSiweEdgeForTests,
 } from "../lib/contract-intent-wallet-siwe-edge.mjs";
@@ -3072,9 +3075,16 @@ for (const direction of ["lightning-to-bit", "bit-to-lightning"]) {
     });
     const edgeSessionToken = direction === "lightning-to-bit" ? "cd".repeat(32) : "de".repeat(32);
     const edgeDatabase = walletEdgeSessionDatabase({ sessionToken: edgeSessionToken });
+    const edgeAbusePath = join(directory, `wallet-siwe-edge-abuse-${direction}.sqlite`);
+    const edgeAbuseStore = await ContractIntentWalletAbuseStore.open({
+      allowMemory: false,
+      initialize: true,
+      path: edgeAbusePath,
+    });
     let edgeClock = NOW;
     assert.throws(
       () => createContractIntentWalletSiweEdgeForTests({
+        abuseStore: edgeAbuseStore,
         clientOrigin: "https://treeswap.vercel.app",
         clock: () => edgeClock,
         database: edgeDatabase,
@@ -3089,6 +3099,7 @@ for (const direction of ["lightning-to-bit", "bit-to-lightning"]) {
     );
     assert.throws(
       () => createContractIntentWalletSiweEdgeForTests({
+        abuseStore: edgeAbuseStore,
         clientOrigin: "https://treeswap.vercel.app",
         clock: () => edgeClock,
         database: edgeDatabase,
@@ -3102,6 +3113,7 @@ for (const direction of ["lightning-to-bit", "bit-to-lightning"]) {
       /requester private key and response public key/,
     );
     const edgeCore = createContractIntentWalletSiweEdgeForTests({
+      abuseStore: edgeAbuseStore,
       clientOrigin: "https://treeswap.vercel.app",
       clock: () => edgeClock,
       database: edgeDatabase,
@@ -3301,6 +3313,7 @@ for (const direction of ["lightning-to-bit", "bit-to-lightning"]) {
     );
     assert.throws(
       () => createContractIntentWalletSiweEdgeForTests({
+        abuseStore: edgeAbuseStore,
         clientOrigin: "https://treeswap.vercel.app",
         clock: () => NOW,
         database: edgeDatabase,
@@ -3311,7 +3324,7 @@ for (const direction of ["lightning-to-bit", "bit-to-lightning"]) {
         responsePublicKey: gatewayResponseKeys.publicKey,
         signal: edgeDeployment.signal,
       }),
-      /already belongs to a SIWE edge/,
+      /already belongs to a SIWE edge|unclaimed active store lifecycle/,
     );
     const edgeClaimBody = {
       ownershipHandle: edgePreparation.ownershipHandle,
@@ -3459,6 +3472,10 @@ for (const direction of ["lightning-to-bit", "bit-to-lightning"]) {
     assert.equal(edgeStatus.edge.handleTokensInStatus, false);
     assert.equal(edgeStatus.edge.csrfTokensInStatus, false);
     assert.equal(edgeStatus.edge.gatewayClaimTokensInStatus, false);
+    assert.equal(edgeStatus.edge.durableAuthenticatedSessionRateLimit, true);
+    assert.equal(edgeStatus.edge.durableRateAcceptedRequests, 8);
+    assert.equal(edgeStatus.edge.durableRateRejectedRequests >= 1, true);
+    assert.equal(edgeStatus.edge.haltedOnDurableAbuseStore, false);
     assert.equal(edgeStatus.preSessionRejected >= 1, true);
     assert.equal(edgeStatus.rateRejected >= 2, true);
     assert.equal(edgeStatus.replicaPolicy, "single-active-replica-owner-controlled-shared-volume-fence");
@@ -3505,6 +3522,11 @@ for (const direction of ["lightning-to-bit", "bit-to-lightning"]) {
     }
     edgeDeployment.abort();
     assert.equal(edge.status().state, "stopped");
+    edgeAbuseStore.close();
+    const edgeAbuseBytes = await readFile(edgeAbusePath);
+    assert.equal(edgeAbuseBytes.includes(Buffer.from(edgeSessionToken, "utf8")), false);
+    assert.equal(edgeAbuseBytes.includes(Buffer.from(user.address.slice(2), "utf8")), false);
+    assert.equal(edgeAbuseBytes.includes(Buffer.from(preflight.requestDigest.slice(2), "utf8")), false);
     if (direction === "lightning-to-bit") {
       assert.equal(await edgeFence.release(), true);
       const replacementDeployment = new AbortController();

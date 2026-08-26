@@ -118,6 +118,7 @@ jobs:
       - run: node --check lib/solver-endpoint-transport.mjs
       - run: node --check lib/rfq-delivery.mjs
       - run: node --check lib/rfq-delivery-service.mjs
+      - run: node --check lib/contract-intent-wallet-abuse-store.mjs
       - run: node --check lib/blind-rfq.mjs
       - run: node --check lib/blind-quote-preview.mjs
       - run: node --check lib/rfq-quote-ingress-store.mjs
