@@ -3,6 +3,7 @@ import { createHash, generateKeyPairSync } from "node:crypto";
 import test from "node:test";
 import {
   CONTRACT_INTENT_WALLET_SESSION_QUERY,
+  CONTRACT_INTENT_WALLET_SESSION_REQUESTER_KEY_HEADER,
   ContractIntentWalletSessionReaderFatalError,
   assertContractIntentWalletSessionReaderLifecycle,
   claimContractIntentWalletSessionReaderEdge,
@@ -53,12 +54,14 @@ function sessionDatabase() {
 
 function strictProviderRequest(body, overrides = {}) {
   const bytes = Buffer.from(body, "utf8");
+  const requesterKeyId = JSON.parse(body).requesterKeyId;
   return new Request("https://wallet-session.example/api/internal/wallet-session-read", {
     method: "POST",
     headers: {
       "cache-control": "no-store",
       "content-length": String(bytes.length),
       "content-type": "application/json",
+      [CONTRACT_INTENT_WALLET_SESSION_REQUESTER_KEY_HEADER]: requesterKeyId,
       ...overrides.headers,
     },
     body: bytes,
@@ -93,8 +96,10 @@ function fixture({ transportHook = null } = {}) {
     signal: deployment.signal,
   });
   const requestBodies = [];
+  const requestHeaders = [];
   const forward = async (url, options) => {
     requestBodies.push(String(options.body));
+    requestHeaders.push(Object.fromEntries(new Headers(options.headers)));
     return provider.handle(new Request(url, options));
   };
   const reader = createContractIntentWalletSessionReaderForTests({
@@ -116,6 +121,7 @@ function fixture({ transportHook = null } = {}) {
     provider,
     reader,
     requestBodies,
+    requestHeaders,
     requesterKeys,
     responseKeys,
   };
@@ -152,6 +158,10 @@ test("reads active and inactive D1 sessions without sending the bearer token", a
   ]);
   assert.equal(item.requestBodies.length, 2);
   assert.equal(JSON.parse(item.requestBodies[0]).tokenHash, TOKEN_HASH);
+  assert.equal(
+    item.requestHeaders[0][CONTRACT_INTENT_WALLET_SESSION_REQUESTER_KEY_HEADER],
+    JSON.parse(item.requestBodies[0]).requesterKeyId,
+  );
   assert.equal(item.requestBodies.some((body) => body.includes(RAW_TOKEN)), false);
   assert.equal(item.reader.status().state, "active");
   assert.equal(item.reader.status().activeReads, 1);
@@ -182,6 +192,16 @@ test("accepts harmless signed read replay but rejects cookies and malformed fram
     headers: { "content-length": "1" },
   }));
   assert.equal(wrongLength.status, 400);
+  const missingKeyHeaderRequest = strictProviderRequest(signedBody);
+  missingKeyHeaderRequest.headers.delete(CONTRACT_INTENT_WALLET_SESSION_REQUESTER_KEY_HEADER);
+  const missingKeyHeader = await item.provider.handle(missingKeyHeaderRequest);
+  assert.equal(missingKeyHeader.status, 400);
+  const wrongKeyHeader = await item.provider.handle(strictProviderRequest(signedBody, {
+    headers: {
+      [CONTRACT_INTENT_WALLET_SESSION_REQUESTER_KEY_HEADER]: `sha256:${"f".repeat(64)}`,
+    },
+  }));
+  assert.equal(wrongKeyHeader.status, 400);
   assert.equal(item.provider.status().state, "active");
   item.deployment.abort();
 });

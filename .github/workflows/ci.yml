@@ -120,6 +120,7 @@ jobs:
       - run: node --check lib/rfq-delivery-service.mjs
       - run: node --check lib/contract-intent-wallet-abuse-store.mjs
       - run: node --check lib/contract-intent-wallet-session-reader.mjs
+      - run: node --check lib/contract-intent-wallet-session-route.mjs
       - run: node --check lib/contract-intent-wallet-siwe-edge.mjs
       - run: node --check tests/fixtures/contract-intent-wallet-edge-abrupt-kill.mjs
       - run: node --check infra/coordinator/wallet-abuse-disk-full-smoke.mjs
