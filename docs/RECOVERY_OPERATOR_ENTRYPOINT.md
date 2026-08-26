@@ -27,11 +27,12 @@ For every retained policy the operator must construct:
   clock, cryptographic entropy, bounded complete response, and exact private
   port-443 observer origin;
 - a `createAuthenticatedPrivatePacketClient` result using the module-owned fixed
-  Node HTTPS transport;
+  Node HTTPS transport, system clock, and cryptographic request-ID source, with
+  a requester key distinct from the provider key;
 - `createSolverDaemonRecoveryEvidenceControls`, using two distinct private
-  evidence routes through the module-owned fixed Node HTTPS transport and
-  exposing only reservation observation, EVM-claim authorization, and terminal
-  asset verification;
+  evidence routes through the module-owned fixed Node HTTPS transport, system
+  clock, and cryptographic request-ID source, and exposing only reservation
+  observation, EVM-claim authorization, and terminal asset verification;
 - a `createCoordinatorLightningActionConfig` result bound to the module-owned
   fixed Node HTTPS transport and one credential-free private port-443 adapter
   origin, used only to reconcile an already-created Lightning action; and

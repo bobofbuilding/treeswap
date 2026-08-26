@@ -27,10 +27,16 @@ import {
 import {
   SOLVER_DAEMON_EVIDENCE_POLICY_SCHEMA,
 } from "../lib/solver-daemon-evidence.mjs";
-import { createSolverDaemonEvidenceControls } from "../lib/solver-daemon-evidence-client.mjs";
+import {
+  createSolverDaemonEvidenceControls,
+  createTestSolverDaemonEvidenceControls,
+  isProductionSolverDaemonEvidenceControls,
+} from "../lib/solver-daemon-evidence-client.mjs";
 import {
   authenticatedPrivatePacketClientTransportMode,
   createAuthenticatedPrivatePacketClient,
+  createTestAuthenticatedPrivatePacketClient,
+  isProductionAuthenticatedPrivatePacketClient,
 } from "../lib/solver-daemon-runtime.mjs";
 import {
   SOLVER_CAPABILITY_TYPES,
@@ -272,11 +278,15 @@ function runtime(policy = evidencePolicy(), { evidenceRequestImpl, packetRequest
     minimumEvmSafetySeconds: 600,
     requestTtlSeconds: 15,
     timeoutMs: 1_000,
-    nowSeconds: () => NOW,
-    randomBytesImpl: () => Buffer.alloc(32, 0x93),
   };
-  if (packetRequestImpl !== undefined) packetClientInput.requestImpl = packetRequestImpl;
-  const packetClient = createAuthenticatedPrivatePacketClient(packetClientInput);
+  const packetClient = packetRequestImpl === undefined
+    ? createAuthenticatedPrivatePacketClient(packetClientInput)
+    : createTestAuthenticatedPrivatePacketClient({
+      ...packetClientInput,
+      requestImpl: packetRequestImpl,
+      nowSeconds: () => NOW,
+      randomBytesImpl: () => Buffer.alloc(32, 0x93),
+    });
   const controlsInput = {
     policy,
     routes: {
@@ -285,13 +295,17 @@ function runtime(policy = evidencePolicy(), { evidenceRequestImpl, packetRequest
     },
     requesterPrivateKey: evidenceRequesterKeys.privateKey,
     requesterKeyId: "coordinator-evidence-one",
-    nowSeconds: () => NOW,
-    randomBytesImpl: () => Buffer.alloc(32, 0x94),
     requestTtlSeconds: 15,
     timeoutMs: 1_000,
   };
-  if (evidenceRequestImpl !== undefined) controlsInput.requestImpl = evidenceRequestImpl;
-  const controls = createSolverDaemonEvidenceControls(controlsInput);
+  const controls = evidenceRequestImpl === undefined
+    ? createSolverDaemonEvidenceControls(controlsInput)
+    : createTestSolverDaemonEvidenceControls({
+      ...controlsInput,
+      requestImpl: evidenceRequestImpl,
+      nowSeconds: () => NOW,
+      randomBytesImpl: () => Buffer.alloc(32, 0x94),
+    });
   const lightning = createCoordinatorLightningActionConfig({
     privateKey: lightningActionKeys.privateKey,
     keyId: "coordinator-action-one",
@@ -354,6 +368,8 @@ test("accepts only the complete original operator runtime and matching evidence 
   assert.equal(solverCapabilityClientTransportMode(client), "fixed-node-https");
   assert.throws(() => solverCapabilityClientTransportMode({ ...client }), /factory provenance/);
   const activeRuntime = runtime(policy);
+  assert.equal(isProductionAuthenticatedPrivatePacketClient(activeRuntime.packetClient), true);
+  assert.equal(isProductionSolverDaemonEvidenceControls(activeRuntime.controls), true);
   assert.equal(activeRuntime.lightning.requestImpl, fixedLightningAdapterHttpsRequest);
   assert.equal(activeRuntime.evm.rpcRequestImpl, fixedEvmRpcHttpsRequest);
   assert.equal(activeRuntime.evm.reconciliationProviders[0].rpcRequestImpl, fixedEvmRpcHttpsRequest);

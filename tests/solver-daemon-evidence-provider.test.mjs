@@ -8,7 +8,7 @@ import test from "node:test";
 import { Wallet, id } from "ethers";
 import {
   buildSolverDaemonEvidenceRequest,
-  createSolverDaemonEvidenceControls,
+  createTestSolverDaemonEvidenceControls,
   signSolverDaemonEvidenceRequest,
 } from "../lib/solver-daemon-evidence-client.mjs";
 import {
@@ -608,7 +608,7 @@ test("two independent provider routes integrate with the original dual-route cli
     replayStore: securityStore,
   });
   let nonce = 0;
-  const controls = createSolverDaemonEvidenceControls({
+  const controls = createTestSolverDaemonEvidenceControls({
     policy: policy(),
     routes: {
       lightningOperator: "https://lightning-operator.internal",

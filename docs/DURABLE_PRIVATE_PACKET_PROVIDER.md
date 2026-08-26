@@ -25,6 +25,14 @@ A concurrent duplicate, restart replay, copied claim, copied store or reader, st
 
 The replay database stores request identifiers, expiry, state, and clock high-water metadata. It does not store the packet, invoice, preimage, response, signature, intent, settlement, quote, or wallet address.
 
+The official requester has separate production and test factories. Production
+owns the fixed Node HTTPS transport, system clock, and cryptographic request-ID
+source, accepts no dependency-injection fields, and rejects requester/provider
+key reuse. The injected factory is explicitly test-only and cannot enter either
+official operator runtime. This protects request freshness and replay identity;
+it does not prove the deployed provider, TLS identity, secret scope, or durable
+storage.
+
 ## Deployment gates
 
 Local tests prove code behavior, not operator independence or durable operations. Before testnet value moves, deploy the reviewed handler with:

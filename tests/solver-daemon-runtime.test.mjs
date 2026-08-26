@@ -20,7 +20,9 @@ import {
 import {
   authenticatedPrivatePacketClientTransportMode,
   createAuthenticatedPrivatePacketClient,
+  createTestAuthenticatedPrivatePacketClient,
   executeSolverDaemonStep,
+  isProductionAuthenticatedPrivatePacketClient,
 } from "../lib/solver-daemon-runtime.mjs";
 import { nextSolverDaemonStep } from "../lib/solver-daemon-planner.mjs";
 import { buildSignedPrivatePacketResponse } from "../lib/solver-private-packet.mjs";
@@ -105,7 +107,7 @@ function claimTemplate(value) {
 function packetClient(value) {
   let reads = 0;
   const consumedRequests = new Set();
-  const authenticated = createAuthenticatedPrivatePacketClient({
+  const authenticated = createTestAuthenticatedPrivatePacketClient({
     providerOrigin: "https://packet-provider.internal",
     requesterPrivateKey: packetRequesterKeys.privateKey,
     requesterKeyId: "daemon-requester-test",
@@ -360,21 +362,59 @@ test("brands fixed and injected private-packet transports without transferable p
     minimumEvmSafetySeconds: 600,
     requestTtlSeconds: 15,
     timeoutMs: 1_000,
-    nowSeconds: () => NOW,
-    randomBytesImpl: randomSource(),
   };
   const fixed = createAuthenticatedPrivatePacketClient(input);
   assert.equal(authenticatedPrivatePacketClientTransportMode(fixed), "fixed-node-https");
+  assert.equal(isProductionAuthenticatedPrivatePacketClient(fixed), true);
   assert.throws(
     () => authenticatedPrivatePacketClientTransportMode({ ...fixed }),
     /factory provenance/,
   );
 
-  const injected = createAuthenticatedPrivatePacketClient({
+  const injected = createTestAuthenticatedPrivatePacketClient({
     ...input,
+    nowSeconds: () => NOW,
+    randomBytesImpl: randomSource(),
     requestImpl: async () => { throw new Error("test-only transport"); },
   });
   assert.equal(authenticatedPrivatePacketClientTransportMode(injected), "injected-test");
+  assert.equal(isProductionAuthenticatedPrivatePacketClient(injected), false);
+  assert.throws(
+    () => createAuthenticatedPrivatePacketClient({
+      ...input,
+      nowSeconds: () => NOW,
+      randomBytesImpl: randomSource(),
+    }),
+    /fields are not exact/,
+  );
+  assert.throws(
+    () => createAuthenticatedPrivatePacketClient({
+      ...input,
+      providerPublicKey: packetRequesterKeys.publicKey,
+    }),
+    /keys must be separate/,
+  );
+  let getterCalls = 0;
+  const accessorInput = { ...input };
+  Object.defineProperty(accessorInput, "providerOrigin", {
+    enumerable: true,
+    get() {
+      getterCalls += 1;
+      return "https://packet-provider.internal";
+    },
+  });
+  assert.throws(
+    () => createAuthenticatedPrivatePacketClient(accessorInput),
+    /enumerable data properties/,
+  );
+  assert.equal(getterCalls, 0);
+  assert.throws(
+    () => createAuthenticatedPrivatePacketClient(Object.assign(
+      Object.create({ requestImpl: async () => {} }),
+      input,
+    )),
+    /plain data object/,
+  );
 });
 
 function hexQuantity(value) {

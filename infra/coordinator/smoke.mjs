@@ -10,7 +10,10 @@ import {
   solverDaemonEvidencePolicyDigest,
   verifySolverDaemonEvidence,
 } from "../../lib/solver-daemon-evidence.mjs";
-import { createAuthenticatedPrivatePacketClient, executeSolverDaemonStep } from "../../lib/solver-daemon-runtime.mjs";
+import {
+  createTestAuthenticatedPrivatePacketClient,
+  executeSolverDaemonStep,
+} from "../../lib/solver-daemon-runtime.mjs";
 import { buildSignedPrivatePacketResponse } from "../../lib/solver-private-packet.mjs";
 import { Wallet, id } from "ethers";
 
@@ -120,7 +123,7 @@ const evidencePolicy = {
   maxClockSkewSeconds: 2,
 };
 const consumedPacketRequests = new Set();
-const packetClient = createAuthenticatedPrivatePacketClient({
+const packetClient = createTestAuthenticatedPrivatePacketClient({
   providerOrigin: "https://private-packet-provider.internal",
   requesterPrivateKey: packetRequesterKeys.privateKey,
   requesterKeyId: "coordinator-regtest",
@@ -129,6 +132,7 @@ const packetClient = createAuthenticatedPrivatePacketClient({
   minimumEvmSafetySeconds: 600,
   requestTtlSeconds: 15,
   nowSeconds: () => Math.floor(Date.now() / 1_000),
+  randomBytesImpl: randomBytes,
   requestImpl: async (_url, options) => {
     const request = JSON.parse(options.body);
     const servedAt = Math.floor(Date.now() / 1_000);

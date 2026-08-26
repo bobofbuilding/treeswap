@@ -20,10 +20,12 @@ must contain all of the following original same-process objects:
   entropy, bounds the complete response, and requires one exact private
   port-443 observer origin;
 - a `createAuthenticatedPrivatePacketClient` result using the module-owned fixed
-  Node HTTPS transport;
+  Node HTTPS transport, system clock, and cryptographic request-ID source, with
+  a requester key distinct from the provider key;
 - a `createSolverDaemonEvidenceControls` result using two distinct private
-  HTTPS routes, the module-owned fixed Node HTTPS transport, and a policy
-  digest that exactly matches the policy being prepared;
+  HTTPS routes, the module-owned fixed Node HTTPS transport, system clock,
+  cryptographic request-ID source, and a policy digest that exactly matches the
+  policy being prepared;
 - a `createCoordinatorLightningActionConfig` result for one credential-free
   private HTTPS Lightning-adapter origin on port 443, one private Ed25519
   authorization-key handle, and the module-owned fixed Node HTTPS transport;

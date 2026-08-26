@@ -35,6 +35,8 @@ import {
 import {
   createSolverDaemonEvidenceControls,
   createSolverDaemonRecoveryEvidenceControls,
+  createTestSolverDaemonRecoveryEvidenceControls,
+  isProductionSolverDaemonRecoveryEvidenceControls,
   isSolverDaemonEvidenceControls,
   isSolverDaemonRecoveryEvidenceControls,
   solverDaemonRecoveryEvidenceControlsPolicyDigest,
@@ -46,6 +48,8 @@ import {
 import {
   authenticatedPrivatePacketClientTransportMode,
   createAuthenticatedPrivatePacketClient,
+  createTestAuthenticatedPrivatePacketClient,
+  isProductionAuthenticatedPrivatePacketClient,
 } from "../lib/solver-daemon-runtime.mjs";
 import {
   SOLVER_CAPABILITY_TYPES,
@@ -124,13 +128,17 @@ function recoveryControls(policy, requestImpl = undefined) {
     },
     requesterPrivateKey: evidenceRequesterKeys.privateKey,
     requesterKeyId: "coordinator-recovery-evidence-one",
-    nowSeconds: () => NOW,
-    randomBytesImpl: () => Buffer.alloc(32, 0x81),
     requestTtlSeconds: 15,
     timeoutMs: 1_000,
   };
-  if (requestImpl !== undefined) input.requestImpl = requestImpl;
-  return createSolverDaemonRecoveryEvidenceControls(input);
+  return requestImpl === undefined
+    ? createSolverDaemonRecoveryEvidenceControls(input)
+    : createTestSolverDaemonRecoveryEvidenceControls({
+      ...input,
+      requestImpl,
+      nowSeconds: () => NOW,
+      randomBytesImpl: () => Buffer.alloc(32, 0x81),
+    });
 }
 
 function activeControls(policy) {
@@ -142,9 +150,6 @@ function activeControls(policy) {
     },
     requesterPrivateKey: evidenceRequesterKeys.privateKey,
     requesterKeyId: "coordinator-active-evidence-one",
-    requestImpl: async () => { throw new Error("evidence route must not run during composition"); },
-    nowSeconds: () => NOW,
-    randomBytesImpl: () => Buffer.alloc(32, 0x82),
     requestTtlSeconds: 15,
     timeoutMs: 1_000,
   });
@@ -160,11 +165,15 @@ function recoveryRuntime(policy = evidencePolicy(), { evidenceRequestImpl, packe
     minimumEvmSafetySeconds: 600,
     requestTtlSeconds: 15,
     timeoutMs: 1_000,
-    nowSeconds: () => NOW,
-    randomBytesImpl: () => Buffer.alloc(32, 0x83),
   };
-  if (packetRequestImpl !== undefined) packetClientInput.requestImpl = packetRequestImpl;
-  const packetClient = createAuthenticatedPrivatePacketClient(packetClientInput);
+  const packetClient = packetRequestImpl === undefined
+    ? createAuthenticatedPrivatePacketClient(packetClientInput)
+    : createTestAuthenticatedPrivatePacketClient({
+      ...packetClientInput,
+      requestImpl: packetRequestImpl,
+      nowSeconds: () => NOW,
+      randomBytesImpl: () => Buffer.alloc(32, 0x83),
+    });
   const lightning = createCoordinatorLightningActionConfig({
     privateKey: lightningActionKeys.privateKey,
     keyId: "coordinator-recovery-action-one",
@@ -356,6 +365,7 @@ test("exposes only provenance-bound recovery evidence controls", () => {
   assert.deepEqual(Object.keys(controls).sort(), ["authorizeEvmClaim", "observeReservation", "verifyAssets"]);
   assert.equal(Object.hasOwn(controls, "authorizeLightning"), false);
   assert.equal(isSolverDaemonRecoveryEvidenceControls(controls), true);
+  assert.equal(isProductionSolverDaemonRecoveryEvidenceControls(controls), true);
   assert.equal(isSolverDaemonEvidenceControls(controls), false);
   assert.equal(
     solverDaemonRecoveryEvidenceControlsPolicyDigest(controls),
@@ -373,6 +383,7 @@ test("accepts only a complete recovery-only runtime and an exact reviewed policy
     authenticatedPrivatePacketClientTransportMode(runtime.packetClient),
     "fixed-node-https",
   );
+  assert.equal(isProductionAuthenticatedPrivatePacketClient(runtime.packetClient), true);
   assert.throws(() => createCoordinatorRecoveryOperatorRuntime({
     ...runtime,
     controls: activeControls(policy),

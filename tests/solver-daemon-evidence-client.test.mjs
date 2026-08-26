@@ -7,6 +7,8 @@ import {
   buildSolverDaemonEvidenceRequest,
   buildSolverDaemonEvidenceRouteResponse,
   createSolverDaemonEvidenceControls,
+  createTestSolverDaemonEvidenceControls,
+  isProductionSolverDaemonEvidenceControls,
   isSolverDaemonEvidenceControls,
   signSolverDaemonEvidenceRequest,
   solverDaemonEvidenceControlsTransportMode,
@@ -185,7 +187,7 @@ function routeHarness({
 
 function controlsWithHarness(harness, evidencePolicy = policy()) {
   let nonce = 0;
-  return createSolverDaemonEvidenceControls({
+  return createTestSolverDaemonEvidenceControls({
     policy: evidencePolicy,
     routes: {
       lightningOperator: "https://lightning-approver.internal",
@@ -391,10 +393,24 @@ test("fails closed when routes share an origin or a route is public, plaintext, 
     },
   });
   assert.equal(solverDaemonEvidenceControlsTransportMode(fixedTransportControls), "fixed-node-https");
+  assert.equal(isProductionSolverDaemonEvidenceControls(fixedTransportControls), true);
   assert.throws(
     () => solverDaemonEvidenceControlsTransportMode({ ...fixedTransportControls }),
     /factory provenance/,
   );
+  const injectedControls = controlsWithHarness(routeHarness());
+  assert.equal(solverDaemonEvidenceControlsTransportMode(injectedControls), "injected-test");
+  assert.equal(isProductionSolverDaemonEvidenceControls(injectedControls), false);
+  assert.throws(() => createSolverDaemonEvidenceControls({
+    ...base,
+    routes: {
+      lightningOperator: "https://lightning-approver.internal",
+      securityReviewer: "https://security-approver.internal",
+    },
+    requestImpl: async () => { throw new Error("test only"); },
+    nowSeconds: () => NOW,
+    randomBytesImpl: () => Buffer.alloc(32),
+  }), /fields are not exact/);
 });
 
 test("rejects route disagreement, wrong signers, copied responses, redirects, and cacheable bodies", async () => {
@@ -440,7 +456,7 @@ test("rejects route disagreement, wrong signers, copied responses, redirects, an
     () => jsonResponse({}, { cacheControl: "public, max-age=60" }),
   ]) {
     let nonce = 0;
-    const controls = createSolverDaemonEvidenceControls({
+    const controls = createTestSolverDaemonEvidenceControls({
       policy: policy(),
       routes: {
         lightningOperator: "https://lightning-approver.internal",
@@ -476,7 +492,7 @@ test("rejects unsupported terminal requests, expired evidence, and route timeout
   );
 
   let nonce = 0;
-  const timedOut = createSolverDaemonEvidenceControls({
+  const timedOut = createTestSolverDaemonEvidenceControls({
     policy: policy(),
     routes: {
       lightningOperator: "https://lightning-approver.internal",
