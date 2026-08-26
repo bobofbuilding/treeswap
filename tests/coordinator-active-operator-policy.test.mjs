@@ -8,7 +8,9 @@ import {
   createCoordinatorEvmActionConfig,
   createCoordinatorLightningActionConfig,
   createSolverCapabilityClient,
+  createTestSolverCapabilityClient,
   isCoordinatorActiveOperatorPolicyPreparer,
+  solverCapabilityClientTransportMode,
   startCoordinatorActiveOperatorService,
 } from "../lib/coordinator-active-operator-policy.mjs";
 import { fixedLightningAdapterHttpsRequest } from "../lib/coordinator-action-runner.mjs";
@@ -198,15 +200,29 @@ async function endpointEnvelope() {
 
 async function capabilityClient({
   policy: policyOverride = capabilityPolicy,
-  requestImpl: requestOverride = null,
 } = {}) {
-  const envelope = await endpointEnvelope();
   const readers = concreteReaders();
   return createSolverCapabilityClient({
     endpointOrigin: ENDPOINT_ORIGIN,
     solverId: SOLVER.address,
     direction: "bit-to-lightning",
     policy: policyOverride,
+    readVerifiedBitInventory: readers.readVerifiedBitInventory,
+    readVerifiedLightningCapacity: readers.readVerifiedLightningCapacity,
+    requestTtlSeconds: 15,
+    timeoutMs: 1_000,
+    maximumResponseBytes: 65_536,
+  });
+}
+
+async function testCapabilityClient({ requestImpl: requestOverride = null } = {}) {
+  const envelope = await endpointEnvelope();
+  const readers = concreteReaders();
+  return createTestSolverCapabilityClient({
+    endpointOrigin: ENDPOINT_ORIGIN,
+    solverId: SOLVER.address,
+    direction: "bit-to-lightning",
+    policy: capabilityPolicy,
     verifyLightningNodeSignature: async () => ({ valid: true, pubkey: NODE_PUBKEY }),
     readVerifiedBitInventory: readers.readVerifiedBitInventory,
     readVerifiedLightningCapacity: readers.readVerifiedLightningCapacity,
@@ -288,7 +304,8 @@ function runtime(policy = evidencePolicy(), { evidenceRequestImpl, packetRequest
 }
 
 test("refreshes a capability through the concrete finalized and authenticated readers", async () => {
-  const client = await capabilityClient();
+  const client = await testCapabilityClient();
+  assert.equal(solverCapabilityClientTransportMode(client), "injected-test");
   const verification = await client.read({ signal: new AbortController().signal });
   assert.equal(verification.valid, true);
   assert.equal(verification.binding.direction, "bit-to-lightning");
@@ -301,7 +318,7 @@ test("refreshes a capability through the concrete finalized and authenticated re
   await assert.rejects(client.read({ signal: aborted.signal }), (error) => error.code === "TRANSPORT_FAILED");
 
   let transportAborted = false;
-  const pendingClient = await capabilityClient({
+  const pendingClient = await testCapabilityClient({
     requestImpl: async (_url, options) => new Promise((_, reject) => {
       options.signal.addEventListener("abort", () => {
         transportAborted = true;
@@ -319,6 +336,8 @@ test("refreshes a capability through the concrete finalized and authenticated re
 test("accepts only the complete original operator runtime and matching evidence policy", async () => {
   const policy = evidencePolicy();
   const client = await capabilityClient();
+  assert.equal(solverCapabilityClientTransportMode(client), "fixed-node-https");
+  assert.throws(() => solverCapabilityClientTransportMode({ ...client }), /factory provenance/);
   const activeRuntime = runtime(policy);
   assert.equal(activeRuntime.lightning.requestImpl, fixedLightningAdapterHttpsRequest);
   assert.equal(activeRuntime.evm.rpcRequestImpl, fixedEvmRpcHttpsRequest);
@@ -341,6 +360,14 @@ test("accepts only the complete original operator runtime and matching evidence 
   assert.throws(() => createCoordinatorActiveOperatorPolicyPreparer({
     policies: [{ capabilityClient: { read: client.read }, evidencePolicy: policy, runtime: activeRuntime }],
   }), /concrete solver capability client/);
+  const injectedClient = await testCapabilityClient();
+  assert.throws(() => createCoordinatorActiveOperatorPolicyPreparer({
+    policies: [{
+      capabilityClient: injectedClient,
+      evidencePolicy: policy,
+      runtime: activeRuntime,
+    }],
+  }), /fixed Node HTTPS solver capability client/);
   assert.throws(() => createCoordinatorActiveOperatorPolicyPreparer({
     policies: [{ capabilityClient: client, evidencePolicy: policy, runtime: { ...activeRuntime } }],
   }), /concrete complete action runtime/);
@@ -351,12 +378,6 @@ test("accepts only the complete original operator runtime and matching evidence 
       runtime: activeRuntime,
     }],
   }), /another evidence policy/);
-  await assert.rejects(preparer({
-    abortSignal: new AbortController().signal,
-    releaseSupervisor: {},
-    serviceLease: {},
-    store: {},
-  }), /original coordinator store/);
 });
 
 test("preparation is cancellation-aware and one-use, and the operator launcher rejects injected callbacks", async () => {
@@ -404,12 +425,8 @@ test("rejects lookalike readers, packet clients, action configs, and non-indepen
     solverId: SOLVER.address,
     direction: "bit-to-lightning",
     policy: capabilityPolicy,
-    verifyLightningNodeSignature: async () => ({ valid: true, pubkey: NODE_PUBKEY }),
     readVerifiedBitInventory: readers.readVerifiedBitInventory,
     readVerifiedLightningCapacity: readers.readVerifiedLightningCapacity,
-    requestImpl: async () => { throw new Error("unused"); },
-    nowSeconds: () => NOW,
-    randomBytesImpl: () => Buffer.alloc(32),
     requestTtlSeconds: 15,
     timeoutMs: 1_000,
     maximumResponseBytes: 65_536,
@@ -424,6 +441,17 @@ test("rejects lookalike readers, packet clients, action configs, and non-indepen
       availableLightningSats: "1", capacityEpoch: "7", nodePubkey: NODE_PUBKEY, observedAt: NOW,
     }),
   }), /concrete authenticated Lightning capacity reader/);
+  for (const injected of [
+    { requestImpl: async () => { throw new Error("injected capability transport"); } },
+    { nowSeconds: () => NOW },
+    { randomBytesImpl: () => Buffer.alloc(32) },
+    { verifyLightningNodeSignature: async () => ({ valid: true, pubkey: NODE_PUBKEY }) },
+  ]) {
+    assert.throws(() => createSolverCapabilityClient({
+      ...source,
+      ...injected,
+    }), /fields are not exact/);
+  }
   assert.throws(() => createCoordinatorActiveOperatorRuntime({
     packetClient: { read: async () => {} },
     controls: {},

@@ -3171,6 +3171,20 @@ smoke_coordinator_invoice_reconciliation() {
   trap - EXIT
 }
 
+verify_local_lnd_node_signature() {
+  local message=$1
+  local signature=$2
+  node --input-type=module - "$message" "$signature" <<'NODE'
+import { verifyLndNodeSignature } from "./lib/lnd-node-signature.mjs";
+
+const result = verifyLndNodeSignature({
+  message: Buffer.from(process.argv[2], "utf8"),
+  signature: process.argv[3],
+});
+process.stdout.write(JSON.stringify(result));
+NODE
+}
+
 smoke_solver_node_proof() {
   ensure_runtime_env
   start_lab >/dev/null
@@ -3179,7 +3193,7 @@ smoke_solver_node_proof() {
   local signer_role=solver-node-signer
   local verifier_role=node-proof-verifier
   local signer_root_key_id verifier_root_key_id signer_path verifier_path
-  local node_pubkey proof_challenge message signature result changed
+  local node_pubkey proof_challenge message signature result local_result changed
   signer_root_key_id=$(role_root_key_id "$signer_role")
   verifier_root_key_id=$(role_root_key_id "$verifier_role")
   signer_path="/root/.lnd/treeswap/${signer_role}.macaroon"
@@ -3216,6 +3230,12 @@ smoke_solver_node_proof() {
       echo "solver node returned a non-canonical proof signature" >&2
       return 1
     fi
+    local_result=$(verify_local_lnd_node_signature "$message" "$signature")
+    if ! jq -e --arg pubkey "$node_pubkey" \
+      '.valid == true and .pubkey == $pubkey' <<<"$local_result" >/dev/null; then
+      echo "TreeSwap's local verifier did not recover the declared solver node" >&2
+      return 1
+    fi
     result=$(compose exec -T "$verifier_node" lncli --network=regtest \
       --macaroonpath="$verifier_path" verifymessage --msg "$message" --sig "$signature")
     if ! jq -e --arg pubkey "$node_pubkey" \
@@ -3224,6 +3244,12 @@ smoke_solver_node_proof() {
       return 1
     fi
     changed=$(printf '%s-mutated' "$message")
+    local_result=$(verify_local_lnd_node_signature "$changed" "$signature")
+    if ! jq -e --arg pubkey "$node_pubkey" \
+      '.valid == true and .pubkey != $pubkey' <<<"$local_result" >/dev/null; then
+      echo "TreeSwap's local verifier did not bind the proof to the exact challenge" >&2
+      return 1
+    fi
     result=$(compose exec -T "$verifier_node" lncli --network=regtest \
       --macaroonpath="$verifier_path" verifymessage --msg "$changed" --sig "$signature")
     if ! jq -e '.valid == false' <<<"$result" >/dev/null; then
@@ -3240,8 +3266,8 @@ smoke_solver_node_proof() {
   delete_test_macaroon_id "$signer_node" "$signer_root_key_id"
   delete_test_macaroon_id "$verifier_node" "$verifier_root_key_id"
   trap - EXIT
-  unset signature result message proof_challenge
-  echo "Solver node-proof smoke passed: four exact challenges recovered the declared node, mutation failed, and role permissions stayed separated."
+  unset signature result local_result message proof_challenge
+  echo "Solver node-proof smoke passed: TreeSwap and independent LND verification recovered four exact node proofs, mutations changed or invalidated recovery, and role permissions stayed separated."
 }
 
 smoke_solver_capacity_readers() {

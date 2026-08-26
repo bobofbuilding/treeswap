@@ -38,11 +38,19 @@ An executable capability requires all of the following:
 
 1. the solver EVM key signed the exact EIP-712 declaration in the direction-specific escrow domain, including that escrow's expected runtime code hash;
 2. the endpoint Ed25519 key proved possession and signed the fresh response;
-3. the declared LND node signed the domain-bound proof and an independent verifier recovered that exact node public key;
+3. the declared LND node signed the domain-bound proof with LND `SignMessage`
+   using its default `single_hash=false`, and TreeSwap locally recovered that
+   exact compressed node public key from the canonical zbase32 compact
+   signature;
 4. finalized onchain reads prove enough solver-owned BIT at the bound address or vault; and
 5. a least-privilege internal Lightning reader proves enough active directional capacity at the bound node and epoch.
 
-Signed self-report can only reduce the admitted amount; it never substitutes for either capacity reader. The executable offer must reproduce the verifier-issued capability and snapshot digests, exact capacities, endpoint-key digest, runtime code hash, epoch, and expiry. Onchain BIT inventory can be compared across independent finalized RPC providers. Lightning channel liquidity is private node state and cannot be made trustless by an intent wrapper. It therefore also requires tiny unknown-solver limits, reserved capacity, continuous reconciliation, completed-swap history, and a fail-closed operator boundary.
+Signed self-report can only reduce the admitted amount; it never substitutes for either capacity reader. Local key recovery proves possession, not that LND currently considers the node active in its channel graph and not that the node has routable liquidity. The separate signed Lightning-capacity reader supplies that private operational statement. The executable offer must reproduce the verifier-issued capability and snapshot digests, exact capacities, endpoint-key digest, runtime code hash, epoch, and expiry. Onchain BIT inventory can be compared across independent finalized RPC providers. Lightning channel liquidity is private node state and cannot be made trustless by an intent wrapper. It therefore also requires tiny unknown-solver limits, reserved capacity, continuous reconciliation, completed-swap history, and a fail-closed operator boundary.
+
+The official active and recovery operator client fixes the local verifier,
+module-owned Node HTTPS request path, wall clock, and cryptographic challenge
+source. A separate injected factory exists only for bounded transport tests;
+operator composition rejects it before any capability read.
 
 ## Remaining deployment gates
 

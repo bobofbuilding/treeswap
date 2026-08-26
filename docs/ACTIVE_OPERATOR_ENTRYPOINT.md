@@ -10,8 +10,10 @@ The operator entrypoint accepts one original, one-use policy preparer created by
 must contain all of the following original same-process objects:
 
 - a `createSolverCapabilityClient` result that performs a fresh public HTTPS
-  capability challenge using the finalized two-provider BIT vault reader and
-  the separately signed Lightning-capacity reader;
+  capability challenge using the module-owned Node HTTPS transport, system
+  clock, cryptographic entropy, local LND compact-signature recovery, the
+  finalized two-provider BIT vault reader, and the separately signed
+  Lightning-capacity reader;
 - a `createAuthenticatedPrivatePacketClient` result using the module-owned fixed
   Node HTTPS transport;
 - a `createSolverDaemonEvidenceControls` result using two distinct private
@@ -37,9 +39,10 @@ active policy set prepared.
 Preparation is one-use and cancellation-aware. Shutdown aborts outstanding
 solver endpoint requests; a late result cannot be handed to the active
 lifecycle. A copied client, runtime, config, controls object, or preparer has no
-factory provenance and is rejected. Private-packet clients or evidence controls
-made with an injected request callback are test-only and reject before runtime
-creation. Lightning action configuration has no transport-callback field at
+factory provenance and is rejected. Solver-capability, private-packet, or
+evidence clients made with an injected request callback, clock, entropy source,
+or node-signature verifier are test-only and reject before operator-policy or
+runtime creation. Lightning action configuration has no transport-callback field at
 all: plaintext, a nonstandard port, public or credential-bearing origins, and
 caller transport substitution reject before runtime creation.
 EVM action configuration likewise accepts no RPC callback: broadcast and both
@@ -70,8 +73,8 @@ Active health is also liability-wide: one unmatched or halted nonterminal settle
 
 The operator must still prove all external facts separately:
 
-- the BIT providers, Lightning capacity observer, Lightning node-signature
-  verifier, evidence producers, and EVM reconciliation providers are live and
+- the BIT providers, Lightning capacity observer, evidence producers, and EVM
+  reconciliation providers are live and
   independently controlled as required by the release;
 - both evidence routes use the repository's [durable provider
   boundary](./DURABLE_EVIDENCE_PROVIDER.md), separate initialized replay-ledger

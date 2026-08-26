@@ -9,6 +9,8 @@ import {
   createCoordinatorEvmActionConfig,
   createCoordinatorLightningActionConfig,
   createSolverCapabilityClient,
+  createTestSolverCapabilityClient,
+  solverCapabilityClientTransportMode,
 } from "../lib/coordinator-active-operator-policy.mjs";
 import {
   createCoordinatorRecoveryOperatorPolicyPreparer,
@@ -233,7 +235,7 @@ async function endpointEnvelope() {
   });
 }
 
-async function capabilityClient() {
+async function capabilityClient({ injected = false } = {}) {
   const readVerifiedBitInventory = createFinalizedBitVaultInventoryReader({
     primaryProvider: {
       identity: id("recovery primary BIT provider").toLowerCase(),
@@ -294,15 +296,22 @@ async function capabilityClient() {
     randomBytesImpl: () => Buffer.alloc(32, 0x84),
     nowSeconds: () => NOW,
   });
-  const envelope = await endpointEnvelope();
-  return createSolverCapabilityClient({
+  const source = {
     endpointOrigin: ENDPOINT_ORIGIN,
     solverId: SOLVER.address,
     direction: "bit-to-lightning",
     policy: capabilityPolicy,
-    verifyLightningNodeSignature: async () => ({ valid: true, pubkey: NODE_PUBKEY }),
     readVerifiedBitInventory,
     readVerifiedLightningCapacity,
+    requestTtlSeconds: 15,
+    timeoutMs: 1_000,
+    maximumResponseBytes: 65_536,
+  };
+  if (!injected) return createSolverCapabilityClient(source);
+  const envelope = await endpointEnvelope();
+  return createTestSolverCapabilityClient({
+    ...source,
+    verifyLightningNodeSignature: async () => ({ valid: true, pubkey: NODE_PUBKEY }),
     requestImpl: async (_url, options) => new Response(JSON.stringify(buildSignedSolverCapabilityResponse({
       request: JSON.parse(options.body),
       capabilityEnvelope: envelope,
@@ -315,9 +324,6 @@ async function capabilityClient() {
     }),
     nowSeconds: () => NOW,
     randomBytesImpl: () => Buffer.alloc(32, 0x85),
-    requestTtlSeconds: 15,
-    timeoutMs: 1_000,
-    maximumResponseBytes: 65_536,
   });
 }
 
@@ -369,6 +375,16 @@ test("accepts only a complete recovery-only runtime and an exact reviewed policy
   }), /fixed Node HTTPS private-packet transport/);
 
   const client = await capabilityClient();
+  assert.equal(solverCapabilityClientTransportMode(client), "fixed-node-https");
+  const injectedClient = await capabilityClient({ injected: true });
+  assert.equal(solverCapabilityClientTransportMode(injectedClient), "injected-test");
+  assert.throws(() => createCoordinatorRecoveryOperatorPolicyPreparer({
+    custodyManifestPath: "/private/treeswap/recovery-custody.json",
+    releaseRecordDigest: RELEASE_RECORD_DIGEST,
+    restoredHostInstanceId: id("injected recovery host").toLowerCase(),
+    restoredProcessInstanceId: id("injected recovery process").toLowerCase(),
+    policies: [{ capabilityClient: injectedClient, evidencePolicy: policy, runtime }],
+  }), /fixed Node HTTPS solver capability client/);
   const preparer = createCoordinatorRecoveryOperatorPolicyPreparer({
     custodyManifestPath: "/private/treeswap/recovery-custody.json",
     releaseRecordDigest: RELEASE_RECORD_DIGEST,
@@ -525,7 +541,7 @@ test("a real service lease cannot bypass missing retained custody", async (t) =>
   }), /ENOENT|no such file/i);
 });
 
-test("inspects custody and refreshes capability before deriving database jobs", async (t) => {
+test("inspects custody and then requires the fixed public capability endpoint before deriving jobs", async (t) => {
   const root = await realpath(await mkdtemp(join(tmpdir(), "treeswap-recovery-composition-")));
   t.after(() => rm(root, { recursive: true, force: true }));
   const sealedStore = await CoordinatorStore.open(join(root, "sealed.sqlite"));
@@ -584,5 +600,5 @@ test("inspects custody and refreshes capability before deriving database jobs", 
     },
     serviceLease: lease,
     store: restoredStore,
-  }), /covered nonterminal release/);
+  }), (error) => error?.code === "TRANSPORT_FAILED");
 });

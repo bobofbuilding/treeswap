@@ -104,6 +104,7 @@ jobs:
       - run: node --check lib/public-testnet-release-activation.mjs
       - run: node --check lib/release-retention-custody.mjs
       - run: node --check lib/solver-capability.mjs
+      - run: node --check lib/lnd-node-signature.mjs
       - run: node --check lib/solver-endpoint-transport.mjs
       - run: node --check lib/rfq-delivery.mjs
       - run: node --check lib/blind-rfq.mjs
