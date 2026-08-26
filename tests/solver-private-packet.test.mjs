@@ -420,6 +420,20 @@ test("bounds headers and the complete response-body read under the same deadline
       /content encoding is invalid|framing is ambiguous|length changed/,
     );
   }
+  for (const bytes of [
+    [0x7b, 0x22, 0x78, 0x22, 0x3a, 0x22, 0xc0, 0xaf, 0x22, 0x7d],
+    [0xef, 0xbb, 0xbf, ...Buffer.from('{"x":true}')],
+  ]) {
+    await assert.rejects(
+      fetchVerifiedPrivatePacket({
+        ...args,
+        requestImpl: async () => new Response(Uint8Array.from(bytes), {
+          headers: { "cache-control": "no-store", "content-type": "application/json; charset=utf-8" },
+        }),
+      }),
+      /not valid UTF-8|forbidden UTF-8 byte order mark/,
+    );
+  }
   await assert.rejects(
     fetchVerifiedPrivatePacket({
       ...args,

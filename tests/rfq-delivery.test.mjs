@@ -1378,6 +1378,18 @@ test("bounds strict RFQ response framing under the complete transport deadline",
     }), (error) => error.code === "INVALID_RESPONSE" && error.ambiguous === false);
   }
 
+  for (const bytes of [
+    [0x7b, 0x22, 0x78, 0x22, 0x3a, 0x22, 0xc0, 0xaf, 0x22, 0x7d],
+    [0xef, 0xbb, 0xbf, ...Buffer.from('{"x":true}')],
+  ]) {
+    await assert.rejects(queryVerifiedRfqDelivery({
+      ...args,
+      requestImpl: async () => new Response(Uint8Array.from(bytes), {
+        headers: { "cache-control": "no-store", "content-type": "application/json; charset=utf-8" },
+      }),
+    }), (error) => error.code === "INVALID_RESPONSE" && error.ambiguous === false);
+  }
+
   let stalledCancelled = 0;
   await assert.rejects(queryVerifiedRfqDelivery({
     ...args,

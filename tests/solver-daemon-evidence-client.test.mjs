@@ -565,6 +565,31 @@ test("rejects compressed, ambiguously framed, and truncated evidence responses",
       /content encoding is invalid|framing is ambiguous|length changed/,
     );
   }
+
+  for (const bytes of [
+    [0x7b, 0x22, 0x78, 0x22, 0x3a, 0x22, 0xc0, 0xaf, 0x22, 0x7d],
+    [0xef, 0xbb, 0xbf, ...Buffer.from('{"x":true}')],
+  ]) {
+    let nonce = 0;
+    const controls = createTestSolverDaemonEvidenceControls({
+      policy: policy(),
+      routes: {
+        lightningOperator: "https://lightning-approver.internal",
+        securityReviewer: "https://security-approver.internal",
+      },
+      requesterPrivateKey: REQUESTER_PRIVATE_KEY,
+      requesterKeyId: REQUESTER_KEY_ID,
+      requestImpl: async () => new Response(Uint8Array.from(bytes), {
+        headers: { "cache-control": "no-store", "content-type": "application/json; charset=utf-8" },
+      }),
+      nowSeconds: () => NOW,
+      randomBytesImpl: () => Buffer.alloc(32, ++nonce),
+    });
+    await assert.rejects(
+      controls.verifyAssets({ settlement: observed, expectedTerminal: "COMPLETED" }),
+      /not valid UTF-8|forbidden UTF-8 byte order mark/,
+    );
+  }
 });
 
 test("snapshots exact client and provider data once without invoking accessors", async () => {

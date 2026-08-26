@@ -130,6 +130,52 @@ test("rejects malformed streams and an already-aborted read", async () => {
   await assert.rejects(pending, /was interrupted/);
 });
 
+test("requires fatal BOM-free UTF-8 before JSON parsing", async () => {
+  assert.deepEqual(await read(strictResponse('{"label":"árvore 🌳"}')), { label: "árvore 🌳" });
+
+  const encodedResponse = (bytes) => ({
+    headers: new Headers({
+      "cache-control": "no-store",
+      "content-length": String(bytes.length),
+      "content-type": "application/json; charset=utf-8",
+    }),
+    body: new ReadableStream({
+      start(controller) {
+        controller.enqueue(Uint8Array.from(bytes));
+        controller.close();
+      },
+    }),
+  });
+
+  await assert.rejects(
+    read(encodedResponse([0x22, 0x61, 0xc0, 0xaf, 0x22])),
+    /not valid UTF-8/,
+  );
+  await assert.rejects(
+    read(encodedResponse([0x22, 0xe2, 0x82, 0x22])),
+    /not valid UTF-8/,
+  );
+  await assert.rejects(
+    read(encodedResponse([0xef, 0xbb, 0xbf, ...Buffer.from('{"safe":true}')])),
+    /forbidden UTF-8 byte order mark/,
+  );
+
+  const originalDecoder = globalThis.TextDecoder;
+  try {
+    globalThis.TextDecoder = class ForgedTextDecoder {
+      decode() {
+        return '{"safe":true}';
+      }
+    };
+    await assert.rejects(
+      read(encodedResponse([0x22, 0xc0, 0xaf, 0x22])),
+      /not valid UTF-8/,
+    );
+  } finally {
+    globalThis.TextDecoder = originalDecoder;
+  }
+});
+
 test("cancels rejected bodies without awaiting responder-controlled teardown", async () => {
   let earlyCancels = 0;
   const earlyRejected = {

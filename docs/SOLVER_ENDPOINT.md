@@ -24,7 +24,7 @@ The solver returns the exact request unchanged, its complete capability envelope
 The default client accepts only a canonical credential-free HTTPS origin on port 443. It:
 
 - refuses redirects and cancels redirected, rejected, or malformed response bodies without awaiting responder-controlled teardown;
-- accepts only identity-encoded `application/json` with `Cache-Control: no-store`, an absent or UTF-8 charset, and canonical non-conflicting HTTP framing;
+- accepts only identity-encoded `application/json` with `Cache-Control: no-store`, an absent or UTF-8 charset, and canonical non-conflicting HTTP framing; the module-owned fatal decoder rejects malformed, truncated, overlong, or BOM-prefixed UTF-8 before JSON parsing;
 - rejects compression, unsupported charset, noncanonical or simultaneous content-length/transfer framing, declared/actual length mismatch, malformed chunks, interruption, and declared or received oversize before parsing;
 - applies one hard deadline across DNS, connection, TLS, and body processing;
 - resolves every address and refuses the request if any answer is private, reserved, mapped, local, or special-purpose;

@@ -292,6 +292,17 @@ test("requires strict non-cacheable capability response framing", async () => {
     })), (error) => error.code === "INVALID_RESPONSE" && error.ambiguous === false);
   }
 
+  for (const bytes of [
+    [0x7b, 0x22, 0x78, 0x22, 0x3a, 0x22, 0xc0, 0xaf, 0x22, 0x7d],
+    [0xef, 0xbb, 0xbf, ...Buffer.from('{"x":true}')],
+  ]) {
+    await assert.rejects(queryVerifiedSolverCapability(queryOptions({
+      requestImpl: async () => new Response(Uint8Array.from(bytes), {
+        headers: { "cache-control": "no-store", "content-type": "application/json; charset=utf-8" },
+      }),
+    })), (error) => error.code === "INVALID_RESPONSE" && error.ambiguous === false);
+  }
+
   let cancelled = 0;
   await assert.rejects(queryVerifiedSolverCapability(queryOptions({
     requestImpl: async () => ({
