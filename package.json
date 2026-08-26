@@ -31,6 +31,7 @@
     "test:safety-monitor": "bash scripts/run-safety-monitor-smoke.sh",
     "test:account-storage-monitor": "node --test tests/account-storage-monitor.test.mjs",
     "test:account-backup-restore-evidence": "node --test tests/account-backup-restore-evidence.test.mjs",
+    "test:scheduled-account-maintenance": "node --test tests/scheduled-account-maintenance.test.mjs",
     "prepare:account-backup-restore-attestation": "node scripts/prepare-account-backup-restore-attestation.mjs",
     "verify:account-backup-restore-evidence": "node scripts/verify-account-backup-restore-evidence.mjs",
     "test:deployment-rehearsal": "bash scripts/run-deployment-rehearsal-smoke.sh",

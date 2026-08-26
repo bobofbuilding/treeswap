@@ -49,7 +49,7 @@ Before enabling accounts outside the owner-only closed deployment:
 
 1. independently review the exact D1 access and least-privilege operator policy;
 2. deploy the D1 collector, an independently governed control-plane audit collector, and two independently operated alert routes in separate failure domains;
-3. schedule bounded maintenance without a reusable browser credential;
+3. deploy the reviewed [scheduled account maintenance](./SCHEDULED_ACCOUNT_MAINTENANCE.md) worker without a reusable browser credential and consume its locked aggregate R2 evidence;
 4. retain at least 24 continuous hours of secret-free observations and alert acknowledgements bound to the exact reviewed deployment;
 5. drill D1 outage, latency breach, schema failure, missing audit coverage, unauthorized access, access-policy change, maintenance failure, queue saturation, one alert-route outage, and total paging outage;
 6. prove alerts reached the named operator escalation path within the reviewed response window; and

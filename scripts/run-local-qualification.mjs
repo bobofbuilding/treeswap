@@ -118,6 +118,10 @@ const campaigns = [
     "run",
     "test:account-backup-restore-evidence",
   ]],
+  ["operations:scheduled-account-maintenance", "npm", [
+    "run",
+    "test:scheduled-account-maintenance",
+  ]],
   ["operations:retained-release-custody", "node", [
     "--test",
     "tests/release-retention-custody.test.mjs",

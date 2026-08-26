@@ -10,7 +10,7 @@ The private Sites deployment exposes `POST /api/internal/account-maintenance` fo
 
 One D1 transactional batch deletes at most 100 expired rows from each of `siwe_nonces`, `auth_sessions`, and `notification_preferences`. Every statement independently compares its retention timestamp with the same canonical UTC cutoff, orders oldest first, applies the fixed bound, and returns only enough row identifiers for the server to count success. The HTTP response exposes only the cutoff, fixed limit, aggregate counts, and whether another bounded pass might be needed. It never returns a wallet, email, nonce, session hash, or row body.
 
-This endpoint is an owner exercise, not a scheduler. A production schedule must use a separately reviewed Cloudflare scheduled invocation or equivalently authenticated operator path, retain every aggregate result, alert on failures and sustained backlog, and never introduce a reusable browser credential.
+This endpoint is an owner exercise, not a scheduler. The separate [scheduled account maintenance](./SCHEDULED_ACCOUNT_MAINTENANCE.md) runtime now defines a private Cron-only path with no browser credential, bounded deletion, create-only aggregate R2 evidence, and fail-closed backlog/retention behavior. Its real deployment and witnessed three-record drill remain open.
 
 The repository's [account storage monitor](./ACCOUNT_STORAGE_MONITORING.md) now defines bounded D1 backlog probes, maintenance freshness, access-audit observations, and dual-route escalation. It does not create that schedule or any live collector.
 
