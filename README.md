@@ -15,6 +15,7 @@ TreeSwap displays **1 BIT = 100 sats** only as a non-binding product reference. 
 - EIP-4361 Sign-In with Ethereum using one-time server nonces and opaque sessions
 - Secret-free owner-only live D1 authentication qualification in [`docs/LIVE_ACCOUNT_EVIDENCE.md`](docs/LIVE_ACCOUNT_EVIDENCE.md)
 - Aggregate-only, fail-closed D1 availability, latency, access-audit, purge-backlog, and dual-route escalation controls in [`docs/ACCOUNT_STORAGE_MONITORING.md`](docs/ACCOUNT_STORAGE_MONITORING.md); deployment remains a launch gate
+- Two-role encrypted D1 export and fresh isolated restore evidence in [`docs/ACCOUNT_BACKUP_RESTORE_EVIDENCE.md`](docs/ACCOUNT_BACKUP_RESTORE_EVIDENCE.md); no live data or platform mutation is included
 - Optional offchain email preferences for invoice notices and transaction receipts
 - Non-custodial direct sends: standard BIT transfers on Ethereum mainnet and exact BOLT 11 payments through a Lightning wallet
 - Immutable, direction-separated BIT escrow prototypes with signed quotes, beneficiary binding, price and exposure caps, ordered deadlines, and Foundry tests

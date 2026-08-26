@@ -14,6 +14,8 @@ This endpoint is an owner exercise, not a scheduler. A production schedule must 
 
 The repository's [account storage monitor](./ACCOUNT_STORAGE_MONITORING.md) now defines bounded D1 backlog probes, maintenance freshness, access-audit observations, and dual-route escalation. It does not create that schedule or any live collector.
 
+Encrypted retention and a fresh isolated restore are governed separately by [account backup/restore evidence](./ACCOUNT_BACKUP_RESTORE_EVIDENCE.md); the verifier performs no platform mutation.
+
 ## Live exercise
 
 After publishing and privately deploying the exact clean `main` commit, run:

@@ -55,4 +55,6 @@ Before enabling accounts outside the owner-only closed deployment:
 6. prove alerts reached the named operator escalation path within the reviewed response window; and
 7. have the three-role live-review ceremony inspect the private monitoring artifacts and dispositions.
 
+Backup retention and a fresh isolated restore use the separate [account backup/restore evidence](./ACCOUNT_BACKUP_RESTORE_EVIDENCE.md) ceremony.
+
 Until that evidence exists, the corresponding launch-checklist deployment item remains open and the account feature must stay private or disabled.
