@@ -7,6 +7,7 @@ import {
   assertWalletSessionRouteReviewIsSecretFree,
   buildWalletSessionRouteReviewApprovalMessage,
   buildWalletSessionRouteReviewArtifact,
+  buildWalletSessionRouteReviewDeploymentEvidence,
   buildWalletSessionRouteReviewSummary,
   hashWalletSessionRouteReviewArtifactFile,
   prepareWalletSessionRouteReviewCandidate,
@@ -119,8 +120,15 @@ test("binds the exact repository route scope to two independent reviewers withou
   assert.equal(summary.sourceCommit, SOURCE_COMMIT);
   assert.equal(summary.reviewerCount, 2);
   assert.equal("reports" in summary, false);
+  const deploymentEvidence = buildWalletSessionRouteReviewDeploymentEvidence(verification);
+  assert.equal(deploymentEvidence.validUntil, REVIEWED_AT + 3_600);
+  assert.equal(deploymentEvidence.authorizations.deployment, false);
   assert.throws(
     () => buildWalletSessionRouteReviewSummary(structuredClone(verification)),
+    /provenance/,
+  );
+  assert.throws(
+    () => buildWalletSessionRouteReviewDeploymentEvidence(structuredClone(verification)),
     /provenance/,
   );
 });
