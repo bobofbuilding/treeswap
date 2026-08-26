@@ -8,6 +8,7 @@ import {
   buildWalletSessionRouteDeploymentPreflightSummary,
   prepareWalletSessionRouteDeploymentPreflight,
   verifyWalletSessionRouteDeploymentPreflight,
+  verifyWalletSessionRouteDeploymentPreflightAtSignedBoundary,
 } from "../lib/wallet-session-route-deployment-preflight.mjs";
 import {
   WALLET_SESSION_ROUTE_REVIEWER_WALLETS,
@@ -51,6 +52,12 @@ test("verifies one reviewed private closed-test plan while every live fact and a
     observedAt: OBSERVED_AT,
   });
   assert.equal(defaultTimestampMessage.value.attestedAt, OBSERVED_AT);
+  const historicalVerification = verifyWalletSessionRouteDeploymentPreflightAtSignedBoundary({
+    routeReviewVerification: fixture.review.verification,
+    plan: fixture.plan,
+    attestations: fixture.attestations,
+  });
+  assert.equal(historicalVerification.verifiedAt, OBSERVED_AT);
   assert.throws(
     () => buildWalletSessionRouteDeploymentPreflightSummary(structuredClone(verification)),
     /provenance/,
@@ -63,6 +70,13 @@ test("verifies one reviewed private closed-test plan while every live fact and a
 
 test("requires live route-review provenance and a causally bounded plan", async () => {
   const fixture = await signedFixture();
+  await assert.rejects(() => createVerifiedWalletSessionRouteDeploymentPreflightFixture({
+    planOverrides: {
+      preparedAt: REVIEWED_AT + 1,
+      validUntil: REVIEWED_AT + 100,
+    },
+    observedAt: REVIEWED_AT + 2,
+  }), /outside the signed plan window/);
   assert.throws(() => prepareWalletSessionRouteDeploymentPreflight({
     routeReviewVerification: structuredClone(fixture.review.verification),
     plan: fixture.plan,
@@ -214,6 +228,11 @@ test("rejects missing, reordered, copied, substituted, future, and expired attes
   assert.throws(() => verify({
     attestations: fixture.attestations.map((attestation, index) => index === 0
       ? { ...attestation, attestedAt: PREPARED_AT - 1 }
+      : attestation),
+  }), /outside the signed plan window/);
+  assert.throws(() => verify({
+    attestations: fixture.attestations.map((attestation, index) => index === 0
+      ? { ...attestation, attestedAt: fixture.review.verification.attestedThrough - 1 }
       : attestation),
   }), /outside the signed plan window/);
   assert.throws(() => verify({

@@ -5,9 +5,11 @@ import {
   WALLET_SESSION_ROUTE_DEPLOYMENT_POSTFLIGHT_ROLES,
   assertWalletSessionRouteDeploymentPostflightIsSecretFree,
   buildWalletSessionRouteDeploymentPostflightMessage,
+  buildWalletSessionRouteDeploymentLiveReviewEvidence,
   buildWalletSessionRouteDeploymentPostflightSummary,
   prepareWalletSessionRouteDeploymentPostflight,
   verifyWalletSessionRouteDeploymentPostflight,
+  verifyWalletSessionRouteDeploymentPostflightAtSignedBoundary,
   walletSessionRouteDeploymentPostflightControlSetDigest,
 } from "../lib/wallet-session-route-deployment-postflight.mjs";
 import {
@@ -119,6 +121,20 @@ test("verifies three accountable live claims while retaining every external and 
   const summary = buildWalletSessionRouteDeploymentPostflightSummary(verification);
   assert.equal(summary.sourceCommit, fixture.preflight.plan.sourceCommit);
   assert.equal("record" in summary, false);
+  const historicalVerification = verifyWalletSessionRouteDeploymentPostflightAtSignedBoundary({
+    deploymentPreflightVerification: fixture.preflight.verification,
+    evidence: fixture.evidence,
+    attestations: fixture.attestations,
+  });
+  assert.equal(historicalVerification.verifiedAt, OBSERVED_AT);
+  const liveReviewEvidence = buildWalletSessionRouteDeploymentLiveReviewEvidence(historicalVerification);
+  assert.equal(liveReviewEvidence.reviewers.length, 2);
+  assert.equal(liveReviewEvidence.operators.length, 2);
+  assert.equal(liveReviewEvidence.observers.length, 3);
+  assert.throws(
+    () => buildWalletSessionRouteDeploymentLiveReviewEvidence(structuredClone(historicalVerification)),
+    /provenance/,
+  );
   assert.throws(
     () => buildWalletSessionRouteDeploymentPostflightSummary(structuredClone(verification)),
     /provenance/,

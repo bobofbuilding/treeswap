@@ -163,6 +163,10 @@ const campaigns = [
     "run",
     "test:wallet-session-route-deployment-postflight",
   ]],
+  ["governance:wallet-session-route-deployment-live-review", "npm", [
+    "run",
+    "test:wallet-session-route-deployment-live-review",
+  ]],
   ["evm:escrow-reorgs", "npm", ["run", "test:escrow-reorg"]],
   ["lightning:credential-lifecycle", "npm", ["run", "regtest:credential-smoke"]],
   ["lightning:credential-overlap-rotation", "npm", ["run", "regtest:credential-rotation-smoke"]],

@@ -68,10 +68,12 @@ The repository deliberately does not define a free-form evidence field. Raw dash
 
 Both commands reconstruct the exact remote source before processing and recheck that the branch still points to the same commit afterward. Output creation is exclusive and does not overwrite an existing file.
 
+The short report window is a freshness boundary for this original ceremony, not a deadline for completing a credible later review. The downstream live-review tools revalidate the repository review, preflight, and postflight at their respective signed `attestedAt` boundaries. That historical reconstruction proves the original chain was valid then; it does not claim the old evidence is currently fresh or grant present authority.
+
 ## What a valid summary means
 
 The summary separates accountable claims from verification performed by this software. It records that all three observers signed the complete claim set. It simultaneously records that this verifier did not query a platform API, inspect retained artifact contents, establish real organizational independence, complete a continuous monitoring window, complete independent live review, or establish broader release readiness.
 
-Deployment, signing, wallet/Lightning dispatch, settlement, gate-opening, and funding authority remain false. A valid postflight must therefore go to separate independent live review. That reviewer must inspect the retained artifacts and collection methods, confirm the observers and operators are actually independent, repeat critical platform checks directly, and retain a disposition before the wallet path can be considered for activation.
+Deployment, signing, wallet/Lightning dispatch, settlement, gate-opening, and funding authority remain false. A valid postflight must therefore go through the separate three-role, 24-hour [independent live-review boundary](./WALLET_SESSION_ROUTE_DEPLOYMENT_LIVE_REVIEW.md). Those reviewers must inspect the retained artifacts and collection methods, examine whether observers and operators are actually independent, repeat critical platform checks directly, and retain a disposition before the wallet path can be considered for activation.
 
 This gate does not change pricing: executable Lightning/BIT prices still come only from competing signed solver RFQs; `1 BIT = 100 sats` remains reference-only; and an absent BIT/WBTC pool contributes zero evidence.

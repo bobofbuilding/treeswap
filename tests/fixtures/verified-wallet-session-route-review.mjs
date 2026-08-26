@@ -74,16 +74,20 @@ export async function createVerifiedWalletSessionRouteReviewFixture({
   const attestations = [];
   for (let index = 0; index < WALLET_SESSION_ROUTE_REVIEW_ROLES.length; index += 1) {
     const role = WALLET_SESSION_ROUTE_REVIEW_ROLES[index];
+    const attestedAt = reviewedAt + 2 + index;
     const typed = buildWalletSessionRouteReviewApprovalMessage({
       artifactFileBytes,
       policy,
       reports,
       role,
+      attestedAt,
+      observedAt,
     });
     attestations.push({
       role,
       reviewerId: policy.reviewApprovers[index].reviewerId,
       signer: WALLET_SESSION_ROUTE_REVIEWER_WALLETS[index].address,
+      attestedAt,
       signature: await WALLET_SESSION_ROUTE_REVIEWER_WALLETS[index].signTypedData(
         typed.domain,
         typed.types,

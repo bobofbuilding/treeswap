@@ -50,6 +50,8 @@ A downstream [wallet-session route deployment preflight](./WALLET_SESSION_ROUTE_
 
 A subsequent [wallet-session route deployment postflight](./WALLET_SESSION_ROUTE_DEPLOYMENT_POSTFLIGHT.md) binds the exact executed configuration and three canonical live-control reports to that original preflight. Sites/platform, wallet-edge, and privacy/data observers must use distinct identities and organizations that do not overlap any reviewer or operator; real-world independence still requires external proof. Their signatures create accountable claims only: the verifier does not query Sites/D1 or inspect retained artifacts, so direct platform verification, continuous monitoring, independent live review, and every authority remain false.
 
+A later [wallet-session route deployment live review](./WALLET_SESSION_ROUTE_DEPLOYMENT_LIVE_REVIEW.md) reconstructs the original short-lived chain at its signed evidence boundaries, requires at least 24 continuous monitored hours, and binds three new platform-control, wallet-security, and privacy-operations reports and attestations. Those reviewers cannot reuse any upstream identity, organization, evidence, or signer. Their signatures authenticate direct-inspection conclusions; the verifier still does not query the platform, inspect the private artifacts, establish real-world independence or reviewer competence, or grant any authority.
+
 ## Deployment gates
 
 Before even a closed funded testnet may use this path:
@@ -58,10 +60,11 @@ Before even a closed funded testnet may use this path:
 2. complete the two-operator [private deployment preflight](./WALLET_SESSION_ROUTE_DEPLOYMENT_PREFLIGHT.md) while that exact review remains valid, using a non-production D1 copy, four distinct key identities, disabled body capture, and distinct policy commitments;
 3. deploy it only to the approved private closed environment with generated four-way-separated keys, exact origin, owner-only access policy, no public bypass, and the non-production D1 copy; do not put key bytes in source, build output, D1, evidence, or command logs;
 4. complete the three-observer [deployment postflight](./WALLET_SESSION_ROUTE_DEPLOYMENT_POSTFLIGHT.md) while the upstream review/preflight remains valid and retain the full private evidence artifacts referenced by its commitments;
-5. prove the route is absent from browser bundles, accepts only the signed protocol, preserves exact length and identity framing through the CDN, and has request/response-body logging, caching, tracing, analytics, traffic capture, and error-body retention disabled at every layer;
-6. deploy the wallet edge separately with pinned DNS/TLS, separate key custody, the bounded overlap sequence above, process supervision, latency/error/clock alerts, and the existing single-replica abuse-ledger and fence controls;
-7. repeat active, inactive, forged, stale, rollback, D1 outage/latency, current/retiring/expired-key rotation, process-kill, and lost-response campaigns against that non-production D1 database and deployed HTTPS path;
-8. retain D1 access-policy, backup/restore, purge, and least-privilege evidence and obtain independent privacy, authentication, infrastructure, and operations review; and
-9. keep release activation, wallet dispatch, Lightning dispatch, BIT/WBTC admission, and pool funding disabled until every separate production gate passes.
+5. keep the deployment private, closed, and unfunded for at least 24 continuously monitored hours, then complete the three-role [independent live review](./WALLET_SESSION_ROUTE_DEPLOYMENT_LIVE_REVIEW.md) with direct platform, artifact, independence, and reproduction evidence;
+6. prove the route is absent from browser bundles, accepts only the signed protocol, preserves exact length and identity framing through the CDN, and has request/response-body logging, caching, tracing, analytics, traffic capture, and error-body retention disabled at every layer;
+7. deploy the wallet edge separately with pinned DNS/TLS, separate key custody, the bounded overlap sequence above, process supervision, latency/error/clock alerts, and the existing single-replica abuse-ledger and fence controls;
+8. repeat active, inactive, forged, stale, rollback, D1 outage/latency, current/retiring/expired-key rotation, process-kill, and lost-response campaigns against that non-production D1 database and deployed HTTPS path;
+9. retain D1 access-policy, backup/restore, purge, and least-privilege evidence and obtain independent privacy, authentication, infrastructure, and operations review; and
+10. keep release activation, wallet dispatch, Lightning dispatch, BIT/WBTC admission, and pool funding disabled until every separate production gate passes.
 
 Executable Lightning/BIT pricing remains competing signed solver RFQs. `1 BIT = 100 sats` remains a non-binding reference. The absent BIT/WBTC pool contributes zero evidence and this reader does not change that policy.

@@ -13,6 +13,7 @@ import {
   prepareWalletSessionRouteReviewCandidate,
   serializeWalletSessionRouteReviewArtifact,
   verifyWalletSessionRouteReview,
+  verifyWalletSessionRouteReviewAtSignedBoundary,
   walletSessionRouteReviewControlSetDigest,
 } from "../lib/wallet-session-route-review.mjs";
 
@@ -81,16 +82,20 @@ async function signedFixture(overrides = {}) {
   const attestations = [];
   for (let index = 0; index < WALLET_SESSION_ROUTE_REVIEW_ROLES.length; index += 1) {
     const role = WALLET_SESSION_ROUTE_REVIEW_ROLES[index];
+    const attestedAt = REVIEWED_AT + 2 + index;
     const typed = buildWalletSessionRouteReviewApprovalMessage({
       artifactFileBytes: fixture.artifactFileBytes,
       policy: fixture.policy,
       reports: fixture.reports,
       role,
+      attestedAt,
+      observedAt: REVIEWED_AT + 10,
     });
     attestations.push({
       role,
       reviewerId: fixture.policy.reviewApprovers[index].reviewerId,
       signer: REVIEWERS[index].address,
+      attestedAt,
       signature: await REVIEWERS[index].signTypedData(typed.domain, typed.types, typed.value),
     });
   }
@@ -123,6 +128,13 @@ test("binds the exact repository route scope to two independent reviewers withou
   const deploymentEvidence = buildWalletSessionRouteReviewDeploymentEvidence(verification);
   assert.equal(deploymentEvidence.validUntil, REVIEWED_AT + 3_600);
   assert.equal(deploymentEvidence.authorizations.deployment, false);
+  const historicalVerification = verifyWalletSessionRouteReviewAtSignedBoundary({
+    artifactFileBytes: fixture.artifactFileBytes,
+    policy: fixture.policy,
+    reports: fixture.reports,
+    attestations: fixture.attestations,
+  });
+  assert.equal(historicalVerification.verifiedAt, REVIEWED_AT + 3);
   assert.throws(
     () => buildWalletSessionRouteReviewSummary(structuredClone(verification)),
     /provenance/,
@@ -275,13 +287,23 @@ test("rejects missing, reordered, copied, mutated, future, and expired attestati
     observedAt: REVIEWED_AT + 10,
     ...overrides,
   });
-  assert.throws(() => verify({ attestations: fixture.attestations.slice(0, 1) }), /both exact reviewer roles/);
+  assert.throws(() => verify({ attestations: fixture.attestations.slice(0, 1) }), /length 2/);
   assert.throws(() => verify({ attestations: [...fixture.attestations].reverse() }), /canonical order/);
   assert.throws(() => verify({
     attestations: fixture.attestations.map((value, index) => index === 1
       ? { ...value, signature: fixture.attestations[0].signature }
       : value),
   }), /signature is invalid/);
+  assert.throws(() => verify({
+    attestations: fixture.attestations.map((value, index) => index === 0
+      ? { ...value, attestedAt: value.attestedAt + 1 }
+      : value),
+  }), /signature is invalid/);
+  assert.throws(() => verify({
+    attestations: fixture.attestations.map((value, index) => index === 0
+      ? { ...value, attestedAt: REVIEWED_AT - 1 }
+      : value),
+  }), /attestation time is invalid/);
   assert.throws(() => verify({
     reports: fixture.reports.map((value, index) => index === 0
       ? { ...value, reportDigest: id("mutated signed report").toLowerCase() }
@@ -291,7 +313,7 @@ test("rejects missing, reordered, copied, mutated, future, and expired attestati
   assert.throws(() => verify({ observedAt: REVIEWED_AT + 3_602 }), /expired/);
 });
 
-test("rejects extensible or secret-bearing review material", () => {
+test("rejects extensible, decorated, accessor, coercible, or secret-bearing review material", () => {
   const fixture = unsignedFixture();
   assert.throws(
     () => assertWalletSessionRouteReviewIsSecretFree({ privateKey: "not allowed" }),
@@ -321,4 +343,22 @@ test("rejects extensible or secret-bearing review material", () => {
     /non-data material/,
   );
   assert.equal(getterCalls, 0);
+
+  const coercibleApprovers = fixture.policy.reviewApprovers.map((reviewer, index) => index === 0
+    ? { ...reviewer, reviewerId: accessor }
+    : reviewer);
+  assert.throws(() => prepareWalletSessionRouteReviewCandidate({
+    artifactFileBytes: fixture.artifactFileBytes,
+    policy: { ...fixture.policy, reviewApprovers: coercibleApprovers },
+    reports: fixture.reports,
+  }), /must be a string/);
+  assert.equal(getterCalls, 0);
+
+  const decoratedReports = [...fixture.reports];
+  decoratedReports.note = "not canonical";
+  assert.throws(() => prepareWalletSessionRouteReviewCandidate({
+    artifactFileBytes: fixture.artifactFileBytes,
+    policy: fixture.policy,
+    reports: decoratedReports,
+  }), /exact dense array/);
 });
