@@ -44,6 +44,12 @@ docker run --rm --read-only \
   --entrypoint node \
   "$runtime_image" \
   infra/coordinator/disk-full-smoke.mjs
+docker run --rm --read-only \
+  --tmpfs /tmp:rw,noexec,nosuid,size=64m \
+  --tmpfs /data:rw,noexec,nosuid,size=128k,mode=0700,uid=1000,gid=1000 \
+  --entrypoint node \
+  "$runtime_image" \
+  infra/coordinator/wallet-abuse-disk-full-smoke.mjs
 
 closed_container=$(docker run --detach --read-only \
   --tmpfs /data:rw,noexec,nosuid,size=16m,mode=0700,uid=1000,gid=1000 \
