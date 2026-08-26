@@ -42,6 +42,7 @@ import {
 } from "../lib/rfq.mjs";
 import {
   RfqDeliveryError,
+  buildRfqDeliveryRequest,
   buildSignedRfqDeliveryResponse,
   collectVerifiedRfqDeliveries,
   queryVerifiedRfqDelivery,
@@ -1340,6 +1341,195 @@ test("rejects an RFQ payload mismatch before transport", async () => {
     nowSeconds: () => NOW,
   }), /does not match its request digest/);
   assert.equal(requests, 0);
+});
+
+test("rejects accessor and coercion RFQ inputs without executing caller code", async () => {
+  const data = await fixture();
+  let getterCalls = 0;
+  let coercionCalls = 0;
+  let requests = 0;
+  const accessorPricing = { ...pricing };
+  Object.defineProperty(accessorPricing, "maxFeeBps", {
+    enumerable: true,
+    get() {
+      getterCalls += 1;
+      return pricing.maxFeeBps;
+    },
+  });
+  assert.throws(() => rfqDeliveryPayloadDigest(accessorPricing), /enumerable data properties/);
+
+  const coercionPricing = {
+    ...pricing,
+    maxFeeBps: {
+      toString() {
+        coercionCalls += 1;
+        return pricing.maxFeeBps;
+      },
+    },
+  };
+  assert.throws(() => rfqDeliveryPayloadDigest(coercionPricing), /canonical bounded unsigned integer/);
+
+  const accessorCall = {
+    paths: data.paths,
+    requestId: pricing.pricingId,
+    requestDigest: rfqDeliveryPayloadDigest(pricing),
+    rfq: pricing,
+    policy: deliveryPolicy,
+    requestImpl: async () => { requests += 1; },
+    nowSeconds: () => NOW,
+  };
+  Object.defineProperty(accessorCall, "policy", {
+    enumerable: true,
+    get() {
+      getterCalls += 1;
+      return deliveryPolicy;
+    },
+  });
+  await assert.rejects(collectVerifiedRfqDeliveries(accessorCall), /enumerable data properties/);
+
+  const accessorPaths = pathPlan(data.verifications);
+  Object.defineProperty(accessorPaths[0], "kind", {
+    enumerable: true,
+    get() {
+      getterCalls += 1;
+      return "relay";
+    },
+  });
+  await assert.rejects(collectVerifiedRfqDeliveries({
+    paths: accessorPaths,
+    requestId: pricing.pricingId,
+    requestDigest: rfqDeliveryPayloadDigest(pricing),
+    rfq: pricing,
+    policy: deliveryPolicy,
+    requestImpl: async () => { requests += 1; },
+    nowSeconds: () => NOW,
+  }), /enumerable data properties/);
+  assert.equal(getterCalls, 0);
+  assert.equal(coercionCalls, 0);
+  assert.equal(requests, 0);
+});
+
+test("rejects hidden, symbolic, inherited, sparse, and decorated RFQ authority", async () => {
+  const data = await fixture();
+  let requests = 0;
+  const base = {
+    requestId: pricing.pricingId,
+    requestDigest: rfqDeliveryPayloadDigest(pricing),
+    rfq: pricing,
+    policy: deliveryPolicy,
+    requestImpl: async () => { requests += 1; },
+    nowSeconds: () => NOW,
+  };
+  const hiddenPolicy = { ...deliveryPolicy };
+  Object.defineProperty(hiddenPolicy, "override", { enumerable: false, value: true });
+  await assert.rejects(collectVerifiedRfqDeliveries({
+    ...base,
+    paths: data.paths,
+    policy: hiddenPolicy,
+  }), /fields are outside policy/);
+
+  const symbolicPricing = { ...pricing, [Symbol("private-beneficiary")]: user.address };
+  assert.throws(() => rfqDeliveryPayloadDigest(symbolicPricing), /fields are outside policy/);
+
+  const inheritedPath = Object.assign(Object.create({ privileged: true }), data.paths[0]);
+  const inheritedPaths = [...data.paths];
+  inheritedPaths[0] = inheritedPath;
+  await assert.rejects(collectVerifiedRfqDeliveries({ ...base, paths: inheritedPaths }), /plain data object/);
+
+  const sparsePaths = [...data.paths];
+  delete sparsePaths[1];
+  await assert.rejects(collectVerifiedRfqDeliveries({ ...base, paths: sparsePaths }), /dense/);
+
+  const decoratedPaths = [...data.paths];
+  Object.defineProperty(decoratedPaths, "selected", { enumerable: false, value: 0 });
+  await assert.rejects(collectVerifiedRfqDeliveries({ ...base, paths: decoratedPaths }), /dense/);
+  assert.equal(requests, 0);
+});
+
+test("snapshots RFQ collection inputs before concurrent delivery", async () => {
+  const data = await fixture();
+  const mutablePricing = { ...pricing };
+  const mutablePolicy = { ...deliveryPolicy };
+  const mutablePaths = pathPlan(data.verifications);
+  const pending = collectVerifiedRfqDeliveries({
+    paths: mutablePaths,
+    requestId: pricing.pricingId,
+    requestDigest: rfqDeliveryPayloadDigest(pricing),
+    rfq: mutablePricing,
+    policy: mutablePolicy,
+    requestImpl: data.responder,
+    nowSeconds: () => NOW,
+    randomBytesImpl: () => Buffer.alloc(32, 9),
+  });
+  mutablePricing.maxFeeBps = "999";
+  mutablePolicy.minimumRelayPaths = 16;
+  mutablePaths[0].kind = "direct-solver";
+  mutablePaths.push({ ...mutablePaths[0], pathId: "late-path" });
+  const collection = await pending;
+  assert.equal(collection.relayCount, 2);
+  assert.equal(collection.directSolverCount, 2);
+  assert.equal(collection.attemptCount, 4);
+  assert.equal(collection.rfqPayloadDigest, rfqDeliveryPayloadDigest(pricing));
+});
+
+test("rejects accessor-bearing response digest inputs without executing them", () => {
+  let getterCalls = 0;
+  const response = {
+    schema: "treeswap.rfq-delivery-response.v1",
+    request: {},
+    envelopes: [],
+    servedAt: NOW,
+    expiresAt: NOW + 10,
+  };
+  Object.defineProperty(response, "request", {
+    enumerable: true,
+    get() {
+      getterCalls += 1;
+      return {};
+    },
+  });
+  assert.throws(() => rfqDeliveryResponseDigest(response), /enumerable data properties/);
+  assert.equal(getterCalls, 0);
+});
+
+test("rejects accessor and decorated response-builder inputs without executing them", async () => {
+  const candidate = await blindEnvelope(0, 10_000);
+  const request = buildRfqDeliveryRequest({
+    challenge: id("exact-data-builder-challenge").toLowerCase(),
+    requestId: pricing.pricingId,
+    requestDigest: rfqDeliveryPayloadDigest(pricing),
+    pathIdentityDigest: id("exact-data-builder-path").toLowerCase(),
+    rfq: pricing,
+    requestedAt: NOW,
+    expiresAt: NOW + 15,
+  });
+  let getterCalls = 0;
+  const accessorEnvelope = { ...candidate.envelope };
+  Object.defineProperty(accessorEnvelope, "offer", {
+    enumerable: true,
+    get() {
+      getterCalls += 1;
+      return candidate.envelope.offer;
+    },
+  });
+  assert.throws(() => buildSignedRfqDeliveryResponse({
+    request,
+    envelopes: [accessorEnvelope],
+    servedAt: NOW,
+    expiresAt: NOW + 10,
+    privateKey: relayKeys[0].privateKey,
+  }), /enumerable data properties/);
+
+  const decorated = [candidate.envelope];
+  decorated.source = "caller-selected";
+  assert.throws(() => buildSignedRfqDeliveryResponse({
+    request,
+    envelopes: decorated,
+    servedAt: NOW,
+    expiresAt: NOW + 10,
+    privateKey: relayKeys[0].privateKey,
+  }), /dense/);
+  assert.equal(getterCalls, 0);
 });
 
 test("bounds strict RFQ response framing under the complete transport deadline", async () => {
