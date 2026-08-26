@@ -1,6 +1,6 @@
 # RFQ settlement handoff
 
-Status: the exact second user authorization and its durable settlement record are now committed atomically in the local coordinator. A successful browser authorization response proves only that the non-dispatching settlement record exists. It grants no EVM reservation, Lightning payment, funding, claim, or settlement-dispatch authority. Funded operation remains closed.
+Status: the exact second user authorization and its durable settlement record are committed atomically in the local coordinator. A same-process consumer can now derive the exact direction-specific contract typed data, approved deadlines, required EOA signatures, and zero-ETH calldata from that original RFQ provenance. The contract intent is not yet persisted, transported to an independent solver, submitted by the user's wallet, or confirmed onchain. A browser authorization response still proves only that the non-dispatching settlement record exists and grants no EVM reservation, Lightning payment, funding, claim, or settlement-dispatch authority. Funded operation remains closed.
 
 ## Product and pricing boundary
 
@@ -49,8 +49,16 @@ The public quote-request nonce and private escrow-intent nonce are separate repl
 
 `intentDigest` at this stage names the verified offchain execution-authorization commitment. It is not yet a completed `TreeSwapBitVault.SelectedQuote` or `TreeSwapUserEscrow.SolverQuote` digest and must not be presented as an onchain reservation.
 
+## Exact contract-intent preparation
+
+`lib/rfq-contract-intent.mjs` accepts only the original same-process authorized finalization. It independently revalidates the canonical BOLT 11 invoice, requires the exact approved settlement-policy v1 values, derives `quoteExpiresAt`, `lastSafeClaimAt`, and `refundAfter`, and shortens quote expiry to the earliest offer or user-authorization boundary. A fresh quote is required when fewer than 30 seconds remain for wallet submission.
+
+For Lightning → BIT it reproduces `TreeSwapBitVault.SelectedQuote`, uses the private request nonce in the user-scoped contract replay domain, binds the user's beneficiary, and requires both user and solver EOA signatures. For BIT → Lightning it reproduces `TreeSwapUserEscrow.BitToLightningQuote`, uses the solver's signed offer nonce in the solver-scoped replay domain, and pins the BIT payout to the authenticated solver EOA; v1 does not accept an unproven separate solver beneficiary. Both directions use the selected gross BIT amount and fee, exact Lightning amount, payment hash, invoice digest, chain, escrow, and runtime-code commitment. The quote ID is deterministically separated from the RFQ identifiers and commits the private settlement, selected offer, and second authorization.
+
+Only exact low-S 65-byte signatures from the required EOAs produce calldata. The result fixes chain, sender, target, calldata digest, and zero ETH value. Prepared and signed artifacts are same-process provenance objects; copies reject. They explicitly retain `walletDispatchAuthority: false` and `lightningDispatchAuthority: false`. EIP-1271 contract-account support remains excluded from this v1 consumer even though the Solidity escrows support it.
+
 ## Remaining asset-action gate
 
-Before even capped funded testnet use, a separate reviewed consumer must derive the direction-specific escrow quote from this exact durable settlement and original provenance, including beneficiary, BIT amount and fee, Lightning amount, payment hash, invoice digest, user and solver nonces, `quoteExpiresAt`, `lastSafeClaimAt`, and `refundAfter`. It must verify both required signatures, produce exact reviewed calldata, obtain the user's wallet transaction where required, bind the confirmed EVM reservation to the settlement, and only then permit the direction-correct Lightning action through the existing active daemon and private-packet controls.
+Before even capped funded testnet use, the remaining consumer must carry the prepared digest through an authenticated idempotent solver-signing round, persist a separate `contractIntentDigest` without relabeling the current offchain `intentDigest`, obtain and strictly validate the user's wallet transaction, independently confirm the exact canonical finalized reservation, bind that reservation to the durable settlement, and switch every private-packet, evidence, and action gate to the contract digest. Only then may it permit the direction-correct Lightning action through the existing active daemon and private-packet controls.
 
 That consumer must preserve the tested deadline ordering, chain and escrow domains, release/risk/evidence-policy binding, one-use payment hash and nonce rules, finality checks, outbox/restart recovery, and no-preimage persistence. Deployment listeners, persistent-volume failure drills, independently operated solvers and evidence providers, multisig/open-gate controls, public-testnet campaigns, monitoring, and independent review remain separate release gates.

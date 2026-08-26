@@ -78,6 +78,11 @@ import {
   isRfqQuoteIngressRoute,
   rfqQuoteIngressPolicyDigest,
 } from "../lib/rfq-quote-ingress.mjs";
+import {
+  authorizeFinalizedContractIntent,
+  prepareFinalizedContractIntent,
+  verifiedAuthorizedContractIntent,
+} from "../lib/rfq-contract-intent.mjs";
 import { RfqQuoteIngressStore } from "../lib/rfq-quote-ingress-store.mjs";
 import {
   claimRfqSelectedSolverFinalizationOwnership,
@@ -119,6 +124,7 @@ import {
   verifiedSolverQuoteBinding,
   verifySolverCapability,
 } from "../lib/solver-capability.mjs";
+import { TREE_SWAP_SETTLEMENT_POLICY_V1 } from "../lib/settlement-policy.mjs";
 import { createBolt11Invoice, testBolt11Payee } from "./bolt11-fixture.mjs";
 
 const NOW = 2_000_000_000;
@@ -962,6 +968,182 @@ async function durableReservation(t, {
   });
   return { ...prepared, reservation, userAuthorization };
 }
+
+async function authorizedContractFixture(t, direction) {
+  const request = direction === "lightning-to-bit" ? privateRequest : bitToLightningRequest;
+  const pricingRequest = direction === "lightning-to-bit" ? pricing : bitToLightningPricing;
+  const data = await collectedBlindBook({ pricingRequest });
+  const selection = selectBlindQuote(data.book, data.book.offers[0].offer.offerId);
+  const { reservation } = await durableReservation(t, {
+    selection,
+    verification: data.verifications[0],
+    privateSettlementRequest: request,
+  });
+  const invoice = direction === "lightning-to-bit"
+    ? createBolt11Invoice({
+        amountSats: BigInt(selection.selected.offer.lightningAmountSats),
+        paymentHash: id("contract-intent-lightning-to-bit-payment").toLowerCase(),
+        paymentSecret: id("contract-intent-lightning-to-bit-secret").toLowerCase(),
+        privateKey: lightningNodePrivateKeys[0],
+        timestamp: NOW - 30,
+      })
+    : userInvoice;
+  const base = await executableEnvelope(selection.selected.offer, 0, { request });
+  const offer = direction === "lightning-to-bit"
+    ? {
+        ...base.offer,
+        paymentHash: id("contract-intent-lightning-to-bit-payment").toLowerCase(),
+        invoiceDigest: invoiceDigest(invoice),
+      }
+    : base.offer;
+  const envelope = {
+    offer,
+    signature: await solvers[0].signTypedData(
+      rfqDomain(request),
+      EXECUTABLE_RFQ_OFFER_TYPES,
+      offer,
+    ),
+  };
+  const finalized = finalizeSelectedBlindQuote({
+    request,
+    reservation,
+    envelope,
+    capabilityVerification: data.verifications[0],
+    now: NOW,
+    quotePolicy,
+  });
+  const authorized = await executionAuthorization(request, finalized);
+  return { authorized, invoice, request, selection };
+}
+
+test("turns an authorized Lightning-to-BIT RFQ into the exact dual-signed vault intent", async (t) => {
+  const fixture = await authorizedContractFixture(t, "lightning-to-bit");
+  const prepared = prepareFinalizedContractIntent({
+    bitcoinHeight: 900_000,
+    finalization: fixture.authorized,
+    invoice: fixture.invoice,
+    invoicePolicy,
+    now: NOW,
+    settlementPolicy: TREE_SWAP_SETTLEMENT_POLICY_V1,
+  });
+  assert.equal(prepared.schema, "treeswap.prepared-contract-intent.v1");
+  assert.equal(prepared.primaryType, "SelectedQuote");
+  assert.equal(prepared.domain.name, "TreeSwap BIT Vault");
+  assert.equal(prepared.domain.verifyingContract, LIGHTNING_TO_BIT);
+  assert.equal(prepared.message.user, user.address);
+  assert.equal(prepared.message.solver, solvers[0].address);
+  assert.equal(prepared.message.beneficiary, privateRequest.beneficiary);
+  assert.equal(prepared.message.nonce, privateRequest.nonce);
+  assert.equal(prepared.message.amount - prepared.message.fee, privateRequest.exactBitOutputWei);
+  assert.equal(prepared.digest, TypedDataEncoder.hash(prepared.domain, prepared.types, prepared.message));
+  assert.ok(prepared.message.quoteExpiresAt < prepared.message.lastSafeClaimAt);
+  assert.ok(prepared.message.lastSafeClaimAt < prepared.message.refundAfter);
+  assert.equal(prepared.movesFundsImmediately, false);
+  assert.equal(prepared.walletDispatchAuthority, false);
+  assert.equal(prepared.lightningDispatchAuthority, false);
+
+  const solverSignature = await solvers[0].signTypedData(
+    prepared.domain,
+    prepared.types,
+    prepared.message,
+  );
+  const userSignature = await user.signTypedData(prepared.domain, prepared.types, prepared.message);
+  assert.throws(() => authorizeFinalizedContractIntent({
+    now: NOW,
+    prepared,
+    solverSignature: userSignature,
+    userSignature,
+  }), /solver contract intent signature belongs to another account/);
+  assert.throws(() => authorizeFinalizedContractIntent({
+    now: NOW,
+    prepared: { ...prepared },
+    solverSignature,
+    userSignature,
+  }), /original prepared RFQ artifact/);
+  const authorized = authorizeFinalizedContractIntent({
+    now: NOW,
+    prepared,
+    solverSignature,
+    userSignature,
+  });
+  assert.equal(authorized.schema, "treeswap.authorized-contract-intent.v1");
+  assert.equal(authorized.contractIntentDigest, prepared.digest);
+  assert.equal(authorized.userAuthorizationDigest, fixture.authorized.userAuthorizationDigest);
+  assert.equal(authorized.transaction.from, user.address);
+  assert.equal(authorized.transaction.to, LIGHTNING_TO_BIT);
+  assert.equal(authorized.transaction.value, "0x0");
+  assert.equal(authorized.transaction.data.slice(0, 10), "0x688ff634");
+  assert.equal(authorized.walletDispatchAuthority, false);
+  assert.equal(authorized.lightningDispatchAuthority, false);
+  assert.equal(verifiedAuthorizedContractIntent(authorized, { now: NOW + 1 }), authorized);
+  assert.throws(
+    () => verifiedAuthorizedContractIntent({ ...authorized }, { now: NOW + 1 }),
+    /lacks verified RFQ and signature provenance/,
+  );
+});
+
+test("turns an authorized BIT-to-Lightning RFQ into a solver-signed user escrow intent", async (t) => {
+  const fixture = await authorizedContractFixture(t, "bit-to-lightning");
+  const prepared = prepareFinalizedContractIntent({
+    bitcoinHeight: 900_000,
+    finalization: fixture.authorized,
+    invoice: `lightning:${fixture.invoice.toUpperCase()}`,
+    invoicePolicy,
+    now: NOW,
+    settlementPolicy: TREE_SWAP_SETTLEMENT_POLICY_V1,
+  });
+  assert.equal(prepared.primaryType, "BitToLightningQuote");
+  assert.equal(prepared.domain.name, "TreeSwap User BIT Escrow");
+  assert.equal(prepared.domain.verifyingContract, BIT_TO_LIGHTNING);
+  assert.equal(prepared.message.user, user.address);
+  assert.equal(prepared.message.solver, solvers[0].address);
+  assert.equal(prepared.message.solverBeneficiary, solvers[0].address);
+  assert.equal(prepared.message.solverNonce, fixture.authorized.envelope.offer.offerNonce);
+  assert.equal(prepared.message.lightningAmountSats, bitToLightningRequest.exactLightningOutputSats);
+  const solverSignature = await solvers[0].signTypedData(
+    prepared.domain,
+    prepared.types,
+    prepared.message,
+  );
+  const unnecessaryUserSignature = await user.signTypedData(
+    prepared.domain,
+    prepared.types,
+    prepared.message,
+  );
+  assert.throws(() => authorizeFinalizedContractIntent({
+    now: NOW,
+    prepared,
+    solverSignature,
+    userSignature: unnecessaryUserSignature,
+  }), /must not carry a user contract signature/);
+  const authorized = authorizeFinalizedContractIntent({
+    now: NOW,
+    prepared,
+    solverSignature,
+    userSignature: null,
+  });
+  assert.equal(authorized.userSignature, null);
+  assert.equal(authorized.transaction.from, user.address);
+  assert.equal(authorized.transaction.to, BIT_TO_LIGHTNING);
+  assert.equal(authorized.transaction.data.slice(0, 10), "0xcd83331b");
+  assert.equal(authorized.walletDispatchAuthority, false);
+  assert.throws(() => prepareFinalizedContractIntent({
+    bitcoinHeight: 900_000,
+    finalization: fixture.authorized,
+    invoice: `${fixture.invoice}changed`,
+    invoicePolicy,
+    now: NOW,
+    settlementPolicy: TREE_SWAP_SETTLEMENT_POLICY_V1,
+  }), /invoice validation failed/);
+  assert.throws(() => prepareFinalizedContractIntent({
+    bitcoinHeight: 900_000,
+    finalization: fixture.authorized,
+    invoice: fixture.invoice,
+    invoicePolicy,
+    now: NOW + 31,
+    settlementPolicy: TREE_SWAP_SETTLEMENT_POLICY_V1,
+  }), /required wallet submission window/);
+});
 
 async function executionCeremonyFixture(t, {
   onRequest = null,
@@ -2057,7 +2239,7 @@ test("carries one durable reservation through authenticated solver finalization 
           invoice: solverInvoice,
           envelope: executable,
           servedAt: NOW,
-          expiresAt: NOW + 15,
+          expiresAt: NOW + 30,
           endpointPrivateKey: endpointKeys[0].privateKey,
         }));
       } catch (error) {
@@ -2149,6 +2331,24 @@ test("carries one durable reservation through authenticated solver finalization 
   assert.equal(settlement.recordDigest, ack.settlementRecordDigest);
   assert.equal(settlement.reservationId, null);
   assert.deepEqual(coordinatorStore.listSettlementActions(settlement.settlementId), []);
+  const contractIntent = finalizationLease.prepareContractIntent({
+    bitcoinHeight: 900_000,
+    reservationToken: handoff.reservationToken,
+    settlementPolicy: TREE_SWAP_SETTLEMENT_POLICY_V1,
+  });
+  assert.equal(contractIntent.primaryType, "SelectedQuote");
+  assert.equal(contractIntent.userAuthorizationDigest, secondPrompt.digest);
+  assert.equal(contractIntent.walletDispatchAuthority, false);
+  assert.equal(finalizationLease.prepareContractIntent({
+    bitcoinHeight: 900_000,
+    reservationToken: handoff.reservationToken,
+    settlementPolicy: TREE_SWAP_SETTLEMENT_POLICY_V1,
+  }), contractIntent);
+  assert.throws(() => finalizationLease.prepareContractIntent({
+    bitcoinHeight: 900_001,
+    reservationToken: handoff.reservationToken,
+    settlementPolicy: TREE_SWAP_SETTLEMENT_POLICY_V1,
+  }), /Bitcoin height changed/);
   assert.deepEqual(await finalizationLease.finalize({
     invoice: "",
     request: privateRequest,
