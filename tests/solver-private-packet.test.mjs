@@ -342,6 +342,20 @@ test("bounds headers and the complete response-body read under the same deadline
     nowSeconds: () => 1_002,
   };
 
+  let rejectedBodyCancelled = false;
+  await assert.rejects(
+    fetchVerifiedPrivatePacket({
+      ...args,
+      requestImpl: async () => new Response(new ReadableStream({
+        cancel() {
+          rejectedBodyCancelled = true;
+        },
+      }), { status: 503 }),
+    }),
+    /rejected the request/,
+  );
+  assert.equal(rejectedBodyCancelled, true);
+
   await assert.rejects(
     fetchVerifiedPrivatePacket({
       ...args,

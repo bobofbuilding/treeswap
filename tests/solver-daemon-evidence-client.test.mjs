@@ -474,6 +474,34 @@ test("rejects route disagreement, wrong signers, copied responses, redirects, an
       /rejected the request|disable storage/,
     );
   }
+
+  let rejectedBodiesCancelled = 0;
+  let nonce = 0;
+  const rejectedControls = createTestSolverDaemonEvidenceControls({
+    policy: policy(),
+    routes: {
+      lightningOperator: "https://lightning-approver.internal",
+      securityReviewer: "https://security-approver.internal",
+    },
+    requesterPrivateKey: REQUESTER_PRIVATE_KEY,
+    requesterKeyId: REQUESTER_KEY_ID,
+    requestImpl: async () => ({
+      status: 503,
+      redirected: false,
+      body: new ReadableStream({
+        cancel() {
+          rejectedBodiesCancelled += 1;
+        },
+      }),
+    }),
+    nowSeconds: () => NOW,
+    randomBytesImpl: () => Buffer.alloc(32, ++nonce),
+  });
+  await assert.rejects(
+    rejectedControls.verifyAssets({ settlement: observed, expectedTerminal: "COMPLETED" }),
+    /rejected the request/,
+  );
+  assert.equal(rejectedBodiesCancelled, 2);
 });
 
 test("rejects unsupported terminal requests, expired evidence, and route timeouts", async () => {
