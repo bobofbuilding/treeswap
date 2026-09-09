@@ -28,7 +28,7 @@ const CHAIN_ID = 31_337n;
 const MAXIMUM_AGE = 15;
 const MONITOR_NOW = 2_100_100_000;
 const EXPECTED_MONITOR_POLICY_DIGEST = "0xbdf2e365f5c4aaf1385a50f0637c0380e0d9a25ce15554658be57ada73b2c207";
-const EXPECTED_CAMPAIGN_DIGEST = "0x6aa1e5046fb587f732d5387a0d218539f60d8b27eb61d28ef9b58e668e4bacf2";
+const EXPECTED_CAMPAIGN_DIGEST = "0x52937191b5e8efdc35414b4511e22bd4e0a1a776c19a803f29529bac61f727c7";
 
 if (!RPC_URL || !MNEMONIC) throw new Error("safety monitor smoke requires an ephemeral RPC URL and mnemonic");
 if (!/^anvil Version: [0-9.]+/.test(ANVIL_VERSION)) throw new Error("Anvil version is not pinned in evidence");
@@ -355,7 +355,7 @@ try {
   assert.equal(totalActionCalls, actionCallsBeforeCopy);
 
   const evidence = Object.freeze({
-    schema: "treeswap.safety-monitor-smoke.v5",
+    schema: "treeswap.safety-monitor-smoke.v6",
     chainId: String(CHAIN_ID),
     executionClient: ANVIL_VERSION,
     actualOpenGate: true,
@@ -383,10 +383,15 @@ try {
     productionMonitorIncluded: false,
     fundingAuthorization: false,
   });
-  const evidenceDigest = coordinatorCommitmentDigest(evidence);
+  // Runtime versions belong in the retained evidence, but must not change the
+  // fixed campaign assertion when CI installs a newer execution client.
+  const { executionClient, ...campaign } = evidence;
+  assert.equal(executionClient, ANVIL_VERSION);
+  const campaignDigest = coordinatorCommitmentDigest(campaign);
+  const evidenceDigest = coordinatorCommitmentDigest({ ...evidence, campaignDigest });
   assert.equal(safety.policyDigest, EXPECTED_MONITOR_POLICY_DIGEST);
-  assert.equal(evidenceDigest, EXPECTED_CAMPAIGN_DIGEST);
-  process.stdout.write(`${JSON.stringify({ ...evidence, evidenceDigest })}\n`);
+  assert.equal(campaignDigest, EXPECTED_CAMPAIGN_DIGEST);
+  process.stdout.write(`${JSON.stringify({ ...evidence, campaignDigest, evidenceDigest })}\n`);
 } finally {
   await provider.destroy();
 }

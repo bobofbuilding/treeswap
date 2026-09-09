@@ -1,5 +1,7 @@
 # Safety monitoring boundary
 
+The local safety-monitor rehearsal emits schema v6. Its fixed `campaignDigest` commits to all behavioral results and the reviewed monitor policy; `evidenceDigest` additionally binds the actual execution-client version and that campaign digest. This preserves runtime provenance without treating a newer CI execution-client version as a behavioral regression. Neither digest is production monitoring evidence.
+
 Status: one bounded fail-closed monitoring cycle, exact-two release-bound signed collectors per safety domain, exact-two policy-bound guardian broadcasters, exact-two policy-bound finalized gate confirmers, exact-two policy-bound alert routes, and a local actual-gate outage campaign are implemented. A continuously scheduled deployment, genuinely independently operated collectors, confirmers, and monitor instances, real redundant guardian transaction delivery, public alert routing, retention, and operator drills remain funding gates.
 
 ## Required observations
