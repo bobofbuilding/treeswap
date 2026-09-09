@@ -2,6 +2,8 @@
 
 Status: the public prototype gate passes. Testnet and funded-mainnet gates do not.
 
+For the current ordered engineering and external-evidence queue, see [Live-test backlog](./LIVE_TEST_BACKLOG.md).
+
 No repository checkbox can substitute for deployed evidence. A gate becomes complete only when its artifact, exact deployment identifiers, test result, reviewer, and date are attached to a release record.
 
 ## Public prototype — complete
