@@ -215,7 +215,7 @@ async function databaseObservation(database) {
 }
 
 async function run(fixture, overrides = {}) {
-  const logs = [];
+  const logs = overrides.logs ?? [];
   const result = await runScheduledAccountStorageMonitorTestOnly({
     controller: overrides.controller ?? {
       cron: SCHEDULED_ACCOUNT_STORAGE_MONITOR_CRON,
@@ -330,6 +330,58 @@ test("evidence retention failure pages both routes and cannot emit a positive re
   assert.equal(fixture.secondaryAlert.requests.length, 1);
   const primary = (await fixture.primaryAlert.requests[0].clone().json()).alert;
   assert.deepEqual(primary.reasonCodes, ["MONITOR_EVIDENCE_RETENTION_FAILED"]);
+});
+
+test("stalled D1, R2, and observer cleanup cannot prevent bounded failure and escalation", async () => {
+  const stalled = () => new Promise(() => {});
+  const database = fixtures();
+  database.database.batch = stalled;
+  const retention = fixtures();
+  const put = retention.evidence.put.bind(retention.evidence);
+  let finishPut;
+  retention.evidence.put = async (...args) => {
+    const result = await put(...args);
+    return new Promise((resolve) => { finishPut = () => resolve(result); });
+  };
+  const observer = fixtures({ access: {
+    async fetch() {
+      return new Response(new ReadableStream({ cancel: stalled }), { status: 503 });
+    },
+  } });
+  const streaming = fixtures({ access: {
+    async fetch() {
+      return new Response(new ReadableStream({ pull: stalled, cancel: stalled }), {
+        headers: { "content-type": "application/json", "cache-control": "no-store" },
+      });
+    },
+  } });
+  await Promise.all([database, retention, observer, streaming].map(async (fixture) => {
+    let timer;
+    const logs = [];
+    try {
+      await assert.rejects(() => Promise.race([
+        run(fixture, { logs }),
+        new Promise((_, reject) => {
+          timer = setTimeout(() => reject(new Error("monitor did not finish within 18 seconds")), 18_000);
+        }),
+      ]), /scheduled account storage monitor failed closed/);
+      assert.equal(fixture.primaryAlert.requests.length, 1);
+      assert.equal(fixture.secondaryAlert.requests.length, 1);
+      if (fixture === retention) {
+        const alert = (await fixture.primaryAlert.requests[0].clone().json()).alert;
+        assert.deepEqual(alert.reasonCodes, ["MONITOR_EVIDENCE_RETENTION_FAILED"]);
+        // R2 cannot be cancelled: a late successful write must not emit a receipt or retry.
+        finishPut();
+        await new Promise((resolve) => setImmediate(resolve));
+        assert.equal(fixture.evidence.puts.length, 1);
+        assert.deepEqual(logs, []);
+      } else {
+        assert.equal(JSON.parse(fixture.evidence.puts[0].body).status, "unsafe");
+      }
+    } finally {
+      clearTimeout(timer);
+    }
+  }));
 });
 
 test("requires the exact cadence, causal window, private mode, source, and separate bindings", async () => {

@@ -45,6 +45,8 @@ Every evaluated cycle is written once under `account-storage-monitor/v1/` in a s
 
 Unsafe or degraded cycles are retained and then fail the Cron invocation. If retention itself fails, both paging routes receive a separate aggregate retention-failure alert and the invocation fails without emitting a positive receipt. Provider errors are collapsed to fixed failure states and never enter evidence or logs.
 
+The scheduled composition bounds both the D1 probe and the R2 retention operation to 15 seconds. A non-returning D1 operation becomes a missing database observation, so the unsafe cycle still pages both routes and retains its result. A non-returning R2 write reaches the same dual-route retention-failure escalation as a rejected write. Observer body cancellation is best effort and never awaited on the failure path; a stalled body or cancellation callback cannot suppress escalation. D1/R2 operations cannot be cancelled through these bindings: a timed-out write may still finish later, but it is never retried by that invocation, cannot emit a positive receipt, and must be reconciled as ambiguous retained evidence.
+
 ## Deployment plan — not executed
 
 The reviewed private deployment must define a dedicated Worker whose source of truth includes this shape:
