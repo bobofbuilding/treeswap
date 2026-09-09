@@ -1,0 +1,10 @@
+{
+  // Build-only template. Real bindings and secret custody require reviewed deployment evidence.
+  "name": "treeswap-account-maintenance-observer",
+  "main": "worker.mjs",
+  "compatibility_date": "2026-09-09",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": false,
+  "preview_urls": false,
+  "routes": []
+}

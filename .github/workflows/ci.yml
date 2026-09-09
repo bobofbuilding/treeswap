@@ -24,6 +24,7 @@ jobs:
       - run: npm audit --audit-level=high
       - run: npm run lint
       - run: npm test
+      - run: npx wrangler deploy --dry-run --config infra/account-maintenance-observer/wrangler.example.jsonc
       - run: npm run vercel-build
 
   contracts:
@@ -101,6 +102,8 @@ jobs:
       - run: node --check lib/d1-access-policy-review.mjs
       - run: node --check lib/scheduled-account-storage-monitor.mjs
       - run: node --check infra/account-storage-monitor/worker.mjs
+      - run: node --check lib/account-maintenance-observer.mjs
+      - run: node --check infra/account-maintenance-observer/worker.mjs
       - run: node --check lib/qualification-evidence.mjs
       - run: node --check lib/local-qualification-verification.mjs
       - run: node --check lib/production-duration-evidence.mjs

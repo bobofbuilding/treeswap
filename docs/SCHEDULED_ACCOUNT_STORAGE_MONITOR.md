@@ -22,6 +22,8 @@ It also requires the exact clean source commit, deployment version, non-secret c
 
 The access and maintenance observations arrive through private [Cloudflare Service Bindings](https://developers.cloudflare.com/workers/runtime-apis/bindings/service-bindings/). Service Bindings avoid a public route, but remain Cloudflare-account configuration and do not establish organizational independence on their own.
 
+The [retained maintenance observer](./ACCOUNT_MAINTENANCE_OBSERVER.md) now implements the maintenance side against original checksum-verified scheduler records. Its local integration test carries those records through the signed response into a healthy monitor cycle, then removes the records and proves dual-route escalation. Access collection, paging providers, private deployment, and live observation evidence remain required.
+
 Each observer receives one strict JSON request containing only the observation kind, source and deployment commitments, database commitment, request time, 30-second expiry, and a fresh 256-bit challenge. The two challenges must differ. The observer response must:
 
 - use the exact role-specific schema and fields;

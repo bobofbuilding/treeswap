@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { createHash, generateKeyPairSync, sign } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
+import { handleAccountMaintenanceObservationForTests } from "../lib/account-maintenance-observer.mjs";
+import { runScheduledAccountMaintenanceTestOnly } from "../lib/scheduled-account-maintenance.mjs";
 import {
   collectAccountStorageDatabaseObservationForTests,
 } from "../lib/account-storage-monitor.mjs";
@@ -266,6 +268,57 @@ test("runs one private one-minute monitor cycle and retains a healthy aggregate 
   });
   assert.equal(logs.length, 1);
   assert.doesNotMatch(JSON.stringify({ result, record }), /(cookie|email|invoice|password|preimage|private.?key|wallet.?address)/i);
+});
+
+test("composes real scheduler evidence through the maintenance observer into the signed monitor cycle", async () => {
+  const f = fixtures();
+  const objects = new Map();
+  const bucket = {
+    async put(key, text, options) {
+      const object = { key, text, size: Buffer.byteLength(text), etag: "retained", version: "1", ...options };
+      objects.set(key, object);
+      return object;
+    },
+    async list({ prefix }) {
+      return { truncated: false, objects: [...objects.values()].filter((object) => object.key.startsWith(prefix)) };
+    },
+    async get(key) {
+      const object = objects.get(key);
+      return object ? { ...object, body: new Response(object.text).body } : null;
+    },
+  };
+  const maintenanceEnv = {
+    DB: { prepare: () => ({ bind: () => ({}) }),
+      batch: async () => Array.from({ length: 3 }, () => ({ success: true, results: [] })) },
+    ACCOUNT_MAINTENANCE_EVIDENCE: bucket,
+    ACCOUNT_MAINTENANCE_MODE: "private-scheduled-only",
+    ACCOUNT_MAINTENANCE_SOURCE_COMMIT: "b".repeat(40),
+    ACCOUNT_MAINTENANCE_DEPLOYMENT_VERSION: "13",
+    ACCOUNT_MAINTENANCE_SOURCE_DATABASE_DIGEST: f.env.ACCOUNT_MONITOR_DATABASE_DIGEST,
+    ACCOUNT_MAINTENANCE_EVIDENCE_BUCKET_DIGEST: digest("separate maintenance bucket"),
+  };
+  const slot = Math.floor(SCHEDULED_TIME / 900_000) * 900_000;
+  await runScheduledAccountMaintenanceTestOnly({
+    controller: { cron: "*/15 * * * *", scheduledTime: slot }, env: maintenanceEnv,
+    clock: () => slot + 1000, log: () => {},
+  });
+  const observerEnv = {
+    ...maintenanceEnv,
+    ACCOUNT_MAINTENANCE_OBSERVER_MODE: "private-service-binding-only",
+    ACCOUNT_MONITOR_SOURCE_COMMIT: SOURCE_COMMIT,
+    ACCOUNT_MONITOR_DEPLOYMENT_VERSION: "15",
+    ACCOUNT_MAINTENANCE_OBSERVER_PUBLIC_KEY: publicKeyBase64Url(MAINTENANCE_KEYS),
+    ACCOUNT_MAINTENANCE_OBSERVER_PRIVATE_KEY: MAINTENANCE_KEYS.privateKey.export({ type: "pkcs8", format: "der" }).toString("base64url"),
+  };
+  delete observerEnv.DB;
+  f.env.ACCOUNT_MAINTENANCE_OBSERVER = { fetch: (request) => handleAccountMaintenanceObservationForTests({
+    request, env: observerEnv, clock: () => SCHEDULED_TIME + 500,
+  }) };
+  assert.equal((await run(f)).result.outcome, "HEALTHY");
+  objects.clear();
+  await assert.rejects(() => run(f), /failed closed/);
+  assert.equal(f.primaryAlert.requests.length, 1);
+  assert.equal(f.secondaryAlert.requests.length, 1);
 });
 
 test("an authenticated access anomaly pages both routes, retains unsafe evidence, and fails the invocation", async () => {
