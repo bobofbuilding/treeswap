@@ -228,7 +228,7 @@ export default function WalletAccount() {
             aria-labelledby="account-title"
             onMouseDown={(event) => event.stopPropagation()}
           >
-            <button type="button" className="modal-close" onClick={() => setOpen(false)} aria-label="Close account">
+            <button data-insights="close-account" type="button" className="modal-close" onClick={() => setOpen(false)} aria-label="Close account">
               ×
             </button>
             <p className="modal-kicker">TREESWAP ACCOUNT</p>
@@ -284,11 +284,11 @@ export default function WalletAccount() {
                     {working ? "Saving…" : session.notifications ? "Update email preferences" : "Attach email"} <span>→</span>
                   </button>
                   {session.notifications && (
-                    <button type="button" className="text-action" onClick={detachEmail} disabled={working}>Detach email</button>
+                    <button data-insights="detach-email" type="button" className="text-action" onClick={detachEmail} disabled={working}>Detach email</button>
                   )}
                 </div>
 
-                <button type="button" className="signout-action" onClick={signOut} disabled={working}>Sign out</button>
+                <button data-insights="sign-out" type="button" className="signout-action" onClick={signOut} disabled={working}>Sign out</button>
               </>
             )}
 

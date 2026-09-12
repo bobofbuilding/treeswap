@@ -9,9 +9,9 @@ const contentSecurityPolicy = [
   "form-action 'self'",
   "img-src 'self' data: blob:",
   "font-src 'self' data:",
-  "style-src 'self' 'unsafe-inline'",
-  "script-src 'self' 'unsafe-inline'",
-  "connect-src 'self'",
+  "style-src 'self' 'unsafe-inline' https://insights.bittrees.org",
+  "script-src 'self' 'unsafe-inline' https://insights.bittrees.org",
+  "connect-src 'self' https://insights.bittrees.org",
   "manifest-src 'self'",
 ].join("; ");
 

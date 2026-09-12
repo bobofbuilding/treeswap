@@ -1,3 +1,4 @@
+import InsightsScript from "next/script";
 import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import "./globals.css";
@@ -98,6 +99,7 @@ export default function RootLayout({
       </head>
       <body className={`${geistSans.variable} ${geistMono.variable}`}>
         {children}
+      <InsightsScript src="https://insights.bittrees.org/consent.js" data-insights-site="treeswap" strategy="afterInteractive" />
       </body>
     </html>
   );

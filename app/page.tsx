@@ -156,10 +156,10 @@ export default function Home() {
           <span>treeswap</span>
         </Link>
         <div className="nav-links">
-          <a className="active" href="#trade">Trade</a>
-          <a href="#mechanism">How it works</a>
-          <a href="https://github.com/bobofbuilding/treeswap/blob/main/docs/THREAT_MODEL.md" target="_blank" rel="noreferrer">Safety</a>
-          <a href="https://github.com/bobofbuilding/treeswap" target="_blank" rel="noreferrer">GitHub</a>
+          <a data-insights="navigate-/trade" className="active" href="#trade">Trade</a>
+          <a data-insights="navigate-/mechanism" href="#mechanism">How it works</a>
+          <a data-insights="navigate-githubcom/bobofbuilding/treeswap/blob/main/docs/threatmodelmd" href="https://github.com/bobofbuilding/treeswap/blob/main/docs/THREAT_MODEL.md" target="_blank" rel="noreferrer">Safety</a>
+          <a data-insights="navigate-githubcom/bobofbuilding/treeswap" href="https://github.com/bobofbuilding/treeswap" target="_blank" rel="noreferrer">GitHub</a>
         </div>
         <WalletAccount />
       </nav>
@@ -184,7 +184,7 @@ export default function Home() {
           }
         >
           <div className="card-tabs" role="group" aria-label="TreeSwap tools">
-            <button
+            <button data-insights="swap"
               type="button"
               aria-pressed={isSwapView}
               className={isSwapView ? "active" : ""}
@@ -192,7 +192,7 @@ export default function Home() {
             >
               Swap
             </button>
-            <button
+            <button data-insights="pay"
               type="button"
               aria-pressed={view === "send"}
               className={view === "send" ? "active" : ""}
@@ -200,7 +200,7 @@ export default function Home() {
             >
               Pay
             </button>
-            <button
+            <button data-insights="earn"
               type="button"
               aria-pressed={view === "pool"}
               className={view === "pool" ? "active" : ""}
@@ -215,7 +215,7 @@ export default function Home() {
           ) : view !== "pool" ? (
             <div className="swap-view">
               <div className="swap-direction-tabs" role="group" aria-label="Swap direction">
-                <button
+                <button data-insights="pay-invoice"
                   type="button"
                   aria-pressed={view === "pay-invoice"}
                   className={view === "pay-invoice" ? "active" : ""}
@@ -223,7 +223,7 @@ export default function Home() {
                 >
                   Pay invoice
                 </button>
-                <button
+                <button data-insights="receive-bit"
                   type="button"
                   aria-pressed={view === "get-bit"}
                   className={view === "get-bit" ? "active" : ""}
@@ -237,7 +237,7 @@ export default function Home() {
                   <div className="invoice-panel">
                     <div className="invoice-label">
                       <label htmlFor="lightning-invoice">Lightning invoice</label>
-                      <button type="button" onClick={loadDemoInvoice}>Use demo</button>
+                      <button data-insights="use-demo" type="button" onClick={loadDemoInvoice}>Use demo</button>
                     </div>
                     <textarea
                       id="lightning-invoice"
@@ -301,7 +301,7 @@ export default function Home() {
                   <div className="address-panel">
                     <div className="invoice-label">
                       <label htmlFor="bit-receive-address">BIT receive address</label>
-                      <button type="button" onClick={() => setReceiveAddress(DEMO_ADDRESS)}>Use demo</button>
+                      <button data-insights="use-demo" type="button" onClick={() => setReceiveAddress(DEMO_ADDRESS)}>Use demo</button>
                     </div>
                     <input
                       id="bit-receive-address"
@@ -442,7 +442,7 @@ export default function Home() {
                 </div>
               </details>
 
-              <button
+              <button data-insights="preview-solver-capacity"
                 type="button"
                 className="primary-action"
                 disabled={lightningReserve <= 0 || bitReserve <= 0}
@@ -507,13 +507,13 @@ export default function Home() {
       <footer>
         <Link href="/" className="brand footer-brand"><span className="brand-mark" aria-hidden="true"><i /><b>ϟ</b></span><span>treeswap</span></Link>
         <p>Competitive swaps between Bitcoin Lightning and Bittrees BIT.</p>
-        <span><a href="https://github.com/bobofbuilding/treeswap" target="_blank" rel="noreferrer">Open-source prototype</a> · MIT</span>
+        <span><a data-insights="navigate-githubcom/bobofbuilding/treeswap" href="https://github.com/bobofbuilding/treeswap" target="_blank" rel="noreferrer">Open-source prototype</a> · MIT</span>
       </footer>
 
       {intentOpen && (
         <div className="modal-backdrop" role="presentation" onMouseDown={() => setIntentOpen(false)}>
           <section ref={intentModalRef} className="intent-modal" role="dialog" aria-modal="true" aria-labelledby="intent-title" onMouseDown={(event) => event.stopPropagation()}>
-            <button type="button" className="modal-close" onClick={() => setIntentOpen(false)} aria-label="Close simulation">×</button>
+            <button data-insights="close-simulation" type="button" className="modal-close" onClick={() => setIntentOpen(false)} aria-label="Close simulation">×</button>
             <span className="modal-kicker">TWO CONFIRMATIONS · PROTOTYPE</span>
             <h2 id="intent-title">
               {!paymentStarted
@@ -563,7 +563,7 @@ export default function Home() {
                     <div className="checkout-warning">
                       Prototype preview only. This screen does not open a wallet, reserve capacity, lock BIT, create an invoice, or move funds.
                     </div>
-                    <button type="button" className="primary-action" onClick={() => setConfirmationStep(2)}>
+                    <button data-insights="review-exact-invoice" type="button" className="primary-action" onClick={() => setConfirmationStep(2)}>
                       Review exact invoice <span>→</span>
                     </button>
                   </>
@@ -594,7 +594,7 @@ export default function Home() {
                       Prototype preview only. A live flow must fully verify the BOLT 11 checksum, signature, expiry, network, amount, features, and payment hash before this wallet request appears.
                     </div>
                     <p className="checkout-account-note">This second signature is not a token allowance. Email delivery is disabled during the prototype.</p>
-                    <button
+                    <button data-insights="simulate-final-confirmation"
                       type="button"
                       className="primary-action"
                       onClick={() => { setIntentPhase(0); setPaymentStarted(true); }}
@@ -620,7 +620,7 @@ export default function Home() {
                 </div>
                 <div className="hash-card"><span>Shared payment hash</span><code>7ea4…c91b</code></div>
                 {intentPhase >= intentSteps.length ? (
-                  <button type="button" className="primary-action" onClick={() => setIntentOpen(false)}>Done <span>✓</span></button>
+                  <button data-insights="done" type="button" className="primary-action" onClick={() => setIntentOpen(false)}>Done <span>✓</span></button>
                 ) : (
                   <div className="settling-line"><i /> Simulating invoice settlement</div>
                 )}

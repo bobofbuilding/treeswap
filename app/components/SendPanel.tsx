@@ -404,7 +404,7 @@ export default function SendPanel() {
             <div><span>TreeSwap fee</span><strong>None</strong></div>
           </div>
 
-          <button type="button" className="primary-action" onClick={reviewLightningSend} disabled={!invoice || !invoiceAmount}>
+          <button data-insights="review-lightning-payment" type="button" className="primary-action" onClick={reviewLightningSend} disabled={!invoice || !invoiceAmount}>
             Review Lightning payment <span>→</span>
           </button>
         </>
@@ -435,7 +435,7 @@ export default function SendPanel() {
       {review && (
         <div className="modal-backdrop" role="presentation" onMouseDown={() => { if (!sending) setReview(null); }}>
           <section className="intent-modal send-modal" role="dialog" aria-modal="true" aria-labelledby="send-review-title" onMouseDown={(event) => event.stopPropagation()}>
-            <button type="button" className="modal-close" onClick={() => setReview(null)} aria-label="Close send review" disabled={sending}>×</button>
+            <button data-insights="close-send-review" type="button" className="modal-close" onClick={() => setReview(null)} aria-label="Close send review" disabled={sending}>×</button>
             <span className="modal-kicker">DIRECT SEND · REAL FUNDS</span>
             <h2 id="send-review-title">Check it once more.</h2>
             <p>Your wallet provides the final confirmation. Sign-in is not used to authorize this payment.</p>
