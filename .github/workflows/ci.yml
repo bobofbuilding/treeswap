@@ -17,7 +17,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22.22.0
+          node-version: 22.23.4
           cache: npm
       - run: npm ci
       - run: npm audit --omit=dev --audit-level=moderate
@@ -47,7 +47,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22.22.0
+          node-version: 22.23.4
       - run: bash -n infra/regtest/lab.sh
       - run: node --check lib/lnd-rest-client.mjs
       - run: node --check lib/selected-solver-invoice-material.mjs
@@ -71,7 +71,7 @@ jobs:
           fetch-depth: 0
       - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
-          node-version: 22.22.0
+          node-version: 22.23.4
           cache: npm
       - uses: foundry-rs/foundry-toolchain@908c540300062bd5a7e473851cdb4282204cee09 # v1.9.1
         with:
