@@ -6,6 +6,7 @@ const contentSecurityPolicy = [
   "base-uri 'none'",
   "object-src 'none'",
   "frame-ancestors 'none'",
+  "frame-src https://insights.bittrees.org/analytics-preferences.html",
   "form-action 'self'",
   "img-src 'self' data: blob:",
   "font-src 'self' data:",
